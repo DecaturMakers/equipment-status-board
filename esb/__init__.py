@@ -108,6 +108,18 @@ def create_app(config_name='default'):
     def health():
         return 'ok'
 
+    # Unauthenticated Prometheus metrics endpoint. Exposes two gauges from
+    # the pending_notifications table so a stuck worker, a bad Slack token,
+    # or a Slack outage shows up as queue growth / staleness in Prometheus.
+    @app.route('/metrics')
+    def metrics():
+        from flask import Response
+
+        from esb.services import metrics_service
+
+        body, content_type = metrics_service.render_metrics()
+        return Response(body, mimetype=content_type)
+
     # CLI commands
     _register_cli(app)
 

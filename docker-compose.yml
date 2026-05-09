@@ -11,6 +11,17 @@ services:
       - SLACK_SOCKET_MODE_CONNECT=true
     volumes:
       - ./uploads:/app/uploads
+    healthcheck:
+      # Use Python (already in the image) rather than curl/wget which the
+      # python:3.14-slim base does not include. /health does not touch the
+      # DB, so this catches gunicorn wedges / OOM, not DB-side hangs.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - autoheal=true
     restart: unless-stopped
 
   db:
@@ -34,6 +45,32 @@ services:
       db:
         condition: service_healthy
     env_file: .env
+    environment:
+      # Force unbuffered stdout/stderr so log lines reach journald immediately
+      # instead of sitting in Python's block buffer when stdout is not a TTY.
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      # The worker writes /tmp/worker_heartbeat once at startup and then again
+      # at the end of every successful poll iteration. If that file is older
+      # than 180s, the loop is wedged inside the DB poll or notification
+      # handler -- exactly the hang we are guarding against.
+      test: ["CMD", "sh", "-c", "test $(($(date +%s) - $(stat -c %Y /tmp/worker_heartbeat))) -lt 180"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    labels:
+      # Picked up by the autoheal sidecar to restart this container when
+      # Docker reports it as unhealthy.
+      - autoheal=true
+    restart: unless-stopped
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
 volumes:

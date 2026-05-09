@@ -128,8 +128,25 @@ Background notification processor. Polls the database every 30 seconds for pendi
 - **Image:** Same as the app service
 - **Command:** `flask worker run`
 - **Depends on:** `db` service
+- **Healthcheck:** The worker writes `/tmp/worker_heartbeat` at the top of every poll iteration. Docker reports the container as unhealthy if the heartbeat file is older than 180 seconds, which catches a wedged loop (e.g. silently dropped DB connection).
 
-All three services have a restart policy of `unless-stopped`, meaning they automatically restart after crashes or host reboots (unless explicitly stopped).
+### Autoheal Sidecar
+
+Docker on its own does not restart unhealthy containers — it only marks them unhealthy. The `autoheal` service (`willfarrell/autoheal`) watches for containers labelled `autoheal=true` (currently the worker) and restarts any that go unhealthy. It needs the host's Docker socket mounted so it can issue restart commands:
+
+```yaml
+autoheal:
+  image: willfarrell/autoheal:latest
+  environment:
+    - AUTOHEAL_CONTAINER_LABEL=autoheal
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+  restart: unless-stopped
+```
+
+If you do not want autoheal running on your host, you can remove the service from `docker-compose.yml`; the worker's healthcheck will still reflect status in `docker compose ps`, you'll just need to restart it manually when it goes unhealthy.
+
+All four services have a restart policy of `unless-stopped`, meaning they automatically restart after crashes or host reboots (unless explicitly stopped).
 
 ### Runtime Dependencies
 
@@ -317,6 +334,47 @@ The background worker processes pending notifications every 30 seconds. It inclu
 ```bash
 docker compose logs -f worker
 ```
+
+The worker container also exposes a Docker healthcheck driven by a heartbeat file (`/tmp/worker_heartbeat`) updated at the top of every poll iteration. To check current health:
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' equipment-status-board-worker-1
+```
+
+If the worker is reported as `unhealthy`, the autoheal sidecar will restart it automatically (typically within a minute).
+
+### Prometheus Metrics
+
+The application exposes a Prometheus exposition endpoint at `/metrics` (unauthenticated). Two gauges are published from the `pending_notifications` table:
+
+| Metric | Description |
+|--------|-------------|
+| `esb_pending_notifications_count` | Number of rows with `status='pending'`. Always present. |
+| `esb_oldest_pending_notification_timestamp_seconds` | Unix epoch (seconds) of the oldest pending row's `created_at`. **Omitted entirely** when the queue is empty — alert rules should rely on `absent()` rather than checking for a sentinel value. |
+
+These two metrics together catch a stuck worker, a bad Slack token, and a Slack outage — the queue grows and the oldest pending row ages.
+
+Example Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: esb
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['esb.example.com:5000']
+```
+
+Example alert rule (oldest pending row stuck for more than 5 minutes):
+
+```yaml
+- alert: ESBNotificationQueueStuck
+  expr: time() - esb_oldest_pending_notification_timestamp_seconds > 300
+  for: 1m
+  annotations:
+    summary: "ESB notification worker is not draining the queue"
+```
+
+The alert evaluates `time() - X` against a fresh timestamp on every scrape, which is more robust than a worker-computed "age" gauge that would be stale between scrapes.
 
 ### Upload Storage
 

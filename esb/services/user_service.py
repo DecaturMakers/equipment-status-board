@@ -262,7 +262,9 @@ def _deliver_temp_password_via_slack(
         return False
 
     try:
-        client = WebClient(token=token)
+        # timeout caps each Slack HTTP call so a hung connection cannot block
+        # the request handler indefinitely.
+        client = WebClient(token=token, timeout=15)
         resp = client.users_lookupByEmail(email=user.email)
         slack_user_id = resp['user']['id']
 
