@@ -335,7 +335,7 @@ The background worker processes pending notifications every 30 seconds. It inclu
 docker compose logs -f worker
 ```
 
-The worker container also exposes a Docker healthcheck driven by a heartbeat file (`/tmp/worker_heartbeat`) updated at the top of every poll iteration. To check current health:
+The worker container also exposes a Docker healthcheck driven by a heartbeat file (`/tmp/worker_heartbeat`) refreshed at three points: at startup, after each DB poll returns, and after each individual notification is processed. The healthcheck fails when the file is older than 180 seconds. To check current health:
 
 ```bash
 docker inspect --format '{{.State.Health.Status}}' equipment-status-board-worker-1

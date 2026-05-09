@@ -591,16 +591,18 @@ class TestRunWorkerLoop:
         assert heartbeat.stat().st_mtime > ancient
 
     def test_heartbeat_not_refreshed_when_iteration_hangs(self, app, tmp_path):
-        """If get_pending_notifications hangs (raises), the post-iteration
-        heartbeat refresh does NOT run, so the file stays stale and the
-        Docker healthcheck will catch the hang."""
+        """If get_pending_notifications raises, the in-iteration refreshes
+        (post-poll, per-notification) do NOT run -- only the startup write
+        happens. The Docker healthcheck will then catch the hang once the
+        startup mtime ages past 180s.
+        """
         heartbeat = tmp_path / 'hb'
         app.config['WORKER_HEARTBEAT_PATH'] = str(heartbeat)
 
-        # Hang -> the polling-error path runs time.sleep(backoff). Trigger
-        # shutdown there before the next iteration.
         with patch.object(notification_service, 'get_pending_notifications',
                           side_effect=RuntimeError('DB hung')), \
+             patch.object(notification_service, '_write_heartbeat',
+                          wraps=notification_service._write_heartbeat) as mock_hb, \
              patch('esb.services.notification_service.signal'), \
              patch('esb.services.notification_service.time') as mock_time:
             mock_time.sleep.side_effect = KeyboardInterrupt
@@ -609,35 +611,11 @@ class TestRunWorkerLoop:
             except KeyboardInterrupt:
                 pass
 
-        # Initial heartbeat was written; capture that mtime.
-        initial_mtime = heartbeat.stat().st_mtime
-
-        # Now run a second time without the failing poll, but pre-set the
-        # heartbeat to an old mtime, then enter the failing path -- the mtime
-        # should NOT advance because the post-iteration refresh is skipped
-        # when the inner try block raised.
-        import os
-        os.utime(heartbeat, (initial_mtime - 100, initial_mtime - 100))
-        old_mtime = heartbeat.stat().st_mtime
-
-        with patch.object(notification_service, 'get_pending_notifications',
-                          side_effect=RuntimeError('DB hung')), \
-             patch('esb.services.notification_service.signal'), \
-             patch('esb.services.notification_service.time') as mock_time:
-            mock_time.sleep.side_effect = KeyboardInterrupt
-            try:
-                run_worker_loop(poll_interval=1)
-            except KeyboardInterrupt:
-                pass
-
-        # The initial-heartbeat write at the top of run_worker_loop() will
-        # have refreshed it, but the post-iteration refresh did NOT run.
-        # We assert the difference relative to the post-loop value: we know
-        # only one write happened (the startup write), not two.
-        # Hardest part to test directly is "did the loop end-of-iter run", so
-        # use a counter via _write_heartbeat.
-        # See test_write_heartbeat_count_per_iteration for that assertion.
-        assert heartbeat.stat().st_mtime >= old_mtime
+        # Exactly one write -- the startup write. The polling-error path
+        # intentionally does NOT refresh the heartbeat (so a sustained DB
+        # outage will eventually flip the container unhealthy, which is the
+        # documented behavior).
+        assert mock_hb.call_count == 1
 
     def test_write_heartbeat_count_per_iteration_empty(self, app, tmp_path):
         """With no pending notifications, _write_heartbeat is called once at

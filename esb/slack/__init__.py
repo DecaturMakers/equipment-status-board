@@ -33,8 +33,13 @@ def init_slack(app):
         return
 
     from slack_bolt import App
+    from slack_sdk import WebClient
 
-    _bolt_app = App(token=token)
+    # Pin the Bolt-managed WebClient to the same 15s timeout used by the
+    # service-layer call sites. Without this, slash-command handlers receive a
+    # WebClient with slack_sdk's default timeout=30, which is too long for the
+    # request path -- a Slack outage could wedge a handler thread.
+    _bolt_app = App(token=token, client=WebClient(token=token, timeout=15))
 
     # Register command and view submission handlers
     from esb.slack.handlers import register_handlers

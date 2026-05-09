@@ -5,6 +5,9 @@ dropped DB connections; a regression here would silently re-introduce the
 bug, so explicit tests guard the wiring.
 """
 
+import importlib
+import sys
+
 from esb.config import (
     Config,
     ProductionConfig,
@@ -74,6 +77,40 @@ class TestConfigEngineOptions:
     def test_screenshot_config_omits_connect_args(self):
         opts = ScreenshotConfig.SQLALCHEMY_ENGINE_OPTIONS
         assert 'connect_args' not in opts
+
+    def test_production_config_with_mysql_url_includes_connect_args(
+        self, monkeypatch,
+    ):
+        """Reload esb.config under a MariaDB DATABASE_URL and verify that
+        ProductionConfig actually carries the connect_args.
+
+        The cheaper "options match build_engine_options(uri)" test passes
+        trivially in CI (where DATABASE_URL is sqlite), so this reload-based
+        test is what actually catches a regression that drops the wiring on
+        the production path.
+        """
+        monkeypatch.setenv(
+            'DATABASE_URL', 'mysql+pymysql://root:x@db/esb',
+        )
+        # esb/__init__.py does `from esb.config import config`, which
+        # overrides the package's `.config` attribute with the dict, so
+        # `esb.config` no longer points at the module. Reach for the module
+        # via sys.modules instead.
+        config_module = sys.modules['esb.config']
+        reloaded = importlib.reload(config_module)
+        try:
+            opts = reloaded.ProductionConfig.SQLALCHEMY_ENGINE_OPTIONS
+            assert opts['pool_pre_ping'] is True
+            assert opts['pool_recycle'] == 1800
+            assert opts['connect_args'] == {
+                'connect_timeout': 10,
+                'read_timeout': 30,
+                'write_timeout': 30,
+            }
+        finally:
+            # Restore the module under the original env so other tests are
+            # not disturbed (monkeypatch restores the env var itself).
+            importlib.reload(config_module)
 
 
 class TestEngineOptionsAppliedToApp:

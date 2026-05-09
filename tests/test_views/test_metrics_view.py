@@ -34,6 +34,14 @@ class TestMetricsEndpoint:
         response = client.get('/metrics')
         assert 'text/plain' in response.content_type
 
+    def test_content_type_preserves_version_parameter(self, client):
+        """The Content-Type header must carry Prometheus's version and charset
+        parameters verbatim. Catches a regression to Response(..., mimetype=...)
+        which strips parameters from the header."""
+        response = client.get('/metrics')
+        assert 'version=' in response.content_type
+        assert 'charset=utf-8' in response.content_type
+
     def test_empty_table_emits_zero_count_and_omits_oldest(self, client):
         response = client.get('/metrics')
         text = response.data.decode()

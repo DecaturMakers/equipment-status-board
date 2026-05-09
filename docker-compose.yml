@@ -59,7 +59,9 @@ services:
       # file is older than 180s the loop is wedged inside the DB poll or a
       # single notification handler -- exactly the hang we are guarding
       # against. The path here is locked to WORKER_HEARTBEAT_PATH above.
-      test: ["CMD", "sh", "-c", "test $(($(date +%s) - $(stat -c %Y /tmp/worker_heartbeat))) -lt 180"]
+      # The explicit -f guard makes the missing-file failure mode intentional
+      # rather than relying on a sh syntax error from an empty $(stat ...).
+      test: ["CMD", "sh", "-c", "[ -f /tmp/worker_heartbeat ] && test $(($(date +%s) - $(stat -c %Y /tmp/worker_heartbeat))) -lt 180"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -71,7 +73,9 @@ services:
     restart: unless-stopped
 
   autoheal:
-    image: willfarrell/autoheal:latest
+    # Pinned to a specific version (rather than :latest) for reproducible
+    # deployments, consistent with how the mariadb image is pinned above.
+    image: willfarrell/autoheal:1.2.0
     environment:
       - AUTOHEAL_CONTAINER_LABEL=autoheal
     volumes:
