@@ -49,11 +49,16 @@ services:
       # Force unbuffered stdout/stderr so log lines reach journald immediately
       # instead of sitting in Python's block buffer when stdout is not a TTY.
       - PYTHONUNBUFFERED=1
+      # The heartbeat path is intentionally pinned here so it cannot drift out
+      # of sync with the healthcheck command below. `environment:` overrides
+      # any value coming from env_file, so this is authoritative.
+      - WORKER_HEARTBEAT_PATH=/tmp/worker_heartbeat
     healthcheck:
-      # The worker writes /tmp/worker_heartbeat once at startup and then again
-      # at the end of every successful poll iteration. If that file is older
-      # than 180s, the loop is wedged inside the DB poll or notification
-      # handler -- exactly the hang we are guarding against.
+      # The worker writes /tmp/worker_heartbeat at startup, after each DB poll
+      # returns, and after each individual notification is processed. If that
+      # file is older than 180s the loop is wedged inside the DB poll or a
+      # single notification handler -- exactly the hang we are guarding
+      # against. The path here is locked to WORKER_HEARTBEAT_PATH above.
       test: ["CMD", "sh", "-c", "test $(($(date +%s) - $(stat -c %Y /tmp/worker_heartbeat))) -lt 180"]
       interval: 30s
       timeout: 5s

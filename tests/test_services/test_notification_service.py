@@ -567,7 +567,7 @@ class TestRunWorkerLoop:
 
         assert heartbeat.exists()
 
-    def test_refreshes_heartbeat_after_iteration(self, app, tmp_path):
+    def test_refreshes_heartbeat_after_db_poll(self, app, tmp_path):
         """Heartbeat mtime advances on each successful iteration, not before."""
         heartbeat = tmp_path / 'hb'
         app.config['WORKER_HEARTBEAT_PATH'] = str(heartbeat)
@@ -639,9 +639,9 @@ class TestRunWorkerLoop:
         # See test_write_heartbeat_count_per_iteration for that assertion.
         assert heartbeat.stat().st_mtime >= old_mtime
 
-    def test_write_heartbeat_count_per_iteration(self, app, tmp_path):
-        """_write_heartbeat is called twice per successful iteration in the
-        steady state: once at startup, once at the end of each iteration."""
+    def test_write_heartbeat_count_per_iteration_empty(self, app, tmp_path):
+        """With no pending notifications, _write_heartbeat is called once at
+        startup, plus once after the DB poll in each iteration."""
         heartbeat = tmp_path / 'hb'
         app.config['WORKER_HEARTBEAT_PATH'] = str(heartbeat)
 
@@ -665,8 +665,39 @@ class TestRunWorkerLoop:
             except KeyboardInterrupt:
                 pass
 
-        # 1 startup + 2 end-of-iteration = 3
+        # 1 startup + 2 post-poll = 3 (no per-notification writes since batch was empty)
         assert mock_hb.call_count == 3
+
+    def test_write_heartbeat_per_notification(self, app, tmp_path):
+        """Heartbeat is refreshed after each notification, not just per iteration --
+        a long batch of slow Slack calls must not falsely trip the healthcheck."""
+        heartbeat = tmp_path / 'hb'
+        app.config['WORKER_HEARTBEAT_PATH'] = str(heartbeat)
+        # Three pending notifications.
+        n1 = _create_notification()
+        n2 = _create_notification()
+        n3 = _create_notification()
+
+        with patch.object(notification_service, 'process_notification') as mock_proc, \
+             patch.object(notification_service, '_write_heartbeat',
+                          wraps=notification_service._write_heartbeat) as mock_hb, \
+             patch('esb.services.notification_service.signal'), \
+             patch('esb.services.notification_service.time') as mock_time:
+            mock_proc.return_value = None  # All deliveries "succeed"
+            mock_time.sleep.side_effect = KeyboardInterrupt
+
+            try:
+                run_worker_loop(poll_interval=1)
+            except KeyboardInterrupt:
+                pass
+
+        # 1 startup + 1 post-poll + 3 per-notification = 5
+        assert mock_hb.call_count == 5
+        # Sanity: all three were processed.
+        assert mock_proc.call_count == 3
+        for n in (n1, n2, n3):
+            _db.session.expire(n)
+            assert _db.session.get(PendingNotification, n.id).status == 'delivered'
 
     def test_heartbeat_oserror_swallowed(self, app, tmp_path, caplog):
         """A failed heartbeat write logs a warning but does not abort the loop."""

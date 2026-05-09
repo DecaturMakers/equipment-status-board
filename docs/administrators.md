@@ -128,11 +128,11 @@ Background notification processor. Polls the database every 30 seconds for pendi
 - **Image:** Same as the app service
 - **Command:** `flask worker run`
 - **Depends on:** `db` service
-- **Healthcheck:** The worker writes `/tmp/worker_heartbeat` at the top of every poll iteration. Docker reports the container as unhealthy if the heartbeat file is older than 180 seconds, which catches a wedged loop (e.g. silently dropped DB connection).
+- **Healthcheck:** The worker writes `/tmp/worker_heartbeat` at three points: once at startup, once after each DB poll returns, and once after each individual notification is processed. Docker reports the container as unhealthy if the heartbeat file is older than 180 seconds, which catches a wedged loop (e.g. silently dropped DB connection or a single Slack call hung past its timeout). Refreshing per-notification — rather than only at the end of an iteration — means a legitimately long batch of slow Slack calls cannot falsely trip the healthcheck.
 
 ### Autoheal Sidecar
 
-Docker on its own does not restart unhealthy containers — it only marks them unhealthy. The `autoheal` service (`willfarrell/autoheal`) watches for containers labelled `autoheal=true` (currently the worker) and restarts any that go unhealthy. It needs the host's Docker socket mounted so it can issue restart commands:
+Docker on its own does not restart unhealthy containers — it only marks them unhealthy. The `autoheal` service (`willfarrell/autoheal`) watches for containers labelled `autoheal=true` (the `worker` and `app` services) and restarts any that go unhealthy. It needs the host's Docker socket mounted so it can issue restart commands:
 
 ```yaml
 autoheal:

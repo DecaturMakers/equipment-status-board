@@ -44,13 +44,21 @@ class TestBuildEngineOptions:
 
 
 class TestConfigEngineOptions:
-    def test_production_config_has_engine_options(self):
-        # ProductionConfig inherits from Config which builds options from the
-        # default DATABASE_URL (mysql+pymysql://...) so connect_args must be present.
-        opts = ProductionConfig.SQLALCHEMY_ENGINE_OPTIONS
-        assert opts['pool_pre_ping'] is True
-        assert opts['pool_recycle'] == 1800
-        assert opts['connect_args']['connect_timeout'] == 10
+    def test_production_config_options_match_its_uri(self):
+        # ProductionConfig's options must be the same as build_engine_options()
+        # would produce for its DATABASE_URI -- whatever that URI happens to be
+        # (CI sets it to sqlite via env). This guards the wiring without
+        # depending on environment.
+        assert ProductionConfig.SQLALCHEMY_ENGINE_OPTIONS == build_engine_options(
+            ProductionConfig.SQLALCHEMY_DATABASE_URI,
+        )
+
+    def test_pool_options_always_present(self):
+        # Pool options should be present regardless of driver.
+        for cfg in (Config, ProductionConfig, TestingConfig, ScreenshotConfig):
+            opts = cfg.SQLALCHEMY_ENGINE_OPTIONS
+            assert opts['pool_pre_ping'] is True
+            assert opts['pool_recycle'] == 1800
 
     def test_base_config_engine_options_match_uri(self):
         # The base Config's options are computed from its URI.

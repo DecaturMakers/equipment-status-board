@@ -344,10 +344,14 @@ def run_worker_loop(poll_interval: int = 30) -> None:
     heartbeat_path = Path(current_app.config['WORKER_HEARTBEAT_PATH'])
 
     # Write an initial heartbeat so the file exists for the Docker healthcheck
-    # before the first iteration completes. After this, the heartbeat is only
-    # refreshed after a full iteration successfully returns -- so a hang inside
-    # get_pending_notifications() or process_notification() leaves the file
-    # stale and the healthcheck (and autoheal) will catch it.
+    # before the first iteration completes. After this, the heartbeat is
+    # refreshed at every point of forward progress: after the DB poll returns,
+    # and after each notification is processed (success or recorded failure).
+    # A hang inside get_pending_notifications() or inside a single
+    # process_notification() call leaves the file stale, so the healthcheck
+    # (and autoheal) will catch it. Refreshing per-notification matters because
+    # a large batch of slow Slack calls (DEFAULT_BATCH_SIZE=100 * 15s timeout)
+    # can otherwise legitimately exceed the 180s healthcheck threshold.
     _write_heartbeat(heartbeat_path)
 
     logger.info(
@@ -360,6 +364,9 @@ def run_worker_loop(poll_interval: int = 30) -> None:
     while not _shutdown:
         try:
             notifications = get_pending_notifications()
+            # Refresh after the DB poll returns: an idle iteration with no
+            # pending rows still represents forward progress.
+            _write_heartbeat(heartbeat_path)
             consecutive_poll_failures = 0  # Reset on successful poll
             if notifications:
                 logger.info('Processing %d pending notification(s)', len(notifications))
@@ -384,11 +391,10 @@ def run_worker_loop(poll_interval: int = 30) -> None:
                         'Notification %d delivery failed: %s', notification.id, e,
                         exc_info=True,
                     )
-
-            # Refresh heartbeat only after a fully successful iteration --
-            # i.e. the DB poll returned and any per-notification work either
-            # succeeded or was caught and recorded as failed.
-            _write_heartbeat(heartbeat_path)
+                # Refresh after each notification regardless of outcome -- a
+                # long but progressing batch of slow Slack calls must not be
+                # mistaken for a hang.
+                _write_heartbeat(heartbeat_path)
 
         except Exception:
             consecutive_poll_failures += 1

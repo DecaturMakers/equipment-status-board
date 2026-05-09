@@ -118,7 +118,10 @@ def create_app(config_name='default'):
         from esb.services import metrics_service
 
         body, content_type = metrics_service.render_metrics()
-        return Response(body, mimetype=content_type)
+        # Use content_type (not mimetype) so the full Prometheus exposition
+        # Content-Type header (which includes 'version=...; charset=utf-8')
+        # is preserved verbatim. Flask's mimetype= drops parameters.
+        return Response(body, content_type=content_type)
 
     # CLI commands
     _register_cli(app)
