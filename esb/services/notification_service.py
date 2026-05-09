@@ -4,6 +4,7 @@ import logging
 import signal
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from esb.extensions import db
 from esb.models.pending_notification import PendingNotification
@@ -23,6 +24,17 @@ VALID_NOTIFICATION_TYPES = {'slack_message', 'static_page_push'}
 
 # Default batch size for polling queries
 DEFAULT_BATCH_SIZE = 100
+
+
+def _write_heartbeat(path: Path) -> None:
+    """Touch the worker heartbeat file. Logged-but-swallowed on OSError so a
+    transient filesystem hiccup cannot abort the loop."""
+    try:
+        path.touch()
+    except OSError:
+        logger.warning(
+            'Failed to update worker heartbeat at %s', path, exc_info=True,
+        )
 
 
 def queue_notification(
@@ -196,7 +208,9 @@ def _deliver_slack_message(notification: PendingNotification) -> None:
 
     from slack_sdk import WebClient
 
-    client = WebClient(token=token)
+    # timeout caps each Slack HTTP call so a hung connection cannot wedge the
+    # worker loop indefinitely.
+    client = WebClient(token=token, timeout=15)
     payload = notification.payload or {}
     text, blocks = _format_slack_message(payload)
 
@@ -315,6 +329,8 @@ def run_worker_loop(poll_interval: int = 30) -> None:
     Args:
         poll_interval: Seconds between polling cycles (default 30).
     """
+    from flask import current_app
+
     _shutdown = False
 
     def _handle_signal(signum, frame):
@@ -325,13 +341,32 @@ def run_worker_loop(poll_interval: int = 30) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    logger.info('Worker started, polling every %d seconds', poll_interval)
+    heartbeat_path = Path(current_app.config['WORKER_HEARTBEAT_PATH'])
+
+    # Write an initial heartbeat so the file exists for the Docker healthcheck
+    # before the first iteration completes. After this, the heartbeat is
+    # refreshed at every point of forward progress: after the DB poll returns,
+    # and after each notification is processed (success or recorded failure).
+    # A hang inside get_pending_notifications() or inside a single
+    # process_notification() call leaves the file stale, so the healthcheck
+    # (and autoheal) will catch it. Refreshing per-notification matters because
+    # a large batch of slow Slack calls (DEFAULT_BATCH_SIZE=100 * 15s timeout)
+    # can otherwise legitimately exceed the 180s healthcheck threshold.
+    _write_heartbeat(heartbeat_path)
+
+    logger.info(
+        'Worker started, polling every %d seconds (heartbeat=%s)',
+        poll_interval, heartbeat_path,
+    )
 
     consecutive_poll_failures = 0
 
     while not _shutdown:
         try:
             notifications = get_pending_notifications()
+            # Refresh after the DB poll returns: an idle iteration with no
+            # pending rows still represents forward progress.
+            _write_heartbeat(heartbeat_path)
             consecutive_poll_failures = 0  # Reset on successful poll
             if notifications:
                 logger.info('Processing %d pending notification(s)', len(notifications))
@@ -356,6 +391,10 @@ def run_worker_loop(poll_interval: int = 30) -> None:
                         'Notification %d delivery failed: %s', notification.id, e,
                         exc_info=True,
                     )
+                # Refresh after each notification regardless of outcome -- a
+                # long but progressing batch of slow Slack calls must not be
+                # mistaken for a hang.
+                _write_heartbeat(heartbeat_path)
 
         except Exception:
             consecutive_poll_failures += 1

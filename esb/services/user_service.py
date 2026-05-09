@@ -262,7 +262,12 @@ def _deliver_temp_password_via_slack(
         return False
 
     try:
-        client = WebClient(token=token)
+        # 8s per call (rather than 15s like the worker) because this path
+        # makes three sequential calls -- users_lookupByEmail,
+        # conversations_open, chat_postMessage -- and runs synchronously in a
+        # web request. 3 * 8s = 24s stays comfortably under gunicorn's default
+        # 30s worker_timeout.
+        client = WebClient(token=token, timeout=8)
         resp = client.users_lookupByEmail(email=user.email)
         slack_user_id = resp['user']['id']
 

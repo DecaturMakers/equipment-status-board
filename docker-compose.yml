@@ -11,6 +11,17 @@ services:
       - SLACK_SOCKET_MODE_CONNECT=true
     volumes:
       - ./uploads:/app/uploads
+    healthcheck:
+      # Use Python (already in the image) rather than curl/wget which the
+      # python:3.14-slim base does not include. /health does not touch the
+      # DB, so this catches gunicorn wedges / OOM, not DB-side hangs.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - autoheal=true
     restart: unless-stopped
 
   db:
@@ -34,6 +45,41 @@ services:
       db:
         condition: service_healthy
     env_file: .env
+    environment:
+      # Force unbuffered stdout/stderr so log lines reach journald immediately
+      # instead of sitting in Python's block buffer when stdout is not a TTY.
+      - PYTHONUNBUFFERED=1
+      # The heartbeat path is intentionally pinned here so it cannot drift out
+      # of sync with the healthcheck command below. `environment:` overrides
+      # any value coming from env_file, so this is authoritative.
+      - WORKER_HEARTBEAT_PATH=/tmp/worker_heartbeat
+    healthcheck:
+      # The worker writes /tmp/worker_heartbeat at startup, after each DB poll
+      # returns, and after each individual notification is processed. If that
+      # file is older than 180s the loop is wedged inside the DB poll or a
+      # single notification handler -- exactly the hang we are guarding
+      # against. The path here is locked to WORKER_HEARTBEAT_PATH above.
+      # The explicit -f guard makes the missing-file failure mode intentional
+      # rather than relying on a sh syntax error from an empty $(stat ...).
+      test: ["CMD", "sh", "-c", "[ -f /tmp/worker_heartbeat ] && test $(($(date +%s) - $(stat -c %Y /tmp/worker_heartbeat))) -lt 180"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    labels:
+      # Picked up by the autoheal sidecar to restart this container when
+      # Docker reports it as unhealthy.
+      - autoheal=true
+    restart: unless-stopped
+
+  autoheal:
+    # Pinned to a specific version (rather than :latest) for reproducible
+    # deployments, consistent with how the mariadb image is pinned above.
+    image: willfarrell/autoheal:1.2.0
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
 volumes:
