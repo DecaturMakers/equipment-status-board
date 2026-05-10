@@ -228,6 +228,172 @@ class TestPushS3:
             assert call_kwargs['Key'] == 'index.html'
 
 
+class TestPushS3CloudFrontInvalidation:
+    """Tests for CloudFront invalidation triggered by push() with method='s3'."""
+
+    @staticmethod
+    def _boto_client_factory(s3_mock, cf_mock):
+        def factory(service):
+            if service == 's3':
+                return s3_mock
+            if service == 'cloudfront':
+                return cf_mock
+            raise ValueError(f'unexpected boto3 client {service!r}')
+        return factory
+
+    def test_no_invalidation_when_distribution_id_unset(self, app):
+        """No CloudFront client used when CLOUDFRONT_DISTRIBUTION_ID is empty."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/index.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = ''
+
+        import boto3
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            static_page_service.push('<html>test</html>')
+
+        mock_cf.create_invalidation.assert_not_called()
+
+    def test_invalidates_after_successful_push(self, app):
+        """CloudFront invalidation created after every successful S3 upload when distribution set."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/status/index.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = 'EDFDVBD6EXAMPLE'
+
+        import boto3
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        mock_cf.create_invalidation.return_value = {'Invalidation': {'Id': 'I1234'}}
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            static_page_service.push('<html>x</html>')
+
+        mock_s3.put_object.assert_called_once()
+        mock_cf.create_invalidation.assert_called_once()
+        call_kwargs = mock_cf.create_invalidation.call_args[1]
+        assert call_kwargs['DistributionId'] == 'EDFDVBD6EXAMPLE'
+        assert call_kwargs['InvalidationBatch']['Paths'] == {
+            'Quantity': 1, 'Items': ['/status/index.html'],
+        }
+        assert call_kwargs['InvalidationBatch']['CallerReference'].startswith('esb-')
+
+    def test_invalidation_path_url_encodes_special_characters(self, app):
+        """Invalidation path URL-encodes special characters in the S3 key."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/status pages/page+v2.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = 'EDFDVBD6EXAMPLE'
+
+        import boto3
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        mock_cf.create_invalidation.return_value = {'Invalidation': {'Id': 'I1'}}
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            static_page_service.push('<html>x</html>')
+
+        items = mock_cf.create_invalidation.call_args[1]['InvalidationBatch']['Paths']['Items']
+        # Slash in the key is preserved, but space and `+` are percent-encoded.
+        assert items == ['/status%20pages/page%2Bv2.html']
+
+    def test_caller_reference_unique_across_calls(self, app):
+        """Successive invalidations get distinct CallerReference values (uuid-based)."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/index.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = 'EDFDVBD6EXAMPLE'
+
+        import boto3
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        mock_cf.create_invalidation.side_effect = [
+            {'Invalidation': {'Id': 'I1'}},
+            {'Invalidation': {'Id': 'I2'}},
+        ]
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            static_page_service.push('<html>x</html>')
+            static_page_service.push('<html>x</html>')
+
+        refs = [
+            call.kwargs['InvalidationBatch']['CallerReference']
+            for call in mock_cf.create_invalidation.call_args_list
+        ]
+        assert refs[0] != refs[1]
+
+    def test_invalidation_client_error_raises_runtime_error(self, app):
+        """CloudFront ClientError surfaces as RuntimeError."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/index.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = 'EDFDVBD6EXAMPLE'
+
+        import boto3
+        from botocore.exceptions import ClientError
+
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        mock_cf.create_invalidation.side_effect = ClientError(
+            {'Error': {'Code': 'AccessDenied', 'Message': 'denied'}}, 'CreateInvalidation'
+        )
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            with pytest.raises(RuntimeError, match='CloudFront invalidation failed'):
+                static_page_service.push('<html>x</html>')
+
+    def test_invalidation_no_credentials_raises_runtime_error(self, app):
+        """CloudFront NoCredentialsError surfaces as RuntimeError."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/index.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = 'EDFDVBD6EXAMPLE'
+
+        import boto3
+        from botocore.exceptions import NoCredentialsError
+
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        mock_cf.create_invalidation.side_effect = NoCredentialsError()
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            with pytest.raises(RuntimeError, match='AWS credentials not configured for CloudFront invalidation'):
+                static_page_service.push('<html>x</html>')
+
+    def test_audit_log_includes_invalidation_id(self, app, capture):
+        """The static_page.pushed audit event records the CloudFront invalidation ID."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/index.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = 'EDFDVBD6EXAMPLE'
+
+        import boto3
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        mock_cf.create_invalidation.return_value = {'Invalidation': {'Id': 'IABCDEF'}}
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            static_page_service.push('<html>x</html>')
+
+        assert len(capture.records) == 1
+        log_data = json.loads(capture.records[0].message)
+        assert log_data['event'] == 'static_page.pushed'
+        assert log_data['data']['method'] == 's3'
+        assert log_data['data']['cloudfront_invalidation_id'] == 'IABCDEF'
+
+    def test_audit_log_omits_invalidation_id_when_distribution_unset(self, app, capture):
+        """The audit event does not include cloudfront_invalidation_id when distribution is unset."""
+        app.config['STATIC_PAGE_PUSH_METHOD'] = 's3'
+        app.config['STATIC_PAGE_PUSH_TARGET'] = 'my-bucket/index.html'
+        app.config['CLOUDFRONT_DISTRIBUTION_ID'] = ''
+
+        import boto3
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+
+        with patch.object(boto3, 'client', side_effect=self._boto_client_factory(mock_s3, mock_cf)):
+            static_page_service.push('<html>x</html>')
+
+        log_data = json.loads(capture.records[0].message)
+        assert 'cloudfront_invalidation_id' not in log_data['data']
+
+
 class TestPushGCS:
     """Tests for push() with method='gcs'."""
 

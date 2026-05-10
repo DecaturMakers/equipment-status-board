@@ -32,7 +32,9 @@ def push(html_content: str) -> None:
     """Push the rendered static page to the configured destination.
 
     Dispatches to _push_local(), _push_s3(), or _push_gcs() based on
-    STATIC_PAGE_PUSH_METHOD config value.
+    STATIC_PAGE_PUSH_METHOD config value. For the s3 backend, when the
+    CLOUDFRONT_DISTRIBUTION_ID config is set, a CloudFront invalidation
+    is issued for the uploaded key after each successful upload.
 
     Args:
         html_content: The rendered HTML string to push.
@@ -46,19 +48,20 @@ def push(html_content: str) -> None:
     if not target:
         raise RuntimeError('STATIC_PAGE_PUSH_TARGET is not configured')
 
+    invalidation_id: str | None = None
     if method == 'local':
         _push_local(html_content, target)
     elif method == 's3':
-        _push_s3(html_content, target)
+        invalidation_id = _push_s3(html_content, target)
     elif method == 'gcs':
         _push_gcs(html_content, target)
     else:
         raise RuntimeError(f'Unknown STATIC_PAGE_PUSH_METHOD: {method!r}')
 
-    log_mutation('static_page.pushed', 'system', {
-        'method': method,
-        'target': target,
-    })
+    mutation_data: dict = {'method': method, 'target': target}
+    if invalidation_id:
+        mutation_data['cloudfront_invalidation_id'] = invalidation_id
+    log_mutation('static_page.pushed', 'system', mutation_data)
 
     logger.info('Static page pushed via %s to %s', method, target)
 
@@ -85,18 +88,28 @@ def _push_local(html_content: str, target_path: str) -> None:
         raise RuntimeError(f'Failed to write static page to {target_path}: {e}') from e
 
 
-def _push_s3(html_content: str, target: str) -> None:
+def _push_s3(html_content: str, target: str) -> str | None:
     """Upload the static page HTML to an S3 bucket.
 
     Target format: "bucket-name/optional/key/path" (key defaults to index.html
     if target ends with / or has no key component).
 
+    If the CLOUDFRONT_DISTRIBUTION_ID config is set, a CloudFront invalidation
+    is issued for the uploaded key after each successful upload, and the
+    invalidation ID is returned so the caller can include it in the audit log.
+    On the worker's retry path this guarantees the invalidation is re-attempted
+    until it succeeds (a fragile pre-upload diff would mask the retry signal).
+
     Args:
         html_content: Rendered HTML string.
         target: S3 target in format "bucket/key".
 
+    Returns:
+        CloudFront invalidation ID, or None if no distribution was configured.
+
     Raises:
-        RuntimeError: if S3 upload fails.
+        RuntimeError: if boto3 is missing, the target is malformed, the S3
+            upload fails, or the CloudFront invalidation fails.
     """
     try:
         import boto3
@@ -127,6 +140,62 @@ def _push_s3(html_content: str, target: str) -> None:
         error_code = e.response['Error']['Code']
         error_msg = e.response['Error']['Message']
         raise RuntimeError(f'S3 upload failed ({error_code}): {error_msg}') from e
+
+    distribution_id = current_app.config.get('CLOUDFRONT_DISTRIBUTION_ID', '')
+    if distribution_id:
+        return _create_cloudfront_invalidation(distribution_id, key)
+    return None
+
+
+def _create_cloudfront_invalidation(distribution_id: str, key: str) -> str:
+    """Create a CloudFront invalidation for the given object key.
+
+    Args:
+        distribution_id: CloudFront distribution ID.
+        key: S3 object key. The invalidation path is `/` + URL-encoded key
+            (so keys with spaces or special characters invalidate the path
+            CloudFront actually serves).
+
+    Returns:
+        The CloudFront invalidation ID.
+
+    Raises:
+        RuntimeError: if boto3 is missing, AWS credentials are not configured,
+            or the CreateInvalidation API call fails.
+    """
+    import uuid
+    from urllib.parse import quote
+
+    try:
+        import boto3
+        from botocore.exceptions import ClientError, NoCredentialsError
+    except ImportError as e:
+        raise RuntimeError(
+            'boto3 is required for CloudFront invalidation. Install it with: pip install boto3'
+        ) from e
+
+    path = '/' + quote(key.lstrip('/'), safe='/')
+    try:
+        cf = boto3.client('cloudfront')
+        response = cf.create_invalidation(
+            DistributionId=distribution_id,
+            InvalidationBatch={
+                'Paths': {'Quantity': 1, 'Items': [path]},
+                'CallerReference': f'esb-{uuid.uuid4()}',
+            },
+        )
+        invalidation_id = response['Invalidation']['Id']
+        logger.info(
+            'Created CloudFront invalidation %s for distribution %s path %s',
+            invalidation_id, distribution_id, path,
+        )
+        return invalidation_id
+    except NoCredentialsError as e:
+        raise RuntimeError('AWS credentials not configured for CloudFront invalidation') from e
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        error_msg = e.response['Error']['Message']
+        raise RuntimeError(f'CloudFront invalidation failed ({error_code}): {error_msg}') from e
 
 
 def _push_gcs(html_content: str, target: str) -> None:
