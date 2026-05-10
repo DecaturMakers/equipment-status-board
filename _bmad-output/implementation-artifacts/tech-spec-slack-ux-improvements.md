@@ -30,6 +30,7 @@ files_to_modify:
   - 'tests/test_views/test_admin.py'
   - 'docs/technicians.md'
   - 'docs/members.md'
+  - 'docs/administrators.md'
   - 'docs/manual_testing.md'
 code_patterns:
   - 'Bolt handler registration via register_handlers(bolt_app, app)'
@@ -127,7 +128,7 @@ A focused refactor of the Slack integration:
 - **Testing patterns:**
   - `tests/test_slack/test_handlers.py` — every test uses `_register_and_capture(app)` at line 10 to capture handler functions from a `MagicMock` Bolt app, then invokes them as plain callables with mock `ack`, `client`, `body`, `view`. No live HTTP. New dispatcher tests follow this exact shape.
   - `tests/test_slack/test_forms.py` — pure-function tests of formatters and modal builders.
-  - `tests/test_services/test_notification_service.py::TestFormatSlackMessage` (line 929+) — direct calls to `_format_slack_message` with payload dicts; `assert ':emoji:' in text` style. Existing four event-type tests need new emoji assertions added.
+  - `tests/test_services/test_notification_service.py::TestFormatSlackMessage` — direct calls to `_format_slack_message` with payload dicts; `assert ':emoji:' in text` style. Existing four event-type tests need new emoji assertions added.
   - `tests/conftest.py` helpers `_create_area`, `_create_equipment`, `_create_user`, `_create_repair_record` build fixtures inline — reuse them.
 
 - **Slack Block Kit constraints to respect:**
@@ -144,15 +145,15 @@ A focused refactor of the Slack integration:
 | ---- | ------- |
 | `esb/slack/handlers.py` | All slash-command and view-submission handlers. Edits: change `/esb-status` arg-resolution, repurpose `/esb-repair` to handle empty `text` as dispatcher (open dispatcher modal) vs non-empty as today (open create-repair modal), add `repair_dispatcher_submission` + `repair_action_submission` view handlers, update ephemeral confirmation emojis. |
 | `esb/slack/forms.py` | Block Kit modal builders + text formatters. Edits: extend `format_status_summary()` to include non-green equipment detail per area + footer hint; add `format_area_status_detail(area_data)` for the area-detail view; add `build_repair_dispatcher_modal(open_records)` and `build_repair_action_modal(repair_record)`; update existing emoji constants if needed. |
-| `esb/services/notification_service.py` | `_format_slack_message()` (lines 276-328) — add leading emojis to all four event types. Add `_NOTIFICATION_EMOJI` lookup keyed by `(event_type, has_safety_risk)`. |
-| `esb/services/status_service.py` | Read-only — `get_area_status_dashboard()` (line 169), `get_single_area_status_dashboard(area_id)` (line 252), `get_equipment_status_detail(equipment_id)` (line 134) provide everything needed. |
+| `esb/services/notification_service.py` | `_format_slack_message()` — add leading emojis to all four event types and the new `status_changed` branch (Task 3). |
+| `esb/services/status_service.py` | `_derive_status_from_records()` (Task 5b) attaches `assignee_name`. Read-only callers: `get_area_status_dashboard()`, `get_single_area_status_dashboard()`, `get_equipment_status_detail()`, `compute_equipment_status()`. Eager-load added on prefetch queries (Task 5b). |
 | `esb/services/equipment_service.py` | Add `get_area_by_name(name: str) -> Area \| None` — case-insensitive exact match against non-archived areas. |
-| `esb/services/repair_service.py` | Read-only for new code paths. Use `get_repair_queue()` for dispatcher list; `update_repair_record()` accepts `status`, `severity`, `assignee_id`, `eta`, `note` kwargs in one call (line 325). `CLOSED_STATUSES` for resolved/closed list. |
+| `esb/services/repair_service.py` | Add `status_changed` notification trigger to `update_repair_record()` (Task 3b). Use `get_repair_queue()` for dispatcher list; `update_repair_record()` accepts `status`, `severity`, `assignee_id`, `eta`, `note` kwargs in one call. `CLOSED_STATUSES` for resolved/closed list. |
 | `esb/models/repair_record.py` | `REPAIR_STATUSES`, `REPAIR_SEVERITIES` constants — read-only. |
 | `esb/models/area.py` | Read-only — used to filter `is_archived` in the new `get_area_by_name()`. |
 | `tests/test_slack/test_handlers.py` | Add tests for new dispatcher / action handlers. Update `/esb-status` tests for area-name precedence. Existing test patterns: `_register_and_capture(app)` at line 10. |
 | `tests/test_slack/test_forms.py` | Add tests for new modal builders + extended summary formatter. Existing pattern: pure-function tests. |
-| `tests/test_services/test_notification_service.py` | Add emoji-prefix assertions to `TestFormatSlackMessage` tests (lines 929+). |
+| `tests/test_services/test_notification_service.py` | Add emoji-prefix assertions to `TestFormatSlackMessage` tests; add `status_changed` and resolved-text-differentiation tests (Tasks 3c). |
 | `tests/test_services/test_equipment_service.py` | Add tests for new `get_area_by_name()` helper. |
 | `docs/technicians.md` | Update Slack-command table — clarify `/esb-repair` (no args = dispatcher; with arg = create) and `/esb-status <area name>`. |
 | `docs/members.md` | Update `/esb-status` description to mention new detail-in-summary behavior and area-name resolution. |
@@ -225,18 +226,23 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
   - Output: confirm no caller iterates over `item.status` keys with `dict.items()`, `for key in status`, `**status`, or `vars()`. Document the audit result in the PR description as evidence the additive change is safe.
   - Notes: Pre-review audit confirmed templates use named-key access only — this task formally captures the verification across the full set of dashboard consumers including the QR-code equipment page.
 
-- [ ] **Task 1: Add `equipment_service.get_area_by_name(name)` helper (F36 — match codebase idiom).**
+- [ ] **Task 1: Add `equipment_service.get_area_by_name(name)` helper (F36 — match codebase idiom; F60 strip is intentional).**
   - File: `esb/services/equipment_service.py`
-  - Action: Add a function near `list_areas()`. Signature: `def get_area_by_name(name: str) -> Area | None`. Body: trim whitespace and return the first non-archived area whose name matches case-insensitively. **Use the established convention from existing case-insensitive area lookups in this module: `db.func.lower(Area.name) == stripped.lower()`** (NOT `ilike` — see `create_area` and `update_area` for the established pattern). Return `None` if no match. Do NOT raise.
-  - Notes: Follow existing style: use `db.session.execute(db.select(Area).filter(...))`. Add a brief docstring noting the case-insensitive exact-match behavior and that archived areas are excluded.
+  - Action: Add a function near `list_areas()`. Signature: `def get_area_by_name(name: str) -> Area | None`. Body:
+    1. Strip whitespace from input (the input source is `body['text']` from a Slack slash command, which often has leading/trailing whitespace — divergent from `create_area`/`update_area` whose inputs come from validated Flask-WTF forms).
+    2. If empty after stripping, return `None`.
+    3. Use the codebase's case-insensitive comparison idiom: `db.func.lower(Area.name) == stripped.lower()` (matches `create_area`/`update_area`'s pattern of `db.func.lower(...)` rather than `ilike`).
+    4. Filter `Area.is_archived.is_(False)`.
+    5. Return the first match, or `None` if no match. Do NOT raise.
+  - Notes: The `.strip()` step is an intentional addition vs. the validated-form callers — Slack input is unsanitized. Add a docstring covering the case-insensitive exact-match behavior, the strip, and the archived-area exclusion.
 
 - [ ] **Task 2: Add tests for `get_area_by_name()`.**
   - File: `tests/test_services/test_equipment_service.py`
   - Action: Add a `TestGetAreaByName` class (or equivalent grouping) with tests covering: exact match returns the area; case-insensitive match returns the area (e.g., "woodshop" finds "Woodshop"); whitespace-padded input matches; no match returns `None`; archived area is excluded; multiple areas with overlapping names use exact-match precedence.
 
-- [ ] **Task 3: Add notification-emoji legend and update `_format_slack_message()`; add `status_changed` event branch.**
+- [ ] **Task 3: Update `_format_slack_message()` — emoji prefixes, `status_changed` branch, and resolved-text differentiation (consolidates F46).**
   - File: `esb/services/notification_service.py`
-  - Action: Near the top of the module (after imports), add the prefix constants:
+  - Action 1 — add prefix constants near the top of the module (after imports):
     ```python
     _NEW_REPORT_PREFIX = ':rotating_light: '
     _SAFETY_RISK_PREFIX = ':warning: *SAFETY RISK* :warning: '
@@ -245,22 +251,52 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
     _ETA_PREFIX = ':calendar: '
     _RESOLVED_PREFIX = ':white_check_mark: '
     ```
-  - Then in `_format_slack_message()` (function defined around line 276; locate by symbol, not line number):
-    - `new_report` branch: prefix text with `_SAFETY_RISK_PREFIX` if `has_safety_risk` else `_NEW_REPORT_PREFIX` (drop the inline `safety_prefix` variable; the prefix is one-or-the-other now).
+  - Action 2 — in `_format_slack_message()` (locate by symbol), make ALL of these changes in one pass to keep the function consistent:
+    - `new_report` branch: prefix text with `_SAFETY_RISK_PREFIX` if `has_safety_risk` else `_NEW_REPORT_PREFIX` (drop the inline `safety_prefix` variable; prefix is one-or-the-other).
     - `severity_changed` branch: prefix with `_SAFETY_RISK_PREFIX` if `has_safety_risk` else `_SEVERITY_PREFIX`.
-    - `eta_updated` branch: prefix with `_ETA_PREFIX`.
-    - `resolved` branch: refactor to use `_RESOLVED_PREFIX`.
-    - **NEW `status_changed` branch:** payload keys are `event_type='status_changed'`, `equipment_name`, `area_name`, `old_status`, `new_status`. Format: `f'{_STATUS_PREFIX}Status changed: *{equipment_name}* ({area_name})\\n{old_status} -> {new_status}'`. No safety-risk prefix on this branch (status changes are not severity-bearing).
-  - Notes: existing `:warning: *SAFETY RISK* :warning:` framing is preserved when `has_safety_risk` is true; non-safety updates pick up the new event-specific emoji.
+    - `eta_updated` branch: prefix text with `_ETA_PREFIX`.
+    - `resolved` branch (F25 — differentiate by `new_status`):
+      ```python
+      elif event_type == 'resolved':
+          new_status = payload.get('new_status', 'Resolved')
+          if new_status == 'Resolved':
+              text = (
+                  f'{_RESOLVED_PREFIX}*{equipment_name}* ({area_name}) is back in service\n'
+                  f'Status: {new_status}'
+              )
+          else:
+              # Closed-as-Duplicate / Closed-as-No-Issue-Found etc. — closure, not "back in service"
+              text = (
+                  f'{_RESOLVED_PREFIX}*{equipment_name}* ({area_name}) closed: {new_status}\n'
+                  f'Status: {new_status}'
+              )
+      ```
+      Note (F51): both branches keep the two-line `\nStatus: ...` shape so message height is consistent. The first line differs by closure type; the second line is identical.
+    - **NEW `status_changed` branch:** payload keys are `event_type='status_changed'`, `equipment_name`, `area_name`, `old_status`, `new_status`. Format:
+      ```python
+      elif event_type == 'status_changed':
+          old_status = payload.get('old_status', 'Unknown')
+          new_status = payload.get('new_status', 'Unknown')
+          text = (
+              f'{_STATUS_PREFIX}Status changed: *{equipment_name}* ({area_name})\n'
+              f'{old_status} -> {new_status}'
+          )
+      ```
+      No safety-risk prefix on this branch (status changes are not severity-bearing).
+  - Notes: existing `:warning: *SAFETY RISK* :warning:` framing is preserved when `has_safety_risk` is true; non-safety updates pick up the new event-specific emoji. This task is the SINGLE source of truth for `_format_slack_message`'s body — earlier drafts split this across multiple sub-tasks; consolidated here per F46 to prevent contradictory edits.
 
-- [ ] **Task 3b: Wire `status_changed` notification trigger in `repair_service.update_repair_record` (F26 — control flow explicit).**
-  - File: `esb/services/repair_service.py` (function `update_repair_record`, status-handling block near the bottom — locate by symbol, not line number).
-  - Action: The existing code has this structure (open + closed status changes both go through the same outer `if`):
+- [ ] **Task 3b: Wire `status_changed` notification trigger in `repair_service.update_repair_record` (F26 + F45 — scoped replacement).**
+  - File: `esb/services/repair_service.py` (function `update_repair_record`, locate by symbol)
+  - Action: Locate the existing **`Resolved trigger:` `if` block** (the first of three sibling `if` blocks for status / severity / eta notifications). **Modify ONLY that one `if` block** — the sibling `if 'severity' in audit_changes:` and `if 'eta' in audit_changes:` blocks immediately after it are UNCHANGED.
+    Existing block:
     ```python
     # Resolved trigger: status changed to a resolved/closed status
     if 'status' in audit_changes and audit_changes['status'][1] in CLOSED_STATUSES:
         if config_service.get_config('notify_resolved', 'true') == 'true':
-            _queue_slack_notification(record.equipment, 'resolved', {...})
+            _queue_slack_notification(record.equipment, 'resolved', {
+                'old_status': audit_changes['status'][0],
+                'new_status': audit_changes['status'][1],
+            })
     ```
     Replace with:
     ```python
@@ -278,56 +314,40 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
                 'new_status': audit_changes['status'][1],
             })
     ```
+    The two sibling `if` blocks for severity and eta that follow this block are NOT touched.
   - **Critical control-flow note (F26):** the `elif` chains to the OUTER `if 'status' in audit_changes and ... CLOSED_STATUSES`, NOT to the inner `notify_resolved` config check. Concretely:
     - Status → Closed-* with `notify_resolved=true`: outer `if` true → fires `resolved`. Elif does NOT run.
     - Status → Closed-* with `notify_resolved=false`: outer `if` true → no queue. Elif does NOT run. (Silence — see AC 39.)
     - Status → open with `notify_status_changed=true`: outer `if` false → elif true → fires `status_changed`.
     - Status → open with `notify_status_changed=false`: elif true but inner check false → no queue.
-  - Notes: No DB migration needed (config_service uses key/value strings; new keys just get the default until set). The `resolved` event payload now also carries `old_status` for downstream-text differentiation (see Task 3e).
+  - **`log_mutation` for `status_changed` (F33 / AC 37):** `_queue_slack_notification` already calls `notification_service.queue_notification` which already calls `log_mutation('notification.queued', ...)`. The new `status_changed` event flows through this same path — no extra `log_mutation` call needed. Audit trail symmetry with `severity_changed` / `eta_updated` is automatic.
+  - Notes: No DB migration needed (config_service uses key/value strings; new keys just get the default until set).
 
-- [ ] **Task 3d: Wire `notify_status_changed` into the admin config UI (F22).**
+- [ ] **Task 3c: Add tests for the new `_format_slack_message` branches and notification trigger.**
+  - File: `tests/test_services/test_notification_service.py` (`TestFormatSlackMessage`)
+  - Action: Add `test_status_changed_format` asserting payload `{'event_type': 'status_changed', ..., 'old_status': 'New', 'new_status': 'In Progress'}` produces text containing `:arrows_counterclockwise:`, equipment + area names, and `New -> In Progress`. Add `test_resolved_format_with_resolved_status` (asserts existing "back in service" wording when new_status='Resolved'), `test_resolved_format_with_duplicate_status` (asserts "closed: Closed - Duplicate" wording), `test_resolved_format_with_no_issue_found_status` (asserts "closed: Closed - No Issue Found" wording).
+  - File: `tests/test_services/test_repair_service.py`
+  - Action: Add a test verifying that updating a repair from `New` → `In Progress` queues a `slack_message` notification with `event_type='status_changed'`. Add a complementary test verifying that updating to a CLOSED_STATUSES value queues `resolved` and does NOT also queue `status_changed`. Add a test verifying `notify_status_changed='false'` config disables the open-transition queue. Add a test verifying `notify_resolved='false'` + transition to CLOSED → no notification queued at all (cross-product AC 39).
+
+- [ ] **Task 3d: Wire `notify_status_changed` into the admin config UI (F22 + F52 — placed between severity and eta to match legend order).**
   - File: `esb/forms/admin_forms.py`
-  - Action: In `AppConfigForm` (around line 33), add a new field after `notify_eta_updated`:
+  - Action: In `AppConfigForm` (locate by symbol), add a new field **between `notify_severity_changed` and `notify_eta_updated`** (so the legend order — severity, status, eta — is reflected in the admin UI per F52):
     ```python
     notify_status_changed = BooleanField('Repair status changed (open transitions)')
     ```
-  - File: `esb/views/admin.py` (`app_config` view, around line 245)
-  - Action: After the existing `notify_eta_updated` GET-init line (around line 263-265), add:
+  - File: `esb/views/admin.py` (`app_config` view, locate by symbol)
+  - Action: After the existing `notify_severity_changed` GET-init line, add:
     ```python
     form.notify_status_changed.data = (
         config_service.get_config('notify_status_changed', 'true') == 'true'
     )
     ```
-    In the `config_keys` list (around line 268-274), add `('notify_status_changed', 'true')` after `('notify_eta_updated', 'true')`.
+    In the `config_keys` list, add `('notify_status_changed', 'true')` between `('notify_severity_changed', 'true')` and `('notify_eta_updated', 'true')`.
   - File: `esb/templates/admin/config.html`
-  - Action: After the `notify_eta_updated` switch block (around lines 71-73), add a parallel switch block for `notify_status_changed` matching the existing markup pattern. Use form-check / form-switch markup identical to the other four fields.
+  - Action: Insert a parallel switch block for `notify_status_changed` between the existing severity-changed and eta-updated switch blocks. Use form-check / form-switch markup identical to the other four fields.
   - File: `tests/test_views/test_admin.py`
   - Action: Add a test that POSTs `notify_status_changed=on` (and the other notify flags) to `/admin/config` and asserts `config_service.get_config('notify_status_changed') == 'true'` afterward; mirror the existing test for `notify_eta_updated`.
-  - Notes: This is a hard ship-blocker — without it, staff have no UI to toggle the new key. The default-on behavior means deployments inherit notifications automatically, but operators need a way to disable them when noisy.
-
-- [ ] **Task 3e: Differentiate `resolved` notification text by closed-status target (F25).**
-  - File: `esb/services/notification_service.py` (`_format_slack_message`, `resolved` branch).
-  - Action: Currently the `resolved` branch always emits `:white_check_mark: *<eq>* (...) is back in service\\nStatus: <new_status>`. That wording is wrong for `Closed - Duplicate` and `Closed - No Issue Found` — those are closures, not "back in service." Modify the branch:
-    ```python
-    elif event_type == 'resolved':
-        new_status = payload.get('new_status', 'Resolved')
-        if new_status == 'Resolved':
-            text = (
-                f'{_RESOLVED_PREFIX}*{equipment_name}* ({area_name}) is back in service\n'
-                f'Status: {new_status}'
-            )
-        else:
-            text = (
-                f'{_RESOLVED_PREFIX}*{equipment_name}* ({area_name}) closed: {new_status}'
-            )
-    ```
-  - Notes: The `resolved` event still fires for all CLOSED_STATUSES transitions (no behavior change in the queue), but the rendered text now distinguishes a true "back in service" resolution from a closure-without-fix. Add tests: `test_resolved_format_with_resolved_status` (existing wording), `test_resolved_format_with_duplicate_status` (new wording), `test_resolved_format_with_no_issue_found_status` (new wording).
-
-- [ ] **Task 3c: Add tests for `status_changed` notification path.**
-  - File: `tests/test_services/test_notification_service.py`
-  - Action: In `TestFormatSlackMessage`, add `test_status_changed_format` asserting payload `{'event_type': 'status_changed', ..., 'old_status': 'New', 'new_status': 'In Progress'}` produces text containing `:arrows_counterclockwise:`, the equipment + area names, and `New -> In Progress`.
-  - File: `tests/test_services/test_repair_service.py`
-  - Action: Add a test verifying that updating a repair from `New` → `In Progress` queues a `slack_message` notification with `event_type='status_changed'`. Add a complementary test verifying that updating to a CLOSED_STATUSES value queues `resolved` and does NOT also queue `status_changed`. Add a test verifying `notify_status_changed='false'` config disables the queue.
+  - Notes: ship-blocker — without it, staff have no UI to toggle the new key. The default-on behavior means deployments inherit notifications automatically, but operators need a way to disable them when noisy. Placement between severity and eta keeps the form aligned with the legend's semantic ordering (F52).
 
 - [ ] **Task 4: Update `TestFormatSlackMessage` tests for new emoji prefixes.**
   - File: `tests/test_services/test_notification_service.py`
@@ -350,19 +370,31 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
     Body: emit `:bar_chart: *<area name>*` header, then for each equipment item emit one line `<emoji> *<name>* — <label>` (use `_STATUS_EMOJI` lookup); for non-green items append a blockquote with issue description, ETA (if present, formatted `'%b %d, %Y'`), and assignee (if present). Returns the joined text.
   - Notes: input shape matches one element of `status_service.get_area_status_dashboard()`; assignee is not in that shape — use `status_service.get_equipment_status_detail(equipment_id)` once per non-green equipment for assignee, OR extend `get_single_area_status_dashboard` to include assignee. **Decision: include assignee inline by extending the dashboard shape** — see Task 5b. (Avoids per-equipment N+1 in this formatter.)
 
-- [ ] **Task 5b: Extend area-dashboard payload to include `assignee_name` (F23 — with eager-load).**
+- [ ] **Task 5b: Extend area-dashboard payload to include `assignee_name` (F23 + F43 + F48 — with eager-load on ALL helper-callers).**
   - File: `esb/services/status_service.py`
-  - Action: In `_derive_status_from_records()` (locate by symbol), attach the assignee username (when present, from the highest-severity record) to the per-equipment status dict under key `assignee_name`. Mirrors the existing key in `get_equipment_status_detail()`. The new key is added to ALL paths that go through `_derive_status_from_records()` — so `compute_equipment_status()`, `get_area_status_dashboard()`, and `get_single_area_status_dashboard()` all surface it consistently.
-  - **Eager-load (F23):** The dashboard's prefetch query in `get_area_status_dashboard()` selects `RepairRecord` without loading the `assignee` relationship. Add `joinedload(RepairRecord.assignee)` to the prefetch so the new `best_record.assignee.username` access does NOT trigger a per-record lazy load — otherwise we ship an N+1 regression on the public dashboard, kiosk, and static-page generator. Apply the same `joinedload` to `get_single_area_status_dashboard()`'s open-records query.
-  - Notes: changing the shape of dashboard returns is backward-compatible because callers only consume documented keys (Task 0b confirms). Verify no existing test explicitly asserts the *absence* of `assignee_name` (grep for `'assignee_name' not in`).
+  - Action 1 — modify `_derive_status_from_records()` (locate by symbol). Attach the assignee username (when present, from the highest-severity record — or from `records[0]` in the no-best-record path) to the per-equipment status dict under key `assignee_name`. Use the same logic as the existing helper in `get_equipment_status_detail` that resolves `best_record.assignee.username`. The new key is added to ALL paths through `_derive_status_from_records()` — `compute_equipment_status()`, `get_area_status_dashboard()`, and `get_single_area_status_dashboard()` all surface it consistently.
+  - Action 2 (F43) — **remove the now-redundant explicit assignment** in `get_equipment_status_detail()`. Currently that function spreads `**status` then adds `'assignee_name': assignee_name` in a separate dict construction. Since `_derive_status_from_records` now provides the key, the explicit override is redundant and would silently shadow the helper's value. Simplify `get_equipment_status_detail()` to just `return _derive_status_from_records(open_records)` (or keep its body for the `EquipmentNotFound` raising and structure, but drop the duplicate `assignee_name` set).
+  - Action 3 (F23 + F48) — eager-load the `assignee` relationship on EVERY query that powers `_derive_status_from_records()`:
+    - `_get_open_records(equipment_id)` — used by `compute_equipment_status` and `get_equipment_status_detail` (the QR-code page). Add `.options(joinedload(RepairRecord.assignee))` to the SELECT.
+    - `get_area_status_dashboard()` — open-records prefetch. Add the same `joinedload`.
+    - `get_single_area_status_dashboard()` — open-records prefetch. Add the same `joinedload`.
+    Without all three, callers would still hit a lazy load on `best_record.assignee.username`, contradicting AC 34's "all callers" promise.
+  - Notes: changing the shape of dashboard returns is backward-compatible because callers only consume documented keys (Task 0b confirms). Verify no existing test explicitly asserts the *absence* of `assignee_name` (grep for `'assignee_name' not in`). Verify after Action 2 that `get_equipment_status_detail`'s tests still pass (the function's external contract is unchanged — same keys, same values).
+
+- [ ] **Task 5c: Add tests for `_derive_status_from_records` shape change + dashboard eager-load (F62).**
+  - File: `tests/test_services/test_status_service.py`
+  - Action:
+    - Add tests asserting `_derive_status_from_records()` (or its public callers `compute_equipment_status`, `get_area_status_dashboard`, `get_single_area_status_dashboard`) include the `assignee_name` key — set when the highest-severity record has an assignee, `None` otherwise.
+    - Add a query-count test (AC 34): use a SQLAlchemy `event.listen('before_cursor_execute')` listener (or pytest fixture) to count queries during a `get_area_status_dashboard()` call with N non-green records each having an assignee. Assert the assignee fetch did NOT add N additional queries — the prefetch's `joinedload(RepairRecord.assignee)` keeps it O(1).
+    - Add a regression test verifying `get_equipment_status_detail` still returns `assignee_name` correctly after Task 5b's de-duplication of the explicit assignment.
 
 - [ ] **Task 6: Update `format_status_summary()` to include non-green equipment detail + footer hint.**
-  - File: `esb/slack/forms.py` (lines 11-43)
+  - File: `esb/slack/forms.py` (function `format_status_summary` — locate by symbol)
   - Action: After each per-area count line, iterate over the area's equipment list and render a sub-bullet for every non-green item with severity emoji + name + brief description (truncated to 80 chars; suffix `…` if truncated) + ETA (if present, formatted `'%b %d, %Y'`). After all areas, append a footer line: `_Tip: try `/esb-status <area name>` for full details on one area._`
   - Notes: the existing `:bar_chart: *Equipment Status Summary*` header stays. Empty-state ('No equipment has been registered yet.') stays.
 
 - [ ] **Task 7: Update `/esb-status` handler for area-name resolution + new formatters.**
-  - File: `esb/slack/handlers.py` (lines 245-281)
+  - File: `esb/slack/handlers.py` (function `handle_esb_status` — locate by symbol)
   - Action: In `handle_esb_status`, when `search_term` is non-empty:
     1. First call `equipment_service.get_area_by_name(search_term)`.
     2. If that returns an area, call `status_service.get_single_area_status_dashboard(area.id)` and format with `format_area_status_detail()`.
@@ -450,7 +482,7 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
        - `set_eta`: read `eta_block.eta.get('selected_date')`. If `None` → `ack(response_action='errors', errors={'eta_block': 'ETA is required when "Set ETA" is chosen.'})` and return. Else parse to `date` via `datetime.strptime(eta_str, '%Y-%m-%d').date()` and set `changes['eta']`.
        - `set_status`: read `status_block.status.get('selected_option')`. If `None` → `ack(response_action='errors', errors={'status_block': 'Status is required when "Set Status" is chosen.'})` and return. Else set `changes['status']`.
        - `resolve_with_note`: read `note_block.note.get('value')`. If blank/whitespace → `ack(response_action='errors', errors={'note_block': 'Note is required when resolving.'})` and return. Else set `changes['status'] = 'Resolved'` and `changes['note'] = note_text.strip()`.
-    6. Call `repair_service.update_repair_record(repair_record_id, updated_by=esb_user.username, author_id=esb_user.id, **changes)`. Wrap in try/except for `ValidationError` (return `ack(response_action='errors', errors={'action_block': str(e)})`) and generic `Exception` (log + ack on `action_block`).
+    6. Call `repair_service.update_repair_record(repair_record_id, updated_by=esb_user.username, author_id=esb_user.id, **changes)`. Wrap in try/except for `ValidationError` (call `ack(response_action='errors', errors={'action_block': str(e)})` AND `return` — must not fall through to step 7) and generic `Exception` (log + ack on `action_block` AND `return`). **All earlier `ack(response_action='errors', ...)` calls in steps 2-5 must also be followed by `return`** — a missed return would cause double-ack and post the success ephemeral despite the error. Treat the "must return" rule as load-bearing: every error-ack is a terminal state.
     7. On success: `ack()` and post ephemeral confirmation matching the action and the legend. **Use declarative wording (F28) so the message is accurate even when the value matches the current state and no DB change occurred.** **Use closed-aware emoji (F35) for `set_status`:**
        - `claim` → `:arrows_counterclockwise: Repair #<id> claimed by <username>` (declarative — tells the user the post-state, not "updated")
        - `set_eta` → `:calendar: Repair #<id>: ETA is <date>` (declarative)
@@ -460,7 +492,7 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
        - `resolve_with_note` → `:white_check_mark: Repair #<id> resolved`
   - Notes: Step 6 calls `update_repair_record` exactly once; the service's existing `if old_value == new_value: continue` guard (in `update_repair_record`'s field-iteration loop) means a no-op submission (e.g., set_status to current status) won't create timeline entries — see ACs 19a/21a. The declarative wording above is honest about post-state regardless of whether a change occurred.
 
-  - **`note` is special-cased in `update_repair_record` (F40):** the service pops `note` from `**changes` BEFORE validating unknown keys against `_REPAIR_UPDATABLE_FIELDS`, so passing `note='...'` works even though `note` is not a model field. The note timeline entry is created independently of the `if old == new: continue` no-op guard. Implementers should NOT add `note` to `_REPAIR_UPDATABLE_FIELDS`. Test authors should NOT expect `note` to appear in `audit_changes` as a `(old, new)` tuple — it's appended as `[None, note_text]` via a separate code path.
+  - **`note` is special-cased in `update_repair_record` (F40 + F44 corrected):** the service pops `note` from `**changes` BEFORE validating unknown keys against `_REPAIR_UPDATABLE_FIELDS`, so passing `note='...'` works even though `note` is not a model field. The note timeline entry is created independently of the `if old == new: continue` no-op guard. Implementers should NOT add `note` to `_REPAIR_UPDATABLE_FIELDS`. Note **DOES appear** in `audit_changes` as `audit_changes['note'] = [None, note_text]` (set explicitly by the service, not via the field-iteration loop) — test authors who assert on `audit_changes` should expect `'note'` to be a key when a note was added. The asymmetry vs. other fields: it's a `[None, value]` pair, never a `[old_value, new_value]` pair, since notes are append-only.
 
 - [ ] **Task 13: Add a `/esb-report` regression test (F13).**
   - File: `tests/test_slack/test_handlers.py`
@@ -537,8 +569,8 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
   - Action: Update `/esb-status` description (in the slash-command list) to match the new behavior: per-area summary now includes non-green equipment detail, plus `<area name>` resolves to a full area view.
   - File: `docs/manual_testing.md`
   - Action: Add a "Slack UX (issue #34)" section enumerating manual smoke tests — the same checklist as Task 24 — so future regression testing has a documented walkthrough.
-  - File: `docs/administrators.md` (if it documents config keys; if not, skip — confirm by grepping for `notify_resolved`)
-  - Action: Add `notify_status_changed` to the documented config-key list with description "Send a Slack message when a repair's status changes between open states (e.g., New → In Progress)."
+  - File: `docs/administrators.md`
+  - Action: Locate the existing notification-config documentation (grep for `notify_resolved` or `notify_severity_changed`). Add `notify_status_changed` to the documented config-key list with description "Send a Slack message when a repair's status changes between open states (e.g., New → In Progress)." If `docs/administrators.md` doesn't currently document the `notify_*` keys, add a small subsection covering all five keys (new_report, resolved, severity_changed, status_changed, eta_updated) — operators need a single place to learn about the toggles.
   - Notes: Each doc edit must reflect the as-shipped behavior; Task 24's manual smoke test is the source of truth for the words used. Line numbers are intentionally omitted — locate by section heading.
 
 - [ ] **Task 22: Run the full test suite locally and fix anything red.**
@@ -557,8 +589,8 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
     - `/esb-repair <equipment-name>` → create-record modal (regression).
     - `/esb-update <id>` → existing full-edit modal (regression).
     - **Outbound notifications:** trigger one of each: new_report (with and without safety_risk), severity_changed, eta_updated, **status_changed (new — change repair to In Progress via dispatcher)**, resolved (with new_status `Resolved` — verify "back in service" text), **closed-as-duplicate (new — verify "closed: Closed - Duplicate" text per F25, NOT "back in service")**, **closed-as-no-issue (new — same)**. Verify each message in the configured channel begins with the correct legend prefix.
-    - Toggle `notify_status_changed` off via the new admin UI switch (Task 3d) → verify subsequent open-status transitions are silent on Slack.
-    - Toggle `notify_resolved` off → verify CLOSED transitions are silent on Slack AND verify `status_changed` does NOT fire (cross-product AC 39).
+    - Toggle `notify_status_changed` off via the new admin UI switch (Task 3d) → verify subsequent open-status transitions are silent on Slack. Toggle back on; verify they resume.
+    - (Cross-product behavior of `notify_resolved=false` + CLOSED transition is statically guaranteed by Task 3b's `if/elif` structure and tested in unit tests per AC 39 — no manual verification needed.)
 
 ### Acceptance Criteria
 
@@ -588,10 +620,10 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
 - [ ] **AC 13:** Given a technician runs `/esb-repair` with no arguments and no open repair records exist, when the command is dispatched, then no modal opens and an ephemeral message `:wrench: No open repairs.` is posted.
 - [ ] **AC 14:** Given a technician runs `/esb-repair <text>` with non-empty arguments, when the command is dispatched, then the existing create-record modal (callback_id `repair_create_submission`) opens (regression).
 - [ ] **AC 15:** Given a non-technician/non-staff user runs `/esb-repair`, when the command is dispatched, then an ephemeral error `:x: You must have a Technician or Staff account linked to use this command.` is posted and no modal opens.
-- [ ] **AC 16 (dispatcher push — F32 dual-form):** Given the dispatcher modal is open and the user selects a repair and submits, when the submission is processed, then the action modal (with `private_metadata == str(repair_id)` and `callback_id == 'repair_action_submission'`) is presented to the user via the path chosen in Task 0:
+- [ ] **AC 16 (dispatcher push — F32 dual-form, F50 cleanup):** Given the dispatcher modal is open and the user selects a repair and submits, when the submission is processed, then the action modal (with `private_metadata == str(repair_id)` and `callback_id == 'repair_action_submission'`) is presented to the user via the path chosen in Task 0. **Once Task 0 selects a path, the implementer MUST delete the un-chosen branch from this AC text in the same PR** — leaving only the chosen path's assertion to avoid carrying dead acceptance criteria forward. The two candidate forms:
   - If `response_action='push'` is verified working: `ack(response_action='push', view=<action_modal>)` is called.
   - If the `views_push` fallback is chosen: `ack()` is called normally AND `client.views_push(trigger_id=body['trigger_id'], view=<action_modal>)` is invoked.
-  - The chosen path is documented in `repair_dispatcher_submission`'s top-level comment per Task 0's decision artifact.
+  The chosen path is documented in `repair_dispatcher_submission`'s top-level comment per Task 0's decision artifact.
 
 #### `/esb-repair` action modal (Issue point #4 + Technician journeys 1-4)
 
@@ -600,7 +632,7 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
 - [ ] **AC 19 (Set ETA, value differs):** Given the action modal is submitted with action `set_eta` and a date that differs from the record's current `eta`, then the repair's `eta` is set to that date AND an `eta_update` timeline entry is created.
 - [ ] **AC 19a (Set ETA, same value — F12, F42):** Given the action modal is submitted with action `set_eta` and a date matching the record's current `eta`, then the service call returns successfully with no new timeline entry created (per `update_repair_record`'s no-op `if old == new: continue` guard, locate by symbol). Confirmation ephemeral is still posted using the declarative wording from Task 12 step 7 (e.g., `:calendar: Repair #X: ETA is <date>`) — the message must be true regardless of whether an actual change occurred (F28).
 - [ ] **AC 20 (Set ETA missing):** Given the action modal is submitted with action `set_eta` and no date selected, then `ack(response_action='errors', errors={'eta_block': ...})` is returned and no DB write occurs.
-- [ ] **AC 21 (Set Status, value differs):** Given the action modal is submitted with action `set_status` and one of the three permitted statuses (`In Progress`, `Closed - Duplicate`, `Closed - No Issue Found`) selected AND it differs from the record's current `status`, then the repair's `status` is updated AND a `status_change` timeline entry is created.
+- [ ] **AC 21 (Set Status, value differs):** Given the action modal is submitted with action `set_status` and one of the three permitted statuses (`In Progress`, `Closed - Duplicate`, `Closed - No Issue Found`) selected AND it differs from the record's current `status`, then the repair's `status` is updated AND a `RepairTimelineEntry` with `entry_type='status_change'` (singular — matches the existing service code) is created.
 - [ ] **AC 21a (Set Status, same value — F12, F28):** Given the action modal is submitted with action `set_status` and a status matching the record's current `status`, then no new `status_change` timeline entry is created. Confirmation ephemeral is still posted using the declarative wording from Task 12 step 7 (e.g., `:arrows_counterclockwise: Repair #X: status is <X>` for open status, or `:white_check_mark: Repair #X closed: <X>` for closed status — F35).
 - [ ] **AC 22 (Set Status missing):** Given the action modal is submitted with action `set_status` and no status selected, then `ack(response_action='errors', errors={'status_block': ...})` is returned and no DB write occurs.
 - [ ] **AC 23 (Resolve with Note):** Given the action modal is submitted with action `resolve_with_note` and a non-empty note, then the repair's `status` is set to `Resolved` AND a `note` timeline entry is created with the supplied text.
@@ -619,20 +651,23 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
 #### `/esb-update` regression (Technician journey 5)
 
 - [ ] **AC 26:** Given a technician runs `/esb-update <id>` with a valid existing repair record id, when the command is dispatched, then the existing full-edit modal (`repair_update_submission`) opens unchanged from current behavior.
-- [ ] **AC 27:** Given the listing of open repairs is needed, when the user runs `/esb-repair` (no args), then the dispatcher list satisfies the "list all open/active repairs" use case (no separate `/esb-repairs` command exists).
+- [ ] **AC 27 (Dispatcher list completeness — F54 made testable):** Given N open repair records exist (status not in `CLOSED_STATUSES`), when a technician runs `/esb-repair` (no args) and the dispatcher modal opens, then the dispatcher's `static_select` `option_groups` contain exactly N options — every record returned by `repair_service.get_repair_queue()` (no filter args) is represented. Closed records are NOT listed. No separate `/esb-repairs` command exists.
 
 #### Non-regression
 
 - [ ] **AC 28:** Given the existing `make test` and `make lint` targets are run, when the change is complete, then both pass with no new failures.
 - [ ] **AC 29:** Given any handler that touches the DB, when invoked outside Flask app context (the production Socket-Mode case), then `_ensure_app_context` correctly pushes a context (verified via existing tests in `TestHandlersWithFlaskAppContext`).
 - [ ] **AC 30 (`/esb-report` distinct from dispatcher — F13):** Given a member runs `/esb-report`, when the command is dispatched, then the modal opened has `callback_id='problem_report_submission'` (NOT `repair_dispatcher_submission` and NOT `repair_create_submission`), confirming the three commands stay distinct after the refactor.
-- [ ] **AC 31 (Within-area dispatcher sort — F20, F38):** Given an already-sorted input list from `get_repair_queue()` (ordered by severity priority then `created_at` ascending) is passed to `build_repair_dispatcher_modal`, when option_groups are produced, then within each area's group the option order **preserves the caller's input order** (the builder does not re-sort, it only partitions by area). Areas appear A-Z across groups. The test must construct an input fixture with mixed-severity records in `(severity_priority, created_at_asc)` order and assert the option_group's options list matches that order.
+- [ ] **AC 31 (Dispatcher sort — F20, F38, F49 reconciled):** Given an already-sorted input list from `get_repair_queue()` (ordered by severity priority then `created_at` ascending) is passed to `build_repair_dispatcher_modal`, when option_groups are produced, then:
+  1. **Within each area's group**, the option order **preserves the caller's input order** (the builder does NOT re-sort within a group — Down before Degraded, oldest-first within each severity).
+  2. **Across area groups**, areas are presented **alphabetically by area name** (the builder DOES sort the area axis — A→Z — irrespective of which area's first record came first in the input).
+  The test must construct an input fixture with multiple areas + mixed-severity records and assert (a) within-group preservation of `(severity_priority, created_at_asc)` order, AND (b) alphabetical ordering of the option_groups by area name.
 - [ ] **AC 32 (Documentation correctness — F15):** Given the spec is shipped, when a reviewer reads `docs/technicians.md`, `docs/members.md`, and `docs/manual_testing.md`, then each document accurately describes the new dispatcher flow, the `/esb-status` area-name resolution, the new emoji legend, and the new `status_changed` notification — with no references to removed or changed behaviors left untouched.
 - [ ] **AC 33 (Dashboard shape audit — F6, F24):** Given Task 5b adds `assignee_name` to per-equipment status dicts, when the public web view (`esb/views/public.py` — dashboard, kiosk, AND QR-code equipment page), and the static-page generator (`esb/services/static_page_service.py`) are exercised, then they continue to render correctly with no template errors and no behavior change visible to end users (templates only access named keys).
 - [ ] **AC 34 (Dashboard eager-load — F23):** Given a dashboard render with N non-green equipment items, when SQL queries are profiled (e.g., via SQLAlchemy `event.listen('before_cursor_execute')` or pytest fixture counting), then the number of queries to fetch assignee usernames is O(1) — not O(N). Specifically, the prefetch query in `get_area_status_dashboard()` and `get_single_area_status_dashboard()` MUST include `joinedload(RepairRecord.assignee)` so `best_record.assignee.username` access is eager.
 - [ ] **AC 35 (Admin UI toggle for `notify_status_changed` — F22):** Given a staff user navigates to the admin app-config page, when they view the page, then a switch labelled "Repair status changed (open transitions)" is visible. When they toggle it off and submit, then `config_service.get_config('notify_status_changed') == 'false'` afterward AND no `status_changed` notification is queued for any subsequent open-status transition.
 - [ ] **AC 36 (`format_status_summary` all-green-area row — F34):** Given an area exists with all equipment in green status (no open repairs), when `format_status_summary` renders, then that area's count line appears (e.g., `*Woodshop* — 5 :white_check_mark: operational, 0 :warning: degraded, 0 :x: down`) AND no equipment bullets are rendered beneath it (since there are no non-green items to bullet).
-- [ ] **AC 37 (Notification logging consistency — F33):** Given a `status_changed` notification is queued, when `log_mutation` records the queue event, then it produces an audit-log line equivalent in shape to the existing `severity_changed` and `eta_updated` queue events (entity_type, entity_id, action, payload reference) — verify no asymmetry in observability between old and new event types.
+- [ ] **AC 37 (Notification logging consistency — F33, F53 made testable):** Given a `status_changed` notification is queued via `_queue_slack_notification` → `notification_service.queue_notification`, when the queue path runs, then a `log_mutation('notification.queued', 'system', {...})` line is emitted with `type='slack_message'` and the same shape as for `severity_changed` / `eta_updated` queue events. Test in `tests/test_services/test_repair_service.py` using the existing `capture` fixture (or equivalent log-capture) — assert the `notification.queued` event's payload references match across event_types. (Implementation: Task 3b's snippet calls `_queue_slack_notification` which already routes through `queue_notification` which already calls `log_mutation` — no new logging code needed; the AC is purely a coverage check.)
 - [ ] **AC 38 (Closed-status notification text — F25):** Given a repair's status transitions to `Resolved`, when the worker formats the Slack message, then the text reads `:white_check_mark: *<eq>* (<area>) is back in service\nStatus: Resolved`. Given the transition is to `Closed - Duplicate` or `Closed - No Issue Found`, then the text reads `:white_check_mark: *<eq>* (<area>) closed: <new-status>` — NOT "back in service."
 - [ ] **AC 39 (Notification config cross-product — F39):** Given `notify_resolved='false'` AND a status transition into a CLOSED status, when notifications are processed, then NO `slack_message` notification is queued — neither `resolved` nor `status_changed`. (The elif structure must not incorrectly fall through when `notify_resolved` is disabled.)
 - [ ] **AC 40 (`/esb-repair <text>` equipment prefill — F27):** Given a technician runs `/esb-repair <equipment-name>` where the name matches exactly one piece of equipment, when the create-record modal opens, then that equipment's option is pre-selected in the equipment_select block. Given the name matches zero or multiple pieces of equipment, then the modal opens without preselection (current behavior preserved).
@@ -702,7 +737,7 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
   - F16 (`:bar_chart:` reuse) → documented as deliberate in legend.
   - F17 (line-number drift) → Codebase Patterns line refs stripped; new note added.
   - F18 (status emoji) → status changes use `:arrows_counterclockwise:`; AC 25 + Task 12 + Task 19 updated.
-  - F19 (Task 13 no-op) → replaced with the F13 regression test.
+  - F19 (original Task 13 was a no-op "verify legend by grepping" with no testable deliverable) → that draft was replaced; current Task 13 is the F13 `/esb-report` regression test.
   - F20 (within-area sort) → Task 8 algorithm specified; AC 31; Task 14 assertion.
   - F21 (Slack search/archive) → declined as noise (emoji prefixes are normal Slack content).
 
@@ -728,6 +763,29 @@ Tasks are ordered bottom-up: helpers first (no Slack dependency), then the forma
   - F40 (`note` special-casing in `update_repair_record`) → Task 12 has an explicit clarification block.
   - F41 (SQLAlchemy session boundary) → declined as undecided; handlers always wrap in `_ensure_app_context` per existing pattern.
   - F42 (line-number citation in AC 19a) → replaced with symbol-based reference.
+
+- **Adversarial-review fixes — round 3 (audit trail):**
+  - F43 (Task 5b would double-set `assignee_name` in `get_equipment_status_detail`) → Task 5b Action 2 removes the redundant explicit assignment.
+  - F44 (Task 12 F40 clarification incorrectly said `note` not in audit_changes) → corrected: `note` IS set as `[None, value]` in audit_changes.
+  - F45 (Task 3b "Replace with" snippet would delete sibling severity/eta blocks) → Task 3b explicitly scopes the replacement to the resolved-trigger `if` block ONLY; sibling severity/eta blocks unchanged.
+  - F46 (Task 3 and Task 3e contradicted each other on `_format_slack_message` resolved branch) → consolidated into Task 3 as the single source of truth; Task 3e removed (its content merged into Task 3).
+  - F47 (sub-task ordering 3 → 3b → 3d → 3e → 3c was wrong) → reordered: 3 (format) → 3b (trigger) → 3c (tests) → 3d (admin UI). Tests follow implementation; admin UI stays at the end.
+  - F48 (Task 5b eager-load missed `_get_open_records`) → Task 5b Action 3 lists all three query paths needing `joinedload(RepairRecord.assignee)`.
+  - F49 (Task 8 vs AC 31 sort contradiction) → AC 31 reworded: builder DOES sort areas alphabetically (across groups), preserves caller's order WITHIN a group.
+  - F50 (AC 16 dual-form leaves dead text after Task 0 picks a path) → AC 16 includes explicit "delete the un-chosen branch in the same PR" instruction.
+  - F51 (resolved-text 2-line vs 1-line shape inconsistency) → Task 3's resolved branch keeps the two-line `\nStatus:` shape for both Resolved and other Closed-* statuses.
+  - F52 (admin form field placement order) → Task 3d places `notify_status_changed` between severity and eta to match legend order.
+  - F53 (AC 37 had no implementing task) → AC 37 reworded as a coverage check; Task 3b's note clarifies that `log_mutation` already fires transitively via `queue_notification`.
+  - F54 (AC 27 was a use-case not a behavior) → reworded to assert exact-N options matching `get_repair_queue()` count.
+  - F55 (Task 24 verified statically-guaranteed outcome) → softened: cross-product is unit-tested (AC 39); manual smoke covers only the toggle-on / toggle-off behavior.
+  - F56 (`docs/administrators.md` task conditional but file not in `files_to_modify`) → file added; Task 21 unconditionally edits it.
+  - F57 (Task 12 missing explicit early-return after error-ack) → Task 12 step 6 explicitly requires `return` after every `ack(response_action='errors', ...)` call.
+  - F58 (audit-trail F19 stale text) → reworded to past-tense.
+  - F59 (line numbers still in tasks despite F17 audit claim) → stripped from Codebase Patterns "Files to Reference" table and surviving Task lines; replaced with symbol-based references.
+  - F60 (Task 1 strip vs cited convention) → strip retained as intentional (Slack input is unsanitized vs Flask-WTF inputs); divergence documented.
+  - F61 (`status_change` entry_type spelling) → AC 21 anchored to `entry_type='status_change'` literal.
+  - F62 (`tests/test_services/test_status_service.py` not tied to a task) → new Task 5c explicitly adds the tests for shape change and eager-load.
+  - F63 (AC 0b lists `get_equipment_status_detail`) → declined as noise; the audit there is still useful for verifying no template breaks.
 
 - **Closed status semantics:** "Set as Duplicate" → `Closed - Duplicate`, "No issue found" → `Closed - No Issue Found`. Both already exist in `REPAIR_STATUSES`; no schema changes.
 
