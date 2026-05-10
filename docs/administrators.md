@@ -464,9 +464,7 @@ docker inspect --format '{{.State.Health.Status}}' equipment-status-board-worker
 
 If the worker is reported as `unhealthy`, the autoheal sidecar will restart it automatically (typically within a minute).
 
-<a id="prometheus-metrics"></a>
-
-For metrics, log-based alerting, and recommended dashboards, see the [Monitoring and Alerting](#monitoring-and-alerting) section above.
+For metrics, log-based alerting, and recommended dashboards, see the [Monitoring and Alerting](#monitoring-and-alerting) section above. (External links to `#prometheus-metrics` continue to resolve — the new `### Prometheus Metrics` subsection auto-generates the same anchor.)
 
 ### Upload Storage
 
