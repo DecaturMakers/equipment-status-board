@@ -3,7 +3,7 @@
 import io
 import json
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 from esb.extensions import db as _db
 from esb.models.document import Document
@@ -356,6 +356,48 @@ class TestEquipmentDetailRepairHistory:
         resp = client.get(f'/equipment/{eq.id}')
         assert resp.status_code == 302
         assert '/auth/login' in resp.headers['Location']
+
+    def test_repair_history_shows_eta_in_table(
+        self, staff_client, make_equipment, make_repair_record,
+    ):
+        # Region-scoped: equipment.acquisition_date and warranty_expiration on
+        # the same page also use format_date, so we anchor to the table id.
+        eq = make_equipment(
+            'Table Saw', 'SawStop', 'PCS',
+            acquisition_date=None, warranty_expiration=None,
+        )
+        make_repair_record(
+            equipment=eq, status='New', severity='Down',
+            description='broken', eta=date(2026, 6, 15),
+        )
+        resp = staff_client.get(f'/equipment/{eq.id}')
+        assert re.search(
+            rb'<table[^>]*id="repair-history-table"[\s\S]*?Jun 15, 2026[\s\S]*?</table>',
+            resp.data,
+        )
+
+    def test_repair_history_eta_blank_when_unset(
+        self, staff_client, make_equipment, make_repair_record, tech_user,
+    ):
+        eq = make_equipment(
+            'Table Saw', 'SawStop', 'PCS',
+            acquisition_date=None, warranty_expiration=None,
+        )
+        # Assign so the only blank <td> in the row is the ETA cell -- otherwise
+        # an empty Assignee cell would also satisfy a naive `<td></td>` check.
+        make_repair_record(
+            equipment=eq, status='New', severity='Down', description='broken',
+            assignee_id=tech_user.id,
+        )
+        resp = staff_client.get(f'/equipment/{eq.id}')
+        table_match = re.search(
+            rb'<table[^>]*id="repair-history-table">([\s\S]*?)</table>',
+            resp.data,
+        )
+        assert table_match
+        # ETA cell renders empty (format_date(None) == '') and is the only
+        # blank <td> in this row.
+        assert table_match.group(1).count(b'<td></td>') == 1
 
 
 class TestEditEquipment:

@@ -1,6 +1,6 @@
 """Tests for Jinja2 custom template filters."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Flask
 
@@ -27,6 +27,22 @@ class TestFormatDate:
 
     def test_none_returns_empty(self):
         assert format_date(None) == ''
+
+    def test_format_date_accepts_date_object(self):
+        assert format_date(date(2026, 3, 15)) == 'Mar 15, 2026'
+
+    def test_format_date_accepts_iso_string(self):
+        assert format_date('2026-03-15') == 'Mar 15, 2026'
+
+    def test_format_date_returns_input_for_invalid_string(self):
+        # Defensive: never crash a render on a malformed string.
+        assert format_date('not-a-date') == 'not-a-date'
+
+    def test_runtime_locale_produces_english_month_abbreviations(self):
+        # Locale guard: if a future deployment pins a non-English LC_TIME,
+        # this fails fast with a clear root-cause signal.
+        assert date(2026, 1, 1).strftime('%b') == 'Jan'
+        assert date(2026, 6, 15).strftime('%b') == 'Jun'
 
 
 class TestFormatDatetime:

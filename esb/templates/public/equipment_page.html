@@ -12,9 +12,9 @@
 
   {% if status.color != 'green' and status.issue_description %}
   <p class="mt-3 fs-5">{{ status.issue_description }}</p>
-  {% if eta %}
-  <p class="text-muted">ETA: {{ eta.strftime('%b %d, %Y') }}</p>
   {% endif %}
+  {% if eta %}
+  <p class="text-muted">ETA: {{ eta|format_date }}</p>
   {% endif %}
 </div>
 

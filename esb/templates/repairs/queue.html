@@ -42,6 +42,7 @@
                 <th data-sort="area" role="button" class="sortable">Area <span class="sort-indicator"></span></th>
                 <th data-sort="age" role="button" class="sortable">Age <span class="sort-indicator"></span></th>
                 <th data-sort="status" role="button" class="sortable">Status <span class="sort-indicator"></span></th>
+                <th>ETA<span class="sort-indicator"></span></th>
                 <th data-sort="assignee" role="button" class="sortable">Assignee <span class="sort-indicator"></span></th>
             </tr>
         </thead>
@@ -71,6 +72,7 @@
                 <td>{{ record.equipment.area.name }}</td>
                 <td title="{{ record.created_at|format_datetime }}">{{ record.created_at|relative_time }}</td>
                 <td>{{ record.status }}</td>
+                <td class="queue-eta-cell" data-eta-iso="{{ record.eta.isoformat() if record.eta else '' }}">{{ record.eta|format_date }}</td>
                 <td>{{ record.assignee.username if record.assignee else '' }}</td>
             </tr>
             {% endfor %}
@@ -107,6 +109,9 @@
                     <span class="badge bg-info text-dark">{{ record.status }}</span>
                     &middot; {{ record.equipment.area.name }}
                     &middot; {{ record.created_at|relative_time }}
+                    {% if record.eta %}
+                    &middot; ETA: {{ record.eta|format_date }}
+                    {% endif %}
                 </div>
             </div>
         </div>

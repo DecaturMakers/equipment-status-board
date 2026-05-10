@@ -453,6 +453,28 @@ class TestUpdateRepairRecordSlackNotification:
         ).scalars().all()
         assert len(notifications) == 0
 
+    def test_eta_change_queues_static_page_push(self, app, make_area, make_equipment, staff_user):
+        """update_repair_record() with ETA-only change queues static_page_push."""
+        from datetime import date
+
+        from esb.models.pending_notification import PendingNotification
+
+        area = make_area(name='Woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, eta=date(2026, 3, 15),
+        )
+
+        notifications = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='static_page_push')
+        ).scalars().all()
+        assert len(notifications) == 1
+        assert 'eta' in notifications[0].payload['changes']
+
     def test_multiple_triggers_in_one_update(self, app, make_area, make_equipment, staff_user, capture):
         """Multiple triggers in one update (severity change + status->Resolved) queue multiple notifications."""
         from esb.models.pending_notification import PendingNotification

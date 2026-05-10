@@ -15,7 +15,7 @@
             <strong>{% if entry.new_value %}Assigned to {{ entry.new_value }}{% else %}Unassigned{% endif %}</strong>
             {% elif entry.entry_type == 'eta_update' %}
             <span class="badge bg-secondary me-1">ETA</span>
-            <strong>ETA {% if entry.new_value %}set to {{ entry.new_value }}{% else %}removed{% endif %}</strong>
+            <strong>ETA {% if entry.new_value %}set to {{ entry.new_value|format_date }}{% else %}removed{% endif %}</strong>
             {% elif entry.entry_type == 'photo' %}
             <span class="badge bg-dark me-1">Photo</span>
             <strong>Photo uploaded</strong>

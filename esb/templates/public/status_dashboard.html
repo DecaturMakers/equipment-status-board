@@ -57,6 +57,9 @@
               {% if item.status.color != 'green' and item.status.issue_description %}
               <p class="card-text text-muted small mt-2 mb-0">{{ item.status.issue_description }}</p>
               {% endif %}
+              {% if item.status.eta %}
+              <p class="card-text text-muted small mt-1 mb-0">ETA: {{ item.status.eta|format_date }}</p>
+              {% endif %}
             </div>
           </div>
         </a>

@@ -123,6 +123,71 @@ class TestComputeEquipmentStatus:
         assert result['issue_description'] == 'Unknown issue'
         assert result['severity'] is None
 
+    def test_eta_none_when_no_open_records(self, app, make_equipment):
+        equipment = make_equipment()
+        result = status_service.compute_equipment_status(equipment.id)
+        assert result['eta'] is None
+
+    def test_eta_returned_with_down_severity(self, app, make_equipment, make_repair_record):
+        from datetime import date
+        equipment = make_equipment()
+        make_repair_record(
+            equipment=equipment, status='New', severity='Down',
+            description='broken', eta=date(2026, 6, 1),
+        )
+        result = status_service.compute_equipment_status(equipment.id)
+        assert result['eta'] == date(2026, 6, 1)
+
+    def test_eta_from_highest_severity_record(self, app, make_equipment, make_repair_record):
+        from datetime import date
+        equipment = make_equipment()
+        make_repair_record(
+            equipment=equipment, status='New', severity='Degraded',
+            description='lower', eta=date(2026, 7, 1),
+        )
+        make_repair_record(
+            equipment=equipment, status='New', severity='Down',
+            description='higher', eta=date(2026, 5, 1),
+        )
+        result = status_service.compute_equipment_status(equipment.id)
+        assert result['eta'] == date(2026, 5, 1)
+
+    def test_eta_none_when_record_has_no_eta(self, app, make_equipment, make_repair_record):
+        equipment = make_equipment()
+        make_repair_record(
+            equipment=equipment, status='New', severity='Down',
+            description='broken', eta=None,
+        )
+        result = status_service.compute_equipment_status(equipment.id)
+        assert result['eta'] is None
+
+    def test_eta_fallback_when_no_severity_match(self, app, make_equipment, make_repair_record):
+        from datetime import date
+        equipment = make_equipment()
+        make_repair_record(
+            equipment=equipment, status='New', severity=None,
+            description='unknown', eta=date(2026, 8, 1),
+        )
+        result = status_service.compute_equipment_status(equipment.id)
+        assert result['eta'] == date(2026, 8, 1)
+
+    def test_eta_tie_break_oldest_wins(self, app, make_equipment, make_repair_record):
+        from datetime import date, datetime
+        equipment = make_equipment()
+        # Older Down record with eta=2026-05-01, newer Down record with eta=2026-08-01.
+        make_repair_record(
+            equipment=equipment, status='New', severity='Down',
+            description='older', eta=date(2026, 5, 1),
+            created_at=datetime(2026, 1, 1),
+        )
+        make_repair_record(
+            equipment=equipment, status='New', severity='Down',
+            description='newer', eta=date(2026, 8, 1),
+            created_at=datetime(2026, 2, 1),
+        )
+        result = status_service.compute_equipment_status(equipment.id)
+        assert result['eta'] == date(2026, 5, 1)
+
 
 class TestGetAreaStatusDashboard:
     """Tests for get_area_status_dashboard()."""
@@ -131,11 +196,12 @@ class TestGetAreaStatusDashboard:
         self, app, make_area, make_equipment, make_repair_record,
     ):
         """Returns areas with equipment and computed statuses."""
+        from datetime import date
         area = make_area(name='Workshop')
         equip = make_equipment(name='Lathe', area=area)
         make_repair_record(
             equipment=equip, status='New', severity='Down',
-            description='Spindle broken',
+            description='Spindle broken', eta=date(2026, 6, 15),
         )
 
         result = status_service.get_area_status_dashboard()
@@ -146,6 +212,13 @@ class TestGetAreaStatusDashboard:
         assert result[0]['equipment'][0]['status']['color'] == 'red'
         assert result[0]['equipment'][0]['status']['label'] == 'Down'
         assert result[0]['equipment'][0]['status']['issue_description'] == 'Spindle broken'
+        assert result[0]['equipment'][0]['status']['eta'] == date(2026, 6, 15)
+
+    def test_eta_none_when_no_open_records(self, app, make_area, make_equipment):
+        area = make_area(name='Lab')
+        make_equipment(name='Microscope', area=area)
+        result = status_service.get_area_status_dashboard()
+        assert result[0]['equipment'][0]['status']['eta'] is None
 
     def test_archived_equipment_excluded(self, app, make_area, make_equipment):
         """Archived equipment is not included in dashboard."""
@@ -266,6 +339,28 @@ class TestGetEquipmentStatusDetail:
         assert result['eta'] == date(2026, 2, 20)
         assert result['assignee_name'] == 'techuser'
 
+    def test_returns_exact_key_set_with_open_record(
+        self, app, make_equipment, make_repair_record,
+    ):
+        from datetime import date
+        eq = make_equipment()
+        make_repair_record(
+            equipment=eq, status='New', severity='Down',
+            description='x', eta=date(2026, 6, 15),
+        )
+        result = status_service.get_equipment_status_detail(eq.id)
+        assert set(result.keys()) == {
+            'color', 'label', 'issue_description', 'severity', 'eta', 'assignee_name',
+        }
+
+    def test_returns_exact_key_set_when_operational(self, app, make_equipment):
+        # Equipment with no open records exercises the green/empty path.
+        eq = make_equipment()
+        result = status_service.get_equipment_status_detail(eq.id)
+        assert set(result.keys()) == {
+            'color', 'label', 'issue_description', 'severity', 'eta', 'assignee_name',
+        }
+
 
 class TestGetSingleAreaStatusDashboard:
     """Tests for get_single_area_status_dashboard()."""
@@ -274,11 +369,12 @@ class TestGetSingleAreaStatusDashboard:
         self, app, make_area, make_equipment, make_repair_record,
     ):
         """Returns the single area with equipment and computed statuses."""
+        from datetime import date
         area = make_area(name='Wood Shop')
         equip = make_equipment(name='Lathe', area=area)
         make_repair_record(
             equipment=equip, status='New', severity='Down',
-            description='Spindle broken',
+            description='Spindle broken', eta=date(2026, 6, 15),
         )
 
         result = status_service.get_single_area_status_dashboard(area.id)
@@ -289,6 +385,20 @@ class TestGetSingleAreaStatusDashboard:
         assert result['equipment'][0]['status']['color'] == 'red'
         assert result['equipment'][0]['status']['label'] == 'Down'
         assert result['equipment'][0]['status']['issue_description'] == 'Spindle broken'
+        assert result['equipment'][0]['status']['eta'] == date(2026, 6, 15)
+
+    def test_eta_present_for_degraded_equipment(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        from datetime import date
+        area = make_area(name='Lab')
+        equip = make_equipment(name='Scope', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Degraded',
+            description='flickering', eta=date(2026, 9, 1),
+        )
+        result = status_service.get_single_area_status_dashboard(area.id)
+        assert result['equipment'][0]['status']['eta'] == date(2026, 9, 1)
 
     def test_raises_area_not_found_for_missing_id(self, app):
         """Raises AreaNotFound (not AreaArchived) for nonexistent area id."""

@@ -20,7 +20,12 @@ _SEVERITY_STATUS = {
 
 
 def _get_open_records(equipment_id: int) -> list:
-    """Query open (non-closed) repair records for an equipment item."""
+    """Query open (non-closed) repair records for an equipment item.
+
+    Records are ordered by ``created_at`` ascending so callers (and the
+    ``_derive_status_from_records()`` tie-break rule) see a deterministic
+    order: the oldest open record wins on ties.
+    """
     return (
         db.session.execute(
             db.select(RepairRecord)
@@ -28,6 +33,7 @@ def _get_open_records(equipment_id: int) -> list:
                 RepairRecord.equipment_id == equipment_id,
                 RepairRecord.status.notin_(CLOSED_STATUSES),
             )
+            .order_by(RepairRecord.created_at)
         )
         .scalars()
         .all()
@@ -63,9 +69,15 @@ def _derive_status_from_records(records: list) -> dict:
 
     Args:
         records: List of open RepairRecord instances for one equipment item.
+            Callers must pass records ordered by ``created_at`` ascending so
+            the tie-break rule below is deterministic; ``_get_open_records()``
+            and the dashboard prefetch queries already do this.
 
     Returns:
-        dict with keys: color, label, issue_description, severity.
+        dict with keys: color, label, issue_description, severity, eta.
+        ``eta`` is the highest-severity open record's ETA (or ``None`` if
+        empty or unset). When multiple records share the highest severity,
+        the oldest record (earliest ``created_at``) wins.
     """
     if not records:
         return {
@@ -73,6 +85,7 @@ def _derive_status_from_records(records: list) -> dict:
             'label': 'Operational',
             'issue_description': None,
             'severity': None,
+            'eta': None,
         }
 
     best_record = _find_highest_severity_record(records)
@@ -83,6 +96,7 @@ def _derive_status_from_records(records: list) -> dict:
             'label': 'Degraded',
             'issue_description': records[0].description,
             'severity': None,
+            'eta': records[0].eta,
         }
 
     color, label, _ = _SEVERITY_STATUS[best_record.severity]
@@ -91,6 +105,7 @@ def _derive_status_from_records(records: list) -> dict:
         'label': label,
         'issue_description': best_record.description,
         'severity': best_record.severity,
+        'eta': best_record.eta,
     }
 
 
@@ -102,6 +117,7 @@ def compute_equipment_status(equipment_id: int) -> dict:
         - label: 'Operational' | 'Degraded' | 'Down'
         - issue_description: str | None (brief description from highest severity record)
         - severity: str | None (raw severity value from highest severity record)
+        - eta: date | None (from highest severity record; oldest wins on ties)
 
     Raises:
         EquipmentNotFound: if equipment_id doesn't exist
@@ -134,19 +150,16 @@ def get_equipment_status_detail(equipment_id: int) -> dict:
     open_records = _get_open_records(equipment_id)
     status = _derive_status_from_records(open_records)
 
-    eta = None
     assignee_name = None
     if open_records:
         best_record = _find_highest_severity_record(open_records)
         if best_record is None:
             best_record = open_records[0]
-        eta = best_record.eta
         if best_record.assignee:
             assignee_name = best_record.assignee.username
 
     return {
         **status,
-        'eta': eta,
         'assignee_name': assignee_name,
     }
 
@@ -161,7 +174,7 @@ def get_area_status_dashboard() -> list[dict]:
                 'equipment': [
                     {
                         'equipment': Equipment instance,
-                        'status': {color, label, issue_description, severity}
+                        'status': {color, label, issue_description, severity, eta}
                     },
                     ...
                 ]
@@ -204,6 +217,7 @@ def get_area_status_dashboard() -> list[dict]:
                 Equipment.is_archived.is_(False),
                 RepairRecord.status.notin_(CLOSED_STATUSES),
             )
+            .order_by(RepairRecord.created_at)
         )
         .scalars()
         .all()
@@ -240,7 +254,7 @@ def get_single_area_status_dashboard(area_id: int) -> dict:
         {
             'area': Area instance,
             'equipment': [
-                {'equipment': Equipment, 'status': {color, label, issue_description, severity}},
+                {'equipment': Equipment, 'status': {color, label, issue_description, severity, eta}},
                 ...
             ],
         }
@@ -280,6 +294,7 @@ def get_single_area_status_dashboard(area_id: int) -> dict:
                     RepairRecord.equipment_id.in_(equip_ids),
                     RepairRecord.status.notin_(CLOSED_STATUSES),
                 )
+                .order_by(RepairRecord.created_at)
             )
             .scalars()
             .all()

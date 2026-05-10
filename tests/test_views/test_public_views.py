@@ -310,6 +310,71 @@ class TestStatusDashboardView:
         response = staff_client.get('/public/')
         assert b'Spindle motor failed' in response.data
 
+    def test_status_dashboard_displays_eta_when_set(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=date(2026, 7, 4),
+        )
+        response = client.get('/public/')
+        expected = ('ETA: ' + date(2026, 7, 4).strftime('%b %d, %Y')).encode()
+        assert expected in response.data
+
+    def test_status_dashboard_omits_eta_when_unset(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down', description='broken',
+        )
+        response = client.get('/public/')
+        assert b'ETA:' not in response.data
+
+    def test_status_dashboard_displays_past_eta(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=date(2025, 1, 1),
+        )
+        response = client.get('/public/')
+        expected = date(2025, 1, 1).strftime('%b %d, %Y').encode()
+        assert expected in response.data
+
+    def test_status_dashboard_displays_eta_today(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        # Capture once so the test stays deterministic across midnight UTC.
+        today = date.today()
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=today,
+        )
+        response = client.get('/public/')
+        expected = today.strftime('%b %d, %Y').encode()
+        assert expected in response.data
+
+    def test_status_dashboard_displays_far_future_eta(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=date(2030, 12, 31),
+        )
+        response = client.get('/public/')
+        expected = date(2030, 12, 31).strftime('%b %d, %Y').encode()
+        assert expected in response.data
+
     def test_equipment_tiles_link_to_equipment_page(self, client, make_area, make_equipment):
         """Equipment tiles on the status dashboard link to the QR code equipment page (issue #13)."""
         area = make_area(name='Shop')
@@ -414,6 +479,30 @@ class TestKioskView:
 
         response = client.get('/public/kiosk')
         assert b'Spindle motor failed' in response.data
+
+    def test_kiosk_displays_eta_when_set(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=date(2026, 6, 15),
+        )
+        response = client.get('/public/kiosk')
+        expected = ('ETA: ' + date(2026, 6, 15).strftime('%b %d, %Y')).encode()
+        assert expected in response.data
+
+    def test_kiosk_omits_eta_when_unset(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down', description='broken',
+        )
+        response = client.get('/public/kiosk')
+        assert b'ETA:' not in response.data
 
     def test_kiosk_empty_state(self, client):
         """Kiosk shows empty state when no areas/equipment (AC #1)."""
@@ -751,6 +840,19 @@ class TestPerAreaKioskView:
         assert response.status_code == 200
         assert b'Spindle motor failed' in response.data
 
+    def test_per_area_kiosk_displays_eta_when_set(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=date(2026, 6, 15),
+        )
+        response = client.get(f'/public/kiosk/{area.id}')
+        expected = ('ETA: ' + date(2026, 6, 15).strftime('%b %d, %Y')).encode()
+        assert expected in response.data
+
     def test_per_area_kiosk_meta_refresh_present(self, client, make_area, make_equipment):
         """Per-area kiosk inherits the 60s meta refresh from base_kiosk.html (exactly one tag)."""
         area = make_area(name='Shop')
@@ -886,6 +988,64 @@ class TestEquipmentPageView:
 
         response = client.get(f'/public/equipment/{equip.id}')
         assert b'Mar 15, 2026' in response.data
+
+    def test_eta_displayed_independent_of_issue_description(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        """ETA renders even when issue_description is empty (decoupled, F4 / AC 31)."""
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Drill', area=area)
+        # Use a non-empty description to satisfy NOT NULL but it would not be
+        # rendered for a green status anyway. The decoupling matters even when
+        # status is non-green: simulate by setting an empty issue description.
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='', eta=date(2026, 6, 15),
+        )
+        response = client.get(f'/public/equipment/{equip.id}')
+        assert b'ETA: ' + date(2026, 6, 15).strftime('%b %d, %Y').encode() in response.data
+
+    def test_qr_page_eta_uses_highest_severity_record_only(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        """QR page ETA matches dashboard semantics: highest-severity record only.
+
+        This test exercises ``_build_equipment_page_context``, which is also
+        called from ``report_problem()`` on form-validation failure; both
+        paths share the migrated ETA computation. Down (highest severity)
+        has eta=None; Degraded (lower) has an ETA -- post-migration the QR
+        page must NOT display the Degraded record's ETA (AC 32, F19/F24).
+        """
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Drill', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=None,
+        )
+        make_repair_record(
+            equipment=equip, status='New', severity='Degraded',
+            description='wobbly', eta=date(2026, 6, 15),
+        )
+        response = client.get(f'/public/equipment/{equip.id}')
+        assert b'Jun 15, 2026' not in response.data
+
+    def test_qr_page_eta_displayed_when_highest_severity_has_eta(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        """QR page shows the Down record's ETA, not the Degraded one (AC 33)."""
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Drill', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='broken', eta=date(2026, 5, 1),
+        )
+        make_repair_record(
+            equipment=equip, status='New', severity='Degraded',
+            description='wobbly', eta=date(2026, 7, 1),
+        )
+        response = client.get(f'/public/equipment/{equip.id}')
+        assert b'May 01, 2026' in response.data
+        assert b'Jul 01, 2026' not in response.data
 
     def test_shows_known_issues_when_open_repairs(
         self, client, make_area, make_equipment, make_repair_record,

@@ -1,21 +1,31 @@
 """Jinja2 custom template filters for ESB application."""
 
-from datetime import datetime, timezone
+import logging
+from datetime import date, datetime, timezone
 
 from esb.models.document import DOCUMENT_CATEGORIES
 
 _CATEGORY_LABELS = dict(DOCUMENT_CATEGORIES)
 
+logger = logging.getLogger(__name__)
+
 
 def format_date(value, fmt='%b %d, %Y'):
-    """Format a datetime object as a date string.
+    """Format a date/datetime object or ISO date string as a date string.
 
     Args:
-        value: A datetime object.
+        value: A ``date``/``datetime`` instance, an ISO-format date string
+            (``'YYYY-MM-DD'``), or ``None``.
         fmt: strftime format string.
     """
     if value is None:
         return ''
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value).strftime(fmt)
+        except ValueError:
+            logger.warning('format_date: could not parse ISO date string %r', value)
+            return value
     return value.strftime(fmt)
 
 

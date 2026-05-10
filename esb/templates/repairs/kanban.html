@@ -8,7 +8,7 @@
 <a href="{{ url_for('repairs.detail', id=record.id) }}"
    class="card mb-2 text-decoration-none text-body kanban-card kanban-card-{{ record.aging_tier }}"
    tabindex="0"
-   aria-label="{{ record.equipment.name }}, {{ record.equipment.area.name }}{% if record.severity %}, {{ record.severity }}{% endif %}, in column {{ (record.time_in_column / 86400)|int }} days{% if record.aging_tier == 'hot' %} - needs attention{% elif record.aging_tier == 'warm' %} - may need attention{% endif %}">
+   aria-label="{{ record.equipment.name }}, {{ record.equipment.area.name }}{% if record.severity %}, {{ record.severity }}{% endif %}, in column {{ (record.time_in_column / 86400)|int }} days{% if record.aging_tier == 'hot' %} - needs attention{% elif record.aging_tier == 'warm' %} - may need attention{% endif %}{% if record.eta %}, ETA {{ record.eta|format_date }}{% endif %}">
     <div class="card-body py-2 px-3">
         <div class="fw-bold">{{ record.equipment.name }}</div>
         <div class="mt-1">
@@ -29,6 +29,9 @@
                 <span title="{{ record.entered_at|format_datetime }}">{{ days }} days</span>
             {% endif %}
         </div>
+        {% if record.eta %}
+        <div class="small text-muted">ETA: {{ record.eta|format_date }}</div>
+        {% endif %}
     </div>
 </a>
 {% endmacro %}

@@ -12,13 +12,14 @@
         .area { margin-bottom: 1.5rem; }
         .area h2 { font-size: 1.1rem; border-bottom: 2px solid #dee2e6; padding-bottom: 0.3rem; margin-bottom: 0.5rem; }
         .equipment-list { list-style: none; }
-        .equipment-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+        .equipment-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
         .status-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
         .status-green { background-color: #198754; }
         .status-yellow { background-color: #ffc107; }
         .status-red { background-color: #dc3545; }
         .equipment-name { font-size: 0.95rem; }
         .status-label { font-size: 0.8rem; color: #6c757d; }
+        .eta-label { font-size: 0.8rem; color: #6c757d; margin-left: 0.25rem; }
         .no-equipment { color: #6c757d; font-size: 0.9rem; }
         .footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: #6c757d; }
     </style>
@@ -35,6 +36,7 @@
                 <span class="status-dot status-{{ item.status.color }}" aria-hidden="true"></span>
                 <span class="equipment-name">{{ item.equipment.name }}</span>
                 <span class="status-label">{{ item.status.label }}</span>
+                {% if item.status.eta %}<span class="eta-label">ETA: {{ item.status.eta|format_date }}</span>{% endif %}
             </li>
             {% endfor %}
         </ul>

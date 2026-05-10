@@ -92,6 +92,28 @@ class TestGenerate:
         assert 'EmptyArea' in html
         assert 'No equipment in this area.' in html
 
+    def test_generate_includes_eta_when_set(self, app, make_area, make_equipment, make_repair_record):
+        from datetime import date
+        area = make_area(name='Lab')
+        eq = make_equipment(name='Microscope', area=area)
+        make_repair_record(
+            equipment=eq, status='New', severity='Down',
+            description='Broken', eta=date(2026, 6, 15),
+        )
+        html = static_page_service.generate()
+        expected = 'ETA: ' + date(2026, 6, 15).strftime('%b %d, %Y')
+        assert expected in html
+        assert 'eta-label' in html
+
+    def test_generate_omits_eta_when_unset(self, app, make_area, make_equipment, make_repair_record):
+        area = make_area(name='Lab')
+        eq = make_equipment(name='Microscope', area=area)
+        make_repair_record(
+            equipment=eq, status='New', severity='Down', description='Broken',
+        )
+        html = static_page_service.generate()
+        assert 'ETA:' not in html
+
 
 class TestPushLocal:
     """Tests for push() with method='local'."""

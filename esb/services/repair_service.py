@@ -444,7 +444,7 @@ def update_repair_record(
         })
 
     # Queue static page regeneration if status-affecting fields changed
-    if 'status' in audit_changes or 'severity' in audit_changes:
+    if any(k in audit_changes for k in ('status', 'severity', 'eta')):
         from esb.services import notification_service
         notification_service.queue_notification(
             notification_type='static_page_push',

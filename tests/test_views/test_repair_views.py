@@ -1,7 +1,7 @@
 """Tests for repair record views."""
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from io import BytesIO
 from unittest.mock import patch
 
@@ -160,6 +160,23 @@ class TestRepairRecordDetail:
         assert resp.status_code == 200
         assert b'Laser Cutter' in resp.data
         assert f'/equipment/{eq.id}'.encode() in resp.data
+
+    def test_detail_eta_uses_format_date(self, staff_client, make_repair_record):
+        record = make_repair_record(eta=date(2026, 6, 15))
+        resp = staff_client.get(f'/repairs/{record.id}')
+        assert b'ETA</dt>' in resp.data
+        assert b'Jun 15, 2026' in resp.data
+
+    def test_timeline_eta_update_uses_format_date(self, staff_client, make_repair_record):
+        record = make_repair_record()
+        _db.session.add(RepairTimelineEntry(
+            repair_record_id=record.id, entry_type='eta_update',
+            new_value='2026-03-15', author_name='staffuser',
+        ))
+        _db.session.commit()
+        resp = staff_client.get(f'/repairs/{record.id}')
+        assert re.search(rb'set to\s+Mar 15, 2026\b', resp.data)
+        assert b'set to 2026-03-15' not in resp.data
 
 
 class TestEditRepairRecord:
@@ -659,6 +676,64 @@ class TestRepairQueue:
         assert b'd-md-none' in resp.data
         assert b'queue-cards-wrapper' in resp.data
 
+    def test_queue_displays_eta_column_header(self, tech_client, make_area, make_equipment, make_repair_record):
+        area = make_area('Woodshop')
+        eq = make_equipment('Table Saw', area=area)
+        make_repair_record(equipment=eq, description='Blade dull', severity='Down')
+        resp = tech_client.get('/repairs/queue')
+        assert b'queue-eta-cell' in resp.data
+
+    def test_queue_displays_eta_value(self, tech_client, make_area, make_equipment, make_repair_record):
+        area = make_area('Woodshop')
+        eq = make_equipment('Table Saw', area=area)
+        make_repair_record(
+            equipment=eq, description='Blade dull', severity='Down',
+            eta=date(2026, 6, 15),
+        )
+        resp = tech_client.get('/repairs/queue')
+        expected = (
+            'queue-eta-cell" data-eta-iso="2026-06-15">'
+            + date(2026, 6, 15).strftime('%b %d, %Y')
+            + '<'
+        ).encode()
+        assert expected in resp.data
+
+    def test_queue_eta_cell_blank_when_no_eta(self, tech_client, make_area, make_equipment, make_repair_record):
+        area = make_area('Woodshop')
+        eq = make_equipment('Table Saw', area=area)
+        # Use Down severity so the row's severity badge is "Down", not literal "None".
+        make_repair_record(
+            equipment=eq, description='Blade dull', severity='Down', eta=None,
+        )
+        resp = tech_client.get('/repairs/queue')
+        # Row-scoped: queue-eta-cell with empty data-eta-iso and empty content.
+        assert re.search(
+            rb'class="queue-eta-cell"[^>]*data-eta-iso=""[^>]*>\s*</td>',
+            resp.data,
+        )
+
+    def test_queue_mobile_card_displays_eta(self, tech_client, make_area, make_equipment, make_repair_record):
+        area = make_area('Woodshop')
+        eq = make_equipment('Table Saw', area=area)
+        make_repair_record(
+            equipment=eq, description='Blade dull', severity='Down',
+            eta=date(2026, 6, 15),
+        )
+        resp = tech_client.get('/repairs/queue')
+        expected = ('ETA: ' + date(2026, 6, 15).strftime('%b %d, %Y')).encode()
+        assert expected in resp.data
+
+    def test_queue_existing_sortable_columns_unchanged(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        # AC 38: ETA column must NOT be sortable; existing 6 sortable columns remain.
+        area = make_area('Woodshop')
+        eq = make_equipment('Table Saw', area=area)
+        make_repair_record(equipment=eq, description='Blade dull', severity='Down')
+        resp = tech_client.get('/repairs/queue')
+        sortable_ths = re.findall(rb'<th[^>]*\bdata-sort=', resp.data)
+        assert len(sortable_ths) == 6
+
 
 class TestKanbanBoard:
     """Tests for GET /repairs/kanban and Kanban-related behavior."""
@@ -736,6 +811,32 @@ class TestKanbanBoard:
         record = make_repair_record(equipment=eq, description='Blade dull')
         resp = staff_client.get('/repairs/kanban')
         assert f'/repairs/{record.id}'.encode() in resp.data
+
+    def test_kanban_card_displays_eta_when_set(
+        self, staff_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Woodshop')
+        eq = make_equipment('Table Saw', area=area)
+        make_repair_record(
+            equipment=eq, description='Blade dull', severity='Down',
+            eta=date(2026, 6, 15),
+        )
+        resp = staff_client.get('/repairs/kanban')
+        formatted = date(2026, 6, 15).strftime('%b %d, %Y').encode()
+        assert b'ETA: ' + formatted in resp.data
+        assert b', ETA ' + formatted in resp.data
+
+    def test_kanban_card_omits_eta_when_unset(
+        self, staff_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Woodshop')
+        eq = make_equipment('Table Saw', area=area)
+        make_repair_record(
+            equipment=eq, description='Blade dull', severity='Down', eta=None,
+        )
+        resp = staff_client.get('/repairs/kanban')
+        assert b'ETA:' not in resp.data
+        assert b', ETA ' not in resp.data
 
     def test_login_redirects_staff_to_kanban(self, client, staff_user):
         """Staff login without next param redirects to /repairs/kanban."""

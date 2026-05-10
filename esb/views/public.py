@@ -55,7 +55,14 @@ def kiosk_area(area_id):
 
 
 def _build_equipment_page_context(equipment_id):
-    """Build shared context dict for equipment page rendering (status, open repairs, ETA)."""
+    """Build shared context dict for equipment page rendering (status, open repairs, ETA).
+
+    ETA follows the same "highest-severity record's ETA" semantics as the
+    dashboards, kiosk, static page, and Slack bot -- driven by
+    ``compute_equipment_status()``. ``status['eta']`` is ``None`` when the
+    highest-severity open record has no ETA, even if a lower-severity record
+    does.
+    """
     from esb.services import repair_service, status_service
     from esb.services.repair_service import CLOSED_STATUSES
 
@@ -66,17 +73,7 @@ def _build_equipment_page_context(equipment_id):
         if r.status not in CLOSED_STATUSES
     ]
 
-    eta = None
-    if open_repairs:
-        for repair in sorted(
-            open_repairs,
-            key=lambda r: {'Down': 0, 'Degraded': 1, 'Not Sure': 2}.get(r.severity or '', 3),
-        ):
-            if repair.eta:
-                eta = repair.eta
-                break
-
-    return status, open_repairs, eta
+    return status, open_repairs, status['eta']
 
 
 @public_bp.route('/equipment/<int:id>')

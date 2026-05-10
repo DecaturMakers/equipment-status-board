@@ -244,6 +244,7 @@
                         <th>Opened</th>
                         <th>Severity</th>
                         <th>Status</th>
+                        <th>ETA</th>
                         <th>Assignee</th>
                         <th>Description</th>
                     </tr>
@@ -276,6 +277,7 @@
                             <span class="badge bg-info text-dark">{{ record.status }}</span>
                             {% endif %}
                         </td>
+                        <td>{{ record.eta|format_date }}</td>
                         <td>{{ record.assignee.username if record.assignee else '' }}</td>
                         <td class="text-truncate" style="max-width: 24rem;" title="{{ record.description }}">{{ record.description }}</td>
                     </tr>
