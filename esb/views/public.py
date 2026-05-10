@@ -55,13 +55,16 @@ def kiosk_area(area_id):
 
 
 def _build_equipment_page_context(equipment_id):
-    """Build shared context dict for equipment page rendering (status, open repairs, ETA).
+    """Build shared context for equipment page rendering.
 
-    ETA follows the same "highest-severity record's ETA" semantics as the
-    dashboards, kiosk, static page, and Slack bot -- driven by
-    ``compute_equipment_status()``. ``status['eta']`` is ``None`` when the
-    highest-severity open record has no ETA, even if a lower-severity record
-    does.
+    Returns a 3-tuple ``(status, open_repairs, eta)`` where ``eta`` is
+    ``status['eta']``, exposed as a separate slot so the QR template can
+    reference it without dotted access. ETA follows the same
+    "highest-severity record's ETA" semantics as the dashboards, kiosk,
+    static page, and Slack bot -- driven by ``compute_equipment_status()``.
+    ``status['eta']`` (and the third tuple slot) is ``None`` when the
+    highest-severity open record has no ETA, even if a lower-severity
+    record does.
     """
     from esb.services import repair_service, status_service
     from esb.services.repair_service import CLOSED_STATUSES

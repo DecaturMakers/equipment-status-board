@@ -22,9 +22,11 @@ _SEVERITY_STATUS = {
 def _get_open_records(equipment_id: int) -> list:
     """Query open (non-closed) repair records for an equipment item.
 
-    Records are ordered by ``created_at`` ascending so callers (and the
-    ``_derive_status_from_records()`` tie-break rule) see a deterministic
-    order: the oldest open record wins on ties.
+    Records are ordered by ``(created_at, id)`` ascending so callers (and
+    the ``_derive_status_from_records()`` tie-break rule) see a fully
+    deterministic order: the oldest open record wins on ties, with ``id``
+    breaking the rare ``created_at``-collision case (e.g. two records
+    inserted in the same second on a DB with second-precision timestamps).
     """
     return (
         db.session.execute(
@@ -33,7 +35,7 @@ def _get_open_records(equipment_id: int) -> list:
                 RepairRecord.equipment_id == equipment_id,
                 RepairRecord.status.notin_(CLOSED_STATUSES),
             )
-            .order_by(RepairRecord.created_at)
+            .order_by(RepairRecord.created_at, RepairRecord.id)
         )
         .scalars()
         .all()
@@ -217,7 +219,7 @@ def get_area_status_dashboard() -> list[dict]:
                 Equipment.is_archived.is_(False),
                 RepairRecord.status.notin_(CLOSED_STATUSES),
             )
-            .order_by(RepairRecord.created_at)
+            .order_by(RepairRecord.created_at, RepairRecord.id)
         )
         .scalars()
         .all()
@@ -294,7 +296,7 @@ def get_single_area_status_dashboard(area_id: int) -> dict:
                     RepairRecord.equipment_id.in_(equip_ids),
                     RepairRecord.status.notin_(CLOSED_STATUSES),
                 )
-                .order_by(RepairRecord.created_at)
+                .order_by(RepairRecord.created_at, RepairRecord.id)
             )
             .scalars()
             .all()
