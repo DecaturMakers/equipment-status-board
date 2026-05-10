@@ -28,8 +28,14 @@ def init_slack(app):
     # opt-out) would leave a previously-bound _socket_handler dangling, which
     # the metrics view would then report as connected=1, enabled=0 — an
     # impossible state by design that the alert rule cannot match.
+    #
+    # Call _shutdown_socket() FIRST so we close any prior live WebSocket
+    # before dropping the reference. _shutdown_socket() is idempotent: if
+    # _socket_handler is already None it is a no-op. Without this, a previous
+    # successful init's WebSocket would leak — atexit/SIGTERM hooks no longer
+    # have a reference to close.
+    _shutdown_socket()
     _bolt_app = None
-    _socket_handler = None
     _socket_mode_intended = False
 
     token = app.config.get('SLACK_BOT_TOKEN', '')

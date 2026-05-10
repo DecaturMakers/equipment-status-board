@@ -395,36 +395,6 @@ def run_worker_loop(poll_interval: int = 30) -> None:
             # pending rows still represents forward progress.
             _write_heartbeat(heartbeat_path)
             consecutive_poll_failures = 0  # Reset on successful poll
-            # Defensive wrapper. The helper already catches SQLAlchemyError; the
-            # only thing it can raise is a programming bug. Don't let that abort
-            # the iteration's notification processing — log loudly and continue.
-            try:
-                _record_iteration_timestamp()
-            except Exception:
-                # CRITICAL: roll back the session before continuing. The helper
-                # does db.session.add(AppConfig(...)) BEFORE db.session.commit().
-                # A non-SQLAlchemyError exception (programming bug) raised
-                # between those two lines leaves an unflushed AppConfig insert
-                # pending in the session. Without this rollback, the next
-                # commit in the loop body (mark_delivered() / mark_failed())
-                # would commit that half-baked row as a side effect.
-                # The rollback itself is wrapped: if it raises, we do NOT want
-                # the exception to escalate into the outer poll-failure
-                # except-clause and trigger exponential backoff. The defensive
-                # wrapper's whole purpose is to absorb helper bugs.
-                try:
-                    db.session.rollback()
-                except Exception:
-                    logger.error(
-                        'BUG: rollback after _record_iteration_timestamp '
-                        'failure ALSO raised — session may be wedged',
-                        exc_info=True,
-                    )
-                logger.error(
-                    'BUG: _record_iteration_timestamp raised unexpectedly '
-                    '— iteration metric will be stale',
-                    exc_info=True,
-                )
             if notifications:
                 logger.info('Processing %d pending notification(s)', len(notifications))
 
@@ -452,6 +422,46 @@ def run_worker_loop(poll_interval: int = 30) -> None:
                 # long but progressing batch of slow Slack calls must not be
                 # mistaken for a hang.
                 _write_heartbeat(heartbeat_path)
+
+            # Record the iteration timestamp AFTER the for-loop, not before.
+            # The helper's commit() with Flask-SQLAlchemy's default
+            # expire_on_commit=True would otherwise expire every loaded
+            # PendingNotification ORM instance, forcing a per-row refresh
+            # SELECT on the next attribute access inside the for-loop. Placing
+            # it post-loop also gives more meaningful "successful iteration"
+            # semantics: ESBWorkerStalled fires when an iteration didn't
+            # complete, not just when a poll succeeded but processing stalled.
+            #
+            # Defensive wrapper. The helper already catches SQLAlchemyError;
+            # the only thing it can raise is a programming bug. Don't let that
+            # abort the loop — log loudly and continue.
+            try:
+                _record_iteration_timestamp()
+            except Exception:
+                # CRITICAL: roll back the session before continuing. The
+                # helper does db.session.add(AppConfig(...)) BEFORE
+                # db.session.commit(). A non-SQLAlchemyError exception
+                # (programming bug) raised between those two lines leaves an
+                # unflushed AppConfig insert pending in the session. Without
+                # this rollback, a subsequent commit in the next iteration
+                # could commit that half-baked row as a side effect.
+                # The rollback itself is wrapped: if it raises, we do NOT
+                # want the exception to escalate into the outer poll-failure
+                # except-clause and trigger exponential backoff. The
+                # defensive wrapper's whole purpose is to absorb helper bugs.
+                try:
+                    db.session.rollback()
+                except Exception:
+                    logger.error(
+                        'BUG: rollback after _record_iteration_timestamp '
+                        'failure ALSO raised — session may be wedged',
+                        exc_info=True,
+                    )
+                logger.error(
+                    'BUG: _record_iteration_timestamp raised unexpectedly '
+                    '— iteration metric will be stale',
+                    exc_info=True,
+                )
 
         except Exception:
             consecutive_poll_failures += 1
