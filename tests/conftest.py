@@ -37,6 +37,10 @@ def capture():
 def app():
     """Create a Flask application configured for testing."""
     app = create_app('testing')
+    # Clear env-driven config that would otherwise leak in from the host shell
+    # (e.g. a developer with CLOUDFRONT_DISTRIBUTION_ID set could see S3 push
+    # tests start hitting the CloudFront client unexpectedly).
+    app.config['CLOUDFRONT_DISTRIBUTION_ID'] = ''
     with app.app_context():
         _db.create_all()
         yield app

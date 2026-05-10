@@ -94,11 +94,9 @@ def _push_s3(html_content: str, target: str) -> str | None:
     Target format: "bucket-name/optional/key/path" (key defaults to index.html
     if target ends with / or has no key component).
 
-    If the CLOUDFRONT_DISTRIBUTION_ID config is set, a CloudFront invalidation
-    is issued for the uploaded key after each successful upload, and the
-    invalidation ID is returned so the caller can include it in the audit log.
-    On the worker's retry path this guarantees the invalidation is re-attempted
-    until it succeeds (a fragile pre-upload diff would mask the retry signal).
+    Invalidation is unconditional (no pre-upload diff guard) so that a worker
+    retry after a CloudFront failure re-attempts the invalidation instead of
+    short-circuiting because the bucket already holds the new bytes.
 
     Args:
         html_content: Rendered HTML string.
@@ -160,19 +158,14 @@ def _create_cloudfront_invalidation(distribution_id: str, key: str) -> str:
         The CloudFront invalidation ID.
 
     Raises:
-        RuntimeError: if boto3 is missing, AWS credentials are not configured,
-            or the CreateInvalidation API call fails.
+        RuntimeError: if AWS credentials are not configured, or the
+            CreateInvalidation API call fails.
     """
     import uuid
     from urllib.parse import quote
 
-    try:
-        import boto3
-        from botocore.exceptions import ClientError, NoCredentialsError
-    except ImportError as e:
-        raise RuntimeError(
-            'boto3 is required for CloudFront invalidation. Install it with: pip install boto3'
-        ) from e
+    import boto3
+    from botocore.exceptions import ClientError, NoCredentialsError
 
     path = '/' + quote(key.lstrip('/'), safe='/')
     try:
