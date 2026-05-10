@@ -73,6 +73,7 @@ class TestStatusDashboardView:
     def test_dashboard_kiosk_dropdown_contains_all_equipment_link(self, client):
         """Dashboard renders Kiosk View as a Bootstrap dropdown with All Equipment item."""
         response = client.get('/public/')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'data-bs-toggle="dropdown"' in html
         assert 'href="/public/kiosk"' in html
@@ -88,6 +89,7 @@ class TestStatusDashboardView:
         make_equipment(name='Welder', area=area2)
 
         response = client.get('/public/')
+        assert response.status_code == 200
         html = response.data.decode()
         assert f'href="/public/kiosk/{area1.id}"' in html
         assert f'href="/public/kiosk/{area2.id}"' in html
@@ -103,6 +105,7 @@ class TestStatusDashboardView:
         make_equipment(name='Drill', area=populated)
 
         response = client.get('/public/')
+        assert response.status_code == 200
         html = response.data.decode()
         assert f'href="/public/kiosk/{populated.id}"' in html
         assert f'href="/public/kiosk/{empty.id}"' not in html
@@ -121,6 +124,7 @@ class TestStatusDashboardView:
         db.session.commit()
 
         response = client.get('/public/')
+        assert response.status_code == 200
         html = response.data.decode()
         assert f'href="/public/kiosk/{active.id}"' in html
         assert f'href="/public/kiosk/{archived.id}"' not in html
@@ -133,6 +137,7 @@ class TestStatusDashboardView:
         assert status_service.get_area_status_dashboard() == []
 
         response = client.get('/public/')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'href="/public/kiosk"' in html
         assert 'All Equipment' in html
@@ -142,6 +147,7 @@ class TestStatusDashboardView:
     def test_dashboard_loads_bootstrap_bundle_js(self, client):
         """Dashboard loads bootstrap.bundle.min.js (the dropdown's JS dependency)."""
         response = client.get('/public/')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'bootstrap.bundle.min.js' in html
 
@@ -548,6 +554,7 @@ class TestKioskView:
         make_equipment(name='Tool', area=area)
 
         response = client.get('/public/kiosk')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'id="kiosk-scale-content"' in html
         assert 'kiosk-scale-wrapper' in html
@@ -558,6 +565,7 @@ class TestKioskView:
         make_equipment(name='Tool', area=area)
 
         response = client.get('/public/kiosk')
+        assert response.status_code == 200
         classes = _main_element_classes(response.data.decode())
         assert 'p-0' in classes
         assert 'p-3' not in classes
@@ -578,6 +586,7 @@ class TestKioskView:
         make_equipment(name='Tool', area=area)
 
         response = client.get('/public/kiosk')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'js/app.js' in html
 
@@ -604,6 +613,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Welder', area=area_b)
 
         response = client.get(f'/public/kiosk/{area_a.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'Lathe' in html
         assert 'Welder' not in html
@@ -615,6 +625,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Lathe', area=area)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         match = re.search(
             r'<h1[^>]*class="[^"]*\bvisually-hidden\b[^"]*"[^>]*>([^<]*)</h1>',
@@ -631,6 +642,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Lathe', area=area)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         match = re.search(
             r'<h2[^>]*class="[^"]*\bkiosk-area-heading\b[^"]*"[^>]*>([^<]*)</h2>',
@@ -645,6 +657,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Lathe', area=area)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         title_match = re.search(r'<title>([^<]*)</title>', html)
         assert title_match
@@ -681,6 +694,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Retired Tool', area=area, is_archived=True)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'Active Tool' in html
         assert 'Retired Tool' not in html
@@ -698,6 +712,7 @@ class TestPerAreaKioskView:
         make_repair_record(equipment=red, status='New', severity='Down')
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'bg-success' in html
         assert 'bg-warning' in html
@@ -715,6 +730,7 @@ class TestPerAreaKioskView:
         )
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         assert b'Spindle motor failed' in response.data
 
     def test_per_area_kiosk_meta_refresh_present(self, client, make_area, make_equipment):
@@ -723,6 +739,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Tool', area=area)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         meta_tags = re.findall(r'<meta\s+http-equiv="refresh"[^>]*>', html)
         assert len(meta_tags) == 1
@@ -734,6 +751,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Tool', area=area)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         # Element-bound: a `<nav` tag opening, not just any "<nav" substring
         # in user content (e.g., an area named "navbar maintenance").
@@ -762,6 +780,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Tool', area=area)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         html = response.data.decode()
         assert 'id="kiosk-scale-content"' in html
         assert 'kiosk-scale-wrapper' in html
@@ -772,6 +791,7 @@ class TestPerAreaKioskView:
         make_equipment(name='Tool', area=area)
 
         response = client.get(f'/public/kiosk/{area.id}')
+        assert response.status_code == 200
         classes = _main_element_classes(response.data.decode())
         assert 'p-0' in classes
         assert 'p-3' not in classes
