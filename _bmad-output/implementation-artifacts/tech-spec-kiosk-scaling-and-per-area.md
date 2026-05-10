@@ -2,14 +2,14 @@
 title: 'Kiosk Display Scaling and Per-Area Kiosks'
 slug: 'kiosk-scaling-and-per-area'
 created: '2026-05-09'
-revised: '2026-05-09 (post-adversarial-review)'
+revised: '2026-05-09 (post-adversarial-review pass 2)'
 status: 'ready-for-dev'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack:
   - Python 3.14 (ruff target py313)
   - Flask + Flask-SQLAlchemy
   - Jinja2 templates
-  - Bootstrap 5 (bundled local CSS/JS — confirmed loaded via base_public.html:17 and base.html)
+  - Bootstrap 5 (bundled local CSS/JS — confirmed loaded via base_public.html:17 and base.html:74)
   - Vanilla JS (no framework, single esb/static/js/app.js)
 files_to_modify:
   - esb/utils/exceptions.py
@@ -43,7 +43,7 @@ issue: 33
 # Tech-Spec: Kiosk Display Scaling and Per-Area Kiosks
 
 **Created:** 2026-05-09
-**Revised:** 2026-05-09 (after adversarial review — see "Revision History" at end)
+**Revised:** 2026-05-09 (after two adversarial-review passes — see "Revision History" at end)
 **Issue:** [#33](https://github.com/jantman/equipment-status-board/issues/33) — Kiosk Display Scaling and Per-Area Kiosks
 
 ## Overview
@@ -67,7 +67,7 @@ The kiosk display (`/public/kiosk`) is intended for wall-mounted, non-interactiv
 - New `AreaNotFound(ESBError)` and `AreaArchived(AreaNotFound)` exceptions in `esb/utils/exceptions.py`.
 - Reuses existing archived-equipment filtering (same behavior as `/public/kiosk`).
 - JS-based shrink-to-fit scaling applied to both kiosk views (all-areas and per-area), implemented in `esb/static/js/app.js`.
-- CSS scaffolding (a wrapper element + `transform-origin` rule + `body.kiosk-body { overflow: hidden }`) in `esb/static/css/app.css`.
+- CSS scaffolding (a wrapper element + `transform-origin` rule + `.kiosk-body { overflow: hidden }`) in `esb/static/css/app.css`.
 - One-token edit in `esb/templates/base_kiosk.html`: `<main class="container-fluid p-3">` → `<main class="container-fluid p-0">` (so the scaling wrapper has full viewport area to work with — see Technical Decision #5 below).
 - Empty-per-area state: an area with no non-archived equipment renders "No equipment in this area yet." copy.
 - Discoverability: a Bootstrap dropdown on the public status dashboard listing the all-areas kiosk plus one entry per non-archived area **that has at least one non-archived equipment item**.
@@ -108,7 +108,7 @@ The kiosk display (`/public/kiosk`) is intended for wall-mounted, non-interactiv
 | `esb/templates/base_kiosk.html` (line 13) | Change `<main class="container-fluid p-3">` to `<main class="container-fluid p-0">` so the scaling wrapper measures against the full viewport (no padding-induced gap). |
 | `esb/templates/public/kiosk.html` | Refactor to wrap content in `<div id="kiosk-scale-content" class="kiosk-scale-wrapper">…</div>`. Add explicit empty-per-area branch. Update visually-hidden `<h1>` to include the area name when in per-area mode. |
 | `esb/templates/public/status_dashboard.html` (line 13) | Replace single "Kiosk View" link with a Bootstrap dropdown listing "All Equipment" plus one entry per non-archived area **that has equipment**. |
-| `esb/templates/base.html` (line 75 — verified) and `esb/templates/base_public.html` (line 17 — verified) | Both already load `js/bootstrap.bundle.min.js` (Popper included). Status dashboard inherits whichever based on auth state. **No changes.** |
+| `esb/templates/base.html` (line 74 — verified) and `esb/templates/base_public.html` (line 17 — verified) | Both already load `js/bootstrap.bundle.min.js` (Popper included). Status dashboard inherits whichever based on auth state. **No changes.** |
 | `esb/templates/components/_status_indicator.html` | Status indicator partial (compact variant). **No changes.** |
 | `esb/static/css/app.css` (lines 4-6, 55-66) | Extend `.kiosk-body` rule to add `overflow: hidden;`. Add new `.kiosk-scale-wrapper { transform-origin: top left; }` rule. |
 | `esb/static/js/app.js` | Add a feature block following the existing `DOMContentLoaded` pattern. Bind scaling computation to `DOMContentLoaded`, `window.load`, `document.fonts.ready`, and debounced `resize`. |
@@ -119,13 +119,13 @@ The kiosk display (`/public/kiosk`) is intended for wall-mounted, non-interactiv
 
 ### Technical Decisions
 
-1. **Scaling is JS-driven, shrink-only:** Apply `transform: scale(s)` with `s = Math.min(1, viewportW/contentW, viewportH/contentH)` and `transform-origin: top left`. Clamping to ≤ 1.0 means small content stays at natural size (no awkward up-scaling). `transform: scale()` does not affect layout per CSS spec — `scrollWidth`/`scrollHeight` already report the natural unscaled dimensions, so no reset is needed before measurement.
+1. **Scaling is JS-driven, shrink-only — vertical-dominant in practice:** Apply `transform: scale(s)` with `s = Math.min(1, viewportW/contentW, viewportH/contentH)` and `transform-origin: top left`. Clamping to ≤ 1.0 means small content stays at natural size (no awkward up-scaling). `transform: scale()` does not affect layout per CSS spec — `scrollWidth`/`scrollHeight` already report the natural unscaled dimensions, so no reset is needed before measurement. **Note:** because the kiosk grid uses CSS Grid `auto-fill, minmax(280px, 1fr)`, the grid reflows to fit available width and rarely produces horizontal overflow — so `viewportW/contentW ≈ 1` in normal use. The vertical axis (`viewportH/contentH`) is the dominant constraint in practice. The horizontal term remains in the formula as a defensive belt-and-suspenders for edge cases (e.g., a single very long equipment name in a single-column layout) and for future layout changes.
 
 2. **Recomputation triggers:** `DOMContentLoaded` (first paint), `window.load` (after images), `document.fonts.ready` (after web-fonts settle to avoid FOUT-induced miscalibration), and debounced `resize` (150ms — matches the existing `qr-form` debounce in `app.js:140`). The 60s meta-refresh causes a full reload, which re-fires all of these.
 
-3. **Scrollbar flash mitigation:** Set `body.kiosk-body { overflow: hidden; }` so the unscaled content never produces a scrollbar before the JS runs. The `.kiosk-body` class is only applied via `base_kiosk.html`, so this rule is scoped to kiosk pages.
+3. **Scrollbar flash mitigation:** Set `.kiosk-body { overflow: hidden; }` so the unscaled content never produces a scrollbar before the JS runs. The `.kiosk-body` class is only applied to `<body>` via `base_kiosk.html`, so this rule is scoped to kiosk pages. **Constraint:** because the body has `overflow: hidden`, any future Bootstrap modal/dropdown/popover added to a kiosk page would be silently clipped if it overflows the viewport. This is acceptable today (kiosks are non-interactive read-only displays) but should be re-evaluated if interactivity is ever added.
 
-4. **No-JS fallback (known limitation):** With JavaScript disabled, oversize content is clipped (because of `body.kiosk-body { overflow: hidden }`) rather than scrollable. Considered acceptable: kiosks are dedicated displays where JS will be enabled.
+4. **No-JS fallback (known limitation):** With JavaScript disabled, oversize content is clipped (because of `.kiosk-body { overflow: hidden }`) rather than scrollable. Considered acceptable: kiosks are dedicated displays where JS will be enabled.
 
 5. **Eliminate `<main>` padding for kiosk pages:** `base_kiosk.html` currently sets `<main class="container-fluid p-3">`, contributing 1rem padding on all sides. This causes (a) the wrapper's natural width to be smaller than the viewport (false-positive horizontal scaling threshold) and (b) the bottom 1rem of vertical content to be clipped silently when scaled to viewport height. Solution: change the class to `p-0`. The wrapper itself controls its own internal spacing if needed.
 
@@ -149,7 +149,9 @@ The kiosk display (`/public/kiosk`) is intended for wall-mounted, non-interactiv
 
 15. **LTR-only assumption:** `transform-origin: top left` pins scaling to the top-left corner. App is currently LTR-only; if RTL is added later, switch to `transform-origin: top right` for `dir="rtl"` (out of scope).
 
-16. **CSS selector form:** Use `body.kiosk-body { ... }` selector form consistently in spec text and code (rather than just `.kiosk-body`), to make explicit that this rule is scoped to the body element.
+16. **CSS selector form:** Keep the existing `.kiosk-body` (single-class) selector — do NOT change to `body.kiosk-body`. The class is only ever applied to `<body>` in `base_kiosk.html:12`, so the body-prefix would be a gratuitous specificity bump (0,0,1,0 → 0,0,1,1) with no functional benefit. A CSS comment (`/* applied to <body> via base_kiosk.html */`) documents the scope without affecting cascade. Spec narrative may reference the rule descriptively as "the kiosk-body rule" or `body.kiosk-body` for documentation clarity, but the actual stylesheet uses `.kiosk-body`.
+
+17. **JS measurement contract:** Code added to `#kiosk-scale-content` MUST only use `transform` styles. Per-CSS spec, `transform` does not affect layout, so `scrollWidth`/`scrollHeight` correctly report the natural unscaled dimensions. If a future change introduces a non-transform style on the wrapper that DOES affect layout (e.g., viewport-relative `font-size`, `width`, `padding`), the measurement assumption breaks. Inline JS comment in Task 7 codifies this.
 
 ## Implementation Plan
 
@@ -176,7 +178,7 @@ Tasks are ordered by dependency (lowest level first).
 
 - [ ] **Task 2: Add `get_single_area_status_dashboard()` service function**
   - File: `esb/services/status_service.py`
-  - Action: Add a new function below `get_area_status_dashboard()`:
+  - Action: Insert a new function at line 234 (immediately after `get_area_status_dashboard()` ends at line 233):
     ```python
     def get_single_area_status_dashboard(area_id: int) -> dict:
         """Get a single non-archived area's equipment with computed statuses.
@@ -289,7 +291,7 @@ Tasks are ordered by dependency (lowest level first).
     <div class="text-center py-5">
       <p class="fs-3 text-muted">No equipment registered yet.</p>
     </div>
-    {% elif areas|length == 1 and not areas[0].equipment %}
+    {% elif areas|length == 1 and not areas[0].get('equipment') %}
     <div class="text-center py-5">
       <p class="fs-3 text-muted">No equipment in this area yet.</p>
     </div>
@@ -322,16 +324,21 @@ Tasks are ordered by dependency (lowest level first).
     </div>
     {% endblock %}
     ```
-  - Notes: Three render branches now: (1) all-areas with no areas at all → "No equipment registered yet."; (2) per-area mode where the single area has no equipment → "No equipment in this area yet."; (3) at least one area-with-equipment → loop normally. The `<h1>` and `<title>` include the area name only when `area_name` is passed.
+  - Notes: Three render branches now: (1) all-areas with no areas at all → "No equipment registered yet."; (2) per-area mode where the single area has no equipment → "No equipment in this area yet."; (3) at least one area-with-equipment → loop normally. The `<h1>` and `<title>` include the area name only when `area_name` is truthy (`{% if area_name %}` correctly handles `None`, empty string, and missing context). The empty-per-area branch uses `.get('equipment')` (not attribute access) to defensively handle hypothetical future callers that pass `areas=[{'area': X}]` without the `equipment` key — although the current service contract guarantees the key is always present.
 
 - [ ] **Task 6: Add scaling CSS**
   - File: `esb/static/css/app.css`
   - Action:
-    1. Update the existing `.kiosk-body` rule (lines 4-6) to use the explicit body selector and add `overflow: hidden`:
+    1. Update the existing `.kiosk-body` rule (lines 4-6). Keep the single-class selector (do NOT change to `body.kiosk-body` — Tech Decision #16); add a scope-documenting comment and `overflow: hidden`:
        ```css
-       /* Kiosk layout: larger font for readability on wall-mounted displays;
-          overflow:hidden prevents any pre-JS scrollbars or post-JS clipping artifacts. */
-       body.kiosk-body {
+       /* Kiosk layout. Class is only applied to <body> in base_kiosk.html, so
+          this rule is effectively body-scoped. overflow:hidden prevents any
+          pre-JS scrollbars or post-JS clipping artifacts.
+
+          Constraint: any future Bootstrap modal/dropdown/popover added to a
+          kiosk page would be silently clipped if it overflows the viewport.
+          See Tech Decision #3. */
+       .kiosk-body {
            font-size: 1.25rem;
            overflow: hidden;
        }
@@ -341,6 +348,9 @@ Tasks are ordered by dependency (lowest level first).
        /* Scaling wrapper for kiosk shrink-to-fit. JS measures scrollWidth/Height
           and applies a transform: scale(s≤1) to fit the wrapper inside the viewport.
           transform-origin pins the scaled content to the top-left of the viewport.
+          IMPORTANT: do NOT add non-transform styles that affect layout (font-size,
+          width, padding, etc.) to this class — the JS measurement assumes only
+          transforms are applied. See Tech Decision #17.
           Note: LTR-only — for RTL support switch to `top right`. */
        .kiosk-scale-wrapper {
            transform-origin: top left;
@@ -350,24 +360,29 @@ Tasks are ordered by dependency (lowest level first).
 
 - [ ] **Task 7: Add JS shrink-to-fit scaling**
   - File: `esb/static/js/app.js`
-  - Action: Add a new feature block inside the existing `DOMContentLoaded` handler (just before its closing `});` on line 119):
+  - Action: Insert a new feature block at line 118 (before the closing `});` of the `DOMContentLoaded` handler — line 119 is the closing `});` itself):
     ```javascript
       // --- Kiosk shrink-to-fit scaling ---
+      // Contract: only `transform` styles may be applied to #kiosk-scale-content.
+      // Any non-transform style that affects layout (font-size, width, padding,
+      // etc.) breaks the scrollWidth/scrollHeight measurement assumption.
+      // See Tech Decision #17 in the spec.
       var kioskScale = document.getElementById('kiosk-scale-content');
       if (kioskScale) {
+        var KIOSK_RESIZE_DEBOUNCE_MS = 150;
         var resizeTimer = null;
         function applyKioskScale() {
-          // scrollWidth/scrollHeight report the natural unscaled dimensions
-          // even with a transform applied (CSS transforms do not affect layout).
+          // scrollWidth/scrollHeight report natural unscaled dimensions per
+          // CSS spec — transforms do not affect layout.
           var contentW = kioskScale.scrollWidth;
           var contentH = kioskScale.scrollHeight;
           var viewportW = document.documentElement.clientWidth;
           var viewportH = document.documentElement.clientHeight;
           if (viewportW <= 0 || viewportH <= 0) return;  // hidden tab / boot
           if (contentW <= 0 || contentH <= 0) {
-            // Empty wrapper (e.g., per-area kiosk with no content). Logged
-            // for debuggability; not an error.
-            console.warn('kiosk-scale-content has zero size; skipping scale');
+            // Layout transiently zero (e.g., during font swap). Retry on the
+            // next animation frame so we don't get stuck with no transform.
+            requestAnimationFrame(applyKioskScale);
             return;
           }
           var scale = Math.min(1, viewportW / contentW, viewportH / contentH);
@@ -381,11 +396,11 @@ Tasks are ordered by dependency (lowest level first).
         }
         window.addEventListener('resize', function () {
           if (resizeTimer) clearTimeout(resizeTimer);
-          resizeTimer = setTimeout(applyKioskScale, 150);  // matches qr-form debounce
+          resizeTimer = setTimeout(applyKioskScale, KIOSK_RESIZE_DEBOUNCE_MS);
         });
       }
     ```
-  - Notes: No `transform = 'none'` reset before measurement — `scrollWidth` is unaffected by transform per CSS spec, and the reset would cause a brief unscaled flash on resize. The viewport-zero guard handles background-tab and boot edge cases. The `console.warn` aids debugging the empty-wrapper case (which is also handled visibly by Task 5's empty-state branch).
+  - Notes: No `transform = 'none'` reset before measurement — `scrollWidth` is unaffected by transform per CSS spec, and the reset would cause a brief unscaled flash on resize. The viewport-zero guard handles background-tab and boot edge cases. The zero-content `requestAnimationFrame` retry recovers from transient zero-size states (e.g., during web-font swap when text dimensions are momentarily undefined) without waiting for the next user interaction or 60s refresh. `KIOSK_RESIZE_DEBOUNCE_MS = 150` is a deliberate choice (not coupled to `qr-form`'s implementation), happens to match it.
 
 - [ ] **Task 8: Update status dashboard with kiosk dropdown (filtered)**
   - File: `esb/templates/public/status_dashboard.html`
@@ -415,14 +430,14 @@ Tasks are ordered by dependency (lowest level first).
       </div>
     </div>
     ```
-  - Notes: `selectattr('equipment')` filters to entries where `equipment` is truthy (non-empty list). `areas` is already in the template context (from the `status_dashboard()` view) and already filtered to non-archived areas by the existing service call. Bootstrap's bundled JS (Popper-included) is loaded in both `base.html:75` and `base_public.html:17` — verified.
+  - Notes: `selectattr('equipment')` filters to entries where `equipment` is truthy (non-empty list). `areas` is already in the template context (from the `status_dashboard()` view) and already filtered to non-archived areas by the existing service call. Bootstrap's bundled JS (Popper-included) is loaded in both `base.html:74` and `base_public.html:17` — verified.
 
 - [ ] **Task 9: Add service tests for `get_single_area_status_dashboard()`**
   - File: `tests/test_services/test_status_service.py`
   - Action: Add a new test class `TestGetSingleAreaStatusDashboard` with these tests:
     - `test_returns_area_with_equipment_and_statuses`
-    - `test_raises_area_not_found_for_missing_id` — assert `AreaNotFound` AND specifically NOT `AreaArchived` (use `pytest.raises(AreaNotFound) as exc_info; assert not isinstance(exc_info.value, AreaArchived)`)
-    - `test_raises_area_archived_for_archived_area` — assert `AreaArchived` raised; also verify it is catchable as `AreaNotFound` (subclass)
+    - `test_raises_area_not_found_for_missing_id` — use `with pytest.raises(AreaNotFound) as exc_info: ...; assert type(exc_info.value) is AreaNotFound` (exact-class check, NOT `isinstance` — keeps the missing-vs-archived distinction explicit)
+    - `test_raises_area_archived_for_archived_area` — assert `type(exc_info.value) is AreaArchived`; separately verify it is also catchable as `AreaNotFound` via `with pytest.raises(AreaNotFound):` (subclass relationship)
     - `test_excludes_archived_equipment_in_area`
     - `test_returns_empty_equipment_list_when_no_equipment`
     - `test_status_derivation_matches_repair_records` — happy paths for green / yellow / red
@@ -472,8 +487,28 @@ Tasks are ordered by dependency (lowest level first).
        - `test_dashboard_kiosk_dropdown_contains_per_area_links_for_populated_areas` — create two areas WITH equipment, assert both `/public/kiosk/{id}` URLs appear
        - `test_dashboard_kiosk_dropdown_excludes_empty_areas` — create one area with equipment, one area without; assert only the populated area's URL appears
        - `test_dashboard_kiosk_dropdown_excludes_archived_areas` — archive one area, assert its URL/name does NOT appear
+       - `test_dashboard_kiosk_dropdown_only_all_equipment_when_no_areas` — empty database; assert dropdown contains "All Equipment" link, does NOT contain `<hr class="dropdown-divider">`, and contains no `/public/kiosk/<int>` URLs
        - `test_dashboard_loads_bootstrap_bundle_js` — assert `'bootstrap.bundle.min.js' in html` (sanity check that the dropdown's JS dependency is actually loaded)
-  - Notes: All assertions use simple ASCII to avoid HTML-escape edge cases.
+    5. **Add** automated `<main>` padding tests (mirrors the existing `test_kanban_uses_container_fluid` at `tests/test_views/test_repair_views.py:820` — reuse or replicate the `_main_element_classes` helper at `tests/test_views/test_repair_views.py:15`):
+       - In `TestKioskView`: `test_kiosk_main_has_no_padding` — assert `'p-0' in classes` AND `'p-3' not in classes` for the all-areas kiosk
+       - In `TestPerAreaKioskView`: `test_per_area_kiosk_main_has_no_padding` — same for `/public/kiosk/<id>`
+       - Either import `_main_element_classes` from the kanban test module, or duplicate the helper at the top of `test_public_views.py`. Importing across test modules is acceptable — pytest doesn't restrict it — but a small duplication keeps test files self-contained.
+    6. **Add** automated CSS-content tests for AC #13 (kiosk overflow):
+       - `test_app_css_kiosk_body_has_overflow_hidden` — read `esb/static/css/app.css`, assert that within ~500 chars of the `.kiosk-body` rule there is `overflow: hidden;`. Implementation:
+         ```python
+         from pathlib import Path
+
+         def test_app_css_kiosk_body_has_overflow_hidden(self):
+             css = Path('esb/static/css/app.css').read_text()
+             assert '.kiosk-body' in css
+             # Find the .kiosk-body rule and assert overflow: hidden is in its block
+             idx = css.index('.kiosk-body')
+             block_end = css.index('}', idx)
+             block = css[idx:block_end]
+             assert 'overflow: hidden' in block
+         ```
+       - Lives in `TestKioskView` (or a new `TestKioskCss` if preferred). This test does not require a Flask app/client.
+  - Notes: All assertions use simple ASCII to avoid HTML-escape edge cases. The CSS-content test (`test_app_css_kiosk_body_has_overflow_hidden`) intentionally couples to file content to catch reverts/refactors that lose the rule — accepting that mild brittleness as the cost of guarding the no-JS fallback (Tech Decision #4).
 
 - [ ] **Task 12: Run lint and tests; spot-check existing tests**
   - Action: Run `make lint` and `make test`. All existing tests must pass; new tests must pass; no new ruff errors.
@@ -507,7 +542,9 @@ Tasks are ordered by dependency (lowest level first).
 
 - [ ] **AC 11** — **Scaling re-runs after fonts load:** Given the kiosk page initially renders with system fonts and web-fonts swap in afterwards, when `document.fonts.ready` resolves, then the scale factor is recomputed against the post-FOUT layout. (Manual test.)
 
-- [ ] **AC 12** — **No scrollbars on kiosk pages:** Given the kiosk page is rendered, when inspected in the browser, then `body` has `overflow: hidden` (no scrollbars even before JS runs). (Manual test.)
+- [ ] **AC 12** — **No scrollbars on kiosk pages (automated CSS check):** Given `esb/static/css/app.css` is read, when the `.kiosk-body` rule is parsed, then the rule body contains `overflow: hidden`. Verified by `test_app_css_kiosk_body_has_overflow_hidden` (Task 11.6). (Browser-level visual confirmation also recommended in manual testing step 4.)
+
+- [ ] **AC 12b** — **Kiosk `<main>` has no padding (automated):** Given the kiosk page is rendered, when the `<main>` element's classes are extracted, then the class list contains `p-0` and does NOT contain `p-3`. Covered by `test_kiosk_main_has_no_padding` and `test_per_area_kiosk_main_has_no_padding` (Task 11.5).
 
 - [ ] **AC 13** — **Discoverability dropdown — all-equipment link:** Given the public status dashboard is loaded, when the user clicks the "Kiosk View" dropdown, then it contains an "All Equipment" item linking to `/public/kiosk`.
 
@@ -532,7 +569,7 @@ Tasks are ordered by dependency (lowest level first).
 ### Dependencies
 
 - **No new Python packages.** Uses existing Flask, Flask-SQLAlchemy.
-- **No new JS libraries.** Bootstrap (already bundled at `static/js/bootstrap.bundle.min.js`) provides the dropdown component. Confirmed loaded via both `base.html:75` and `base_public.html:17`.
+- **No new JS libraries.** Bootstrap (already bundled at `static/js/bootstrap.bundle.min.js`) provides the dropdown component. Confirmed loaded via both `base.html:74` and `base_public.html:17`.
 - **No DB migration.** Uses existing `Area` and `Equipment` columns.
 - **No infra change.** Routes are unauthenticated public, like the existing kiosk.
 - Internally depends on:
@@ -566,15 +603,17 @@ Tasks are ordered by dependency (lowest level first).
 ### Notes
 
 **Known limitations:**
-- **No-JS fallback:** With JavaScript disabled, oversize content is clipped (because of `body.kiosk-body { overflow: hidden }`) rather than scrollable. Considered acceptable: kiosks are dedicated displays where JS will be enabled.
+- **No-JS fallback:** With JavaScript disabled, oversize content is clipped (because of `.kiosk-body { overflow: hidden }`) rather than scrollable. Considered acceptable: kiosks are dedicated displays where JS will be enabled.
 - **Very wide aspect ratios:** Shrink-to-fit uses the more constraining of `viewportW/contentW` and `viewportH/contentH`, so on very wide or very tall viewports there will be empty space along one axis. Acceptable — alternative (stretching) was explicitly out of scope.
 - **First-paint flash:** Between the initial paint and JS execution, oversize content is briefly clipped. On a LAN this gap is essentially imperceptible. If observed in practice as objectionable, a future iteration could apply `visibility: hidden` on the wrapper until JS sets it visible after measuring.
 - **LTR-only:** `transform-origin: top left` assumes left-to-right reading order. If RTL support is added later, switch to `top right` for `dir="rtl"` pages. Not applicable today (app is LTR-only).
 - **HTML-escape edge cases in tests:** Test area names should be alphanumeric-only (e.g., `'Wood Shop'`) to avoid Jinja autoescape interfering with substring assertions. Names with `&`, `<`, `>`, `"` would be encoded in the HTML and fail naive `'X' in html` checks.
+- **Tall narrow viewports with many items:** Because horizontal overflow rarely occurs (the responsive grid reflows), shrink-to-fit is dominated by the vertical axis. On extremely tall narrow viewports (e.g., a 480×1920 portrait kiosk display) with many equipment items, the resulting scale factor can render text very small (< 0.5rem). Recommended kiosk hardware: 1080p+ landscape displays. Documented but not enforced.
+- **`get_area_status_dashboard()` and `get_single_area_status_dashboard()` return shape:** Both must return a `list[dict]` / `dict` (not a generator). The Jinja templates use `areas|length` and `selectattr|list` which materialize iterables — repeated iteration is required. Type hints on the service functions document this contract.
 
 **Risk items / pre-mortem:**
 - **`test_kiosk_no_navbar` (line 327)** asserts `'navbar' not in html` and `'<nav' not in html`. The new wrapper and h1 do not introduce either substring — should remain green. Verified by inspection.
-- **Bootstrap dropdown JS** depends on `bootstrap.bundle.min.js` being loaded on the status dashboard. It is, via `base.html:75` (authenticated) and `base_public.html:17` (unauthenticated). New test `test_dashboard_loads_bootstrap_bundle_js` (Task 11) asserts this explicitly.
+- **Bootstrap dropdown JS** depends on `bootstrap.bundle.min.js` being loaded on the status dashboard. It is, via `base.html:74` (authenticated) and `base_public.html:17` (unauthenticated). New test `test_dashboard_loads_bootstrap_bundle_js` (Task 11) asserts this explicitly.
 - **Resize event flooding:** The 150ms `setTimeout` debounce prevents this. Pattern matches the existing `qr-form` implementation (`app.js:140`).
 - **Archived-vs-missing observability:** `AreaNotFound`/`AreaArchived` distinction preserves callers' ability to log the difference; the public 404 path remains uniform.
 - **Browser `document.fonts.ready` support:** All modern browsers support it (Chrome 35+, Firefox 41+, Safari 10+). The JS guards with a feature check just in case.
@@ -613,3 +652,28 @@ Tasks are ordered by dependency (lowest level first).
   - **F21 (Low):** Task 3 explicitly notes that `abort` is already imported at `public.py:10`.
   - **F22 (Low):** Pre-mortem mentions the harmless meta-refresh/resize race.
   - **F8 (Medium, undecided):** No code change; documented browser-support note in Dependencies.
+
+- **2026-05-09 v3** — Second adversarial review (23 findings, no Criticals). Real findings addressed:
+  - **F1 (High):** Bootstrap line number corrected from `base.html:75` to `base.html:74` in 5 places.
+  - **F3 (High):** Task 11 adds `test_kiosk_main_has_no_padding` and `test_per_area_kiosk_main_has_no_padding` automated tests, mirroring existing `test_kanban_uses_container_fluid` at `tests/test_views/test_repair_views.py:820`. New AC #12b.
+  - **F4 (High):** AC #12 changed from manual to automated; Task 11 adds `test_app_css_kiosk_body_has_overflow_hidden` reading `app.css` directly.
+  - **F5 (High):** Task 7 JS now uses `requestAnimationFrame(applyKioskScale)` retry on the zero-content branch instead of silently giving up.
+  - **F6 (High):** Task 9 test pattern changed from `assert not isinstance(...)` to `assert type(exc_info.value) is AreaNotFound` for clarity.
+  - **F7 (Medium):** Tech Decision #3 now documents the no-popover-on-kiosk constraint of `overflow: hidden`.
+  - **F8 (Medium):** Tech Decision #16 reverted: keep `.kiosk-body` selector (no specificity bump), document scope via CSS comment instead.
+  - **F9 (Medium):** Tech Decision #1 clarifies that vertical scaling dominates because the responsive grid rarely produces horizontal overflow.
+  - **F11 (Medium):** Task 7 removes the dead `console.warn` (replaced by rAF retry per F5).
+  - **F12 (Medium):** New Tech Decision #17 + inline JS comment: only `transform` styles allowed on `#kiosk-scale-content`.
+  - **F14 (Low):** Note added in Known Limitations about return-shape contract (must be list, not generator).
+  - **F15 (Low):** Note added in Task 5 that `{% if area_name %}` correctly handles None/empty/missing.
+  - **F16 (Low):** Template uses `not areas[0].get('equipment')` instead of attribute access for defensive missing-key handling.
+  - **F19 (Low):** Task 7 extracts `KIOSK_RESIZE_DEBOUNCE_MS = 150` constant; comment no longer couples to qr-form's implementation.
+  - **F20 (Low):** Task 11 adds `test_dashboard_kiosk_dropdown_only_all_equipment_when_no_areas` for the empty-database case.
+  - **F21 (Low):** Task 7 wording corrected: "Insert at line 118, before the closing `});` of the DOMContentLoaded handler".
+  - **F22 (Low):** Known Limitations adds note about tall narrow viewports producing illegibly small text on cheap kiosks.
+  - **F23 (Low):** Task 2 specifies insertion at line 234 of `status_service.py`.
+  - **F2 (High, borderline noise):** Skipped — reviewer's own analysis judged it borderline.
+  - **F10 (Medium):** Skipped — would require jsdom/headless test infrastructure not justified by the risk.
+  - **F13 (Medium):** Skipped — script-tag-position assertion would couple to template internals; covered indirectly by manual testing.
+  - **F17 (Low):** Skipped — already noted as harmless.
+  - **F18 (Low, noise):** No change — sanity check passed.
