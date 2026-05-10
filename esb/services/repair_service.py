@@ -505,7 +505,6 @@ def update_repair_record(
     if audit_changes:
         from esb.services import config_service
 
-        # Status-change triggers: closed transitions go to 'resolved'; open transitions go to 'status_changed'.
         if 'status' in audit_changes and audit_changes['status'][1] in CLOSED_STATUSES:
             if config_service.get_config('notify_resolved', 'true') == 'true':
                 _queue_slack_notification(record.equipment, 'resolved', {

@@ -40,7 +40,7 @@ def get_area(area_id: int) -> Area:
     return area
 
 
-def get_area_by_name(name: str) -> Area | None:
+def get_area_by_name(name: str | None) -> Area | None:
     """Look up a non-archived area by exact (case-insensitive) name.
 
     The input is stripped of leading/trailing whitespace before comparison

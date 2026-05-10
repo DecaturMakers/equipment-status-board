@@ -157,7 +157,6 @@ def register_handlers(bolt_app, app):
 
             text_arg = body.get('text', '').strip()
 
-            # No-args path: open the dispatcher modal listing open repair records.
             if not text_arg:
                 from esb.services import repair_service
                 from esb.slack.forms import build_repair_dispatcher_modal
@@ -176,8 +175,6 @@ def register_handlers(bolt_app, app):
                 )
                 return
 
-            # With-args path: open the create-record modal, pre-selecting the
-            # equipment when the arg matches exactly one piece of equipment.
             from esb.services import equipment_service
             from esb.slack.forms import build_equipment_options, build_repair_create_modal, build_user_options
 
@@ -294,8 +291,6 @@ def register_handlers(bolt_app, app):
                 else:
                     from esb.services import equipment_service, status_service
 
-                    # Resolution order: case-insensitive exact area-name match
-                    # first; on miss, fall back to existing equipment search.
                     area = equipment_service.get_area_by_name(search_term)
                     if area is not None:
                         from esb.slack.forms import format_area_status_detail
@@ -491,7 +486,15 @@ def register_handlers(bolt_app, app):
                 return
 
             try:
-                record = repair_service.get_repair_record(int(selected['value']))
+                selected_id = int(selected['value'])
+            except (KeyError, TypeError, ValueError):
+                ack(response_action='errors', errors={
+                    'repair_select_block': 'Invalid selection. Please re-run /esb-repair.',
+                })
+                return
+
+            try:
+                record = repair_service.get_repair_record(selected_id)
             except ValidationError:
                 ack(response_action='errors', errors={
                     'repair_select_block': 'Repair record no longer exists.',

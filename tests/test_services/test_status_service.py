@@ -556,16 +556,20 @@ class TestDashboardEagerLoad:
 
         Returns (n_user_selects, dashboard_result).
         """
+        import re
+
         from sqlalchemy import event
 
         from esb.extensions import db as _db
 
         user_select_count = {'n': 0}
+        # Match SELECTs against the users table whether the dialect renders it
+        # bare (sqlite) or quoted (postgres -> "users", mysql -> `users`).
+        from_users_pattern = re.compile(r'\bfrom\s+(?:"users"|`users`|users)\b')
 
         def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
             stripped = statement.strip().lower()
-            # Match both 'SELECT ... FROM users' and 'SELECT ... FROM "users"'
-            if stripped.startswith('select') and ' from users' in stripped:
+            if stripped.startswith('select') and from_users_pattern.search(stripped):
                 user_select_count['n'] += 1
 
         engine = _db.engine

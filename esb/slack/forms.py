@@ -571,7 +571,6 @@ def build_repair_dispatcher_modal(open_records):
     Returns:
         Block Kit modal view dict.
     """
-    # Partition into per-area buckets, preserving input order within each bucket.
     buckets: dict[str, list] = {}
     for record in open_records:
         area_name = record.equipment.area.name if record.equipment.area else 'No Area'
