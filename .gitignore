@@ -204,6 +204,11 @@ uploads/
 .cursorignore
 .cursorindexingignore
 
+# Claude Code
+#  Runtime lock files written by the Claude Code CLI (e.g. .claude/scheduled_tasks.lock,
+#  which holds the session/PID owning the scheduled-task queue).
+.claude/*.lock
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
