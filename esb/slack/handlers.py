@@ -572,8 +572,13 @@ def register_handlers(bolt_app, app):
             changes: dict = {}
             # Defensive: bind resolve_note in the outer scope so the dispatch
             # block below never hits an UnboundLocalError if branches are
-            # rearranged. Only the 'resolve_with_note' branch reassigns it.
-            resolve_note: str | None = None
+            # rearranged. Only the 'resolve_with_note' branch reassigns it,
+            # and only after pre-validating the input is non-empty -- so
+            # type is str (not str | None), and the empty-string default is
+            # unreachable. The service-layer guard still catches an empty
+            # string defensively if a branch rearrangement ever lets it
+            # through.
+            resolve_note: str = ''
             if action == 'claim':
                 pass  # handled below
             elif action == 'set_eta':

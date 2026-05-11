@@ -49,7 +49,9 @@ Use the dropdown filters at the top of the queue to narrow the list:
 
 - **Area** — Show only repairs for a specific area
 - **Status** — Show only repairs in a specific status
-- **Assignee** — Three options: **All Assignees** (default), **Mine** (records assigned to you), and **Unassigned** (records with no assignee). Filters apply immediately client-side — no page reload.
+- **Assignee** — Three options: **All Assignees** (default), **Mine** (records assigned to you), and **Unassigned** (records with no assignee).
+
+All three filters work the same way: changing a dropdown narrows the *already-loaded* list immediately, with no page reload. You can also bookmark or share a pre-filtered URL: `?area=`, `?status=`, and `?assignee=me|unassigned` all apply server-side at page load, so the page comes up with the matching subset already in the table. Dropdown changes after that point refine what's visible but don't update the URL — so a reload reverts to whatever the URL says.
 
 ### Mobile View
 
