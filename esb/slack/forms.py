@@ -12,8 +12,6 @@ _NON_GREEN_DESC_TRUNCATE = 80
 
 def _truncate(text: str, limit: int) -> str:
     """Truncate text to limit, appending an ellipsis when shortened."""
-    if text is None:
-        return ''
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 1)].rstrip() + '\u2026'

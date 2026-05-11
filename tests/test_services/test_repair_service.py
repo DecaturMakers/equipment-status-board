@@ -1422,6 +1422,33 @@ class TestClaimRepairRecord:
                 repair_record_id=99999, claimed_by_user_id=1, claimed_by_username='x',
             )
 
+    def test_claim_closed_record_raises(self, app, make_area, make_equipment):
+        """Claim on a closed record raises ValidationError and does not mutate the record."""
+        from esb.utils.exceptions import ValidationError
+        from tests.conftest import _create_user
+
+        claimer = _create_user('technician', username='claimer')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        for closed_status in ('Resolved', 'Closed - Duplicate', 'Closed - No Issue Found'):
+            record = RepairRecord(
+                equipment_id=eq.id, description=f'X-{closed_status}', status=closed_status,
+            )
+            _db.session.add(record)
+            _db.session.commit()
+            original_assignee = record.assignee_id
+
+            with pytest.raises(ValidationError, match='closed'):
+                repair_service.claim_repair_record(
+                    repair_record_id=record.id,
+                    claimed_by_user_id=claimer.id,
+                    claimed_by_username=claimer.username,
+                )
+
+            _db.session.refresh(record)
+            assert record.assignee_id == original_assignee
+            assert record.status == closed_status
+
 
 class TestGetRepairQueue:
     """Tests for get_repair_queue()."""

@@ -236,11 +236,11 @@ def claim_repair_record(
     ``'Parts Ordered'``, ``'Parts Received'``, ``'Needs Specialist'``),
     the status is left untouched -- claim is purely an assignee swap.
 
-    Closed records cannot be claimed; callers should guard against that
-    before calling (this function does not re-check it because
-    ``update_repair_record`` will accept the assignee change anyway, but
-    a closed record being "claimed" is almost certainly a logic bug in
-    the caller).
+    Closed records cannot be claimed; this function raises
+    ``ValidationError`` if the record's current status is in
+    ``CLOSED_STATUSES``. (The dispatcher view handler also pre-checks
+    this for a friendlier error path; the service-level enforcement is
+    here so other callers can't bypass it.)
 
     Args:
         repair_record_id: ID of the RepairRecord to claim.
@@ -252,10 +252,15 @@ def claim_repair_record(
         The updated RepairRecord.
 
     Raises:
-        ValidationError: from ``update_repair_record`` if the record or
-            user doesn't exist.
+        ValidationError: if the record doesn't exist, the claiming user
+            doesn't exist, or the record is in a closed status.
     """
     record = get_repair_record(repair_record_id)
+    if record.status in CLOSED_STATUSES:
+        raise ValidationError(
+            f'Cannot claim repair record {repair_record_id}: '
+            f'status {record.status!r} is closed',
+        )
     changes: dict = {'assignee_id': claimed_by_user_id}
     if record.status == 'New':
         changes['status'] = 'Assigned'
