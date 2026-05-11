@@ -437,6 +437,341 @@ class TestFormatStatusSummary:
         assert '0 :warning: degraded' in result
         assert '0 :x: down' in result
 
+    def test_non_green_items_listed_under_area(self, app, make_area, make_equipment, make_repair_record):
+        """AC 7: each non-green equipment is listed as a bullet under its area's count line."""
+        from esb.services import status_service
+        from esb.slack.forms import format_status_summary
+
+        area = make_area('Woodshop', '#wood')
+        eq_down = make_equipment('SawStop', 'SawStop', 'PCS', area=area)
+        eq_degraded = make_equipment('Band Saw', 'Jet', 'JWBS', area=area)
+        make_equipment('Drill Press', 'Jet', 'DP', area=area)  # green
+        make_repair_record(equipment=eq_down, status='New', severity='Down', description='Motor burned out')
+        make_repair_record(equipment=eq_degraded, status='New', severity='Degraded', description='Belt slipping')
+
+        dashboard = status_service.get_area_status_dashboard()
+        result = format_status_summary(dashboard)
+
+        # Bullets for each non-green item appear under the area count line.
+        assert ':x: *SawStop*' in result
+        assert ':warning: *Band Saw*' in result
+        assert 'Motor burned out' in result
+        assert 'Belt slipping' in result
+        # Green item does not get a bullet.
+        assert '*Drill Press*' not in result
+
+    def test_truncates_long_description_at_80(self, app, make_area, make_equipment, make_repair_record):
+        """Descriptions longer than 80 chars are truncated with an ellipsis."""
+        from esb.services import status_service
+        from esb.slack.forms import format_status_summary
+
+        area = make_area('Lab', '#lab')
+        eq = make_equipment('Tool', 'TC', 'TM', area=area)
+        long_desc = 'X' * 200
+        make_repair_record(equipment=eq, status='New', severity='Down', description=long_desc)
+
+        dashboard = status_service.get_area_status_dashboard()
+        result = format_status_summary(dashboard)
+
+        # Should not contain the full 200 X's but should contain a truncated form.
+        assert 'X' * 200 not in result
+        assert '\u2026' in result  # ellipsis
+
+    def test_eta_shown_when_present(self, app, make_area, make_equipment, make_repair_record):
+        """ETA is shown when present in status."""
+        from datetime import date
+        from esb.services import status_service
+        from esb.slack.forms import format_status_summary
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Lathe', 'X', 'M', area=area)
+        make_repair_record(equipment=eq, status='New', severity='Down', description='broken', eta=date(2026, 6, 15))
+
+        dashboard = status_service.get_area_status_dashboard()
+        result = format_status_summary(dashboard)
+        assert 'Jun 15, 2026' in result
+
+    def test_footer_hint_present(self, app, make_area, make_equipment):
+        """AC 8: footer hint appears at the end of the summary."""
+        from esb.services import status_service
+        from esb.slack.forms import format_status_summary
+
+        area = make_area('Lab', '#lab')
+        make_equipment('Scope', 'Tek', 'TDS', area=area)
+        dashboard = status_service.get_area_status_dashboard()
+        result = format_status_summary(dashboard)
+        assert '/esb-status <area name>' in result
+        assert 'full details on one area' in result
+
+    def test_all_green_area_no_equipment_bullets(self, app, make_area, make_equipment):
+        """AC 36: area with all-green equipment shows count line, no bullets beneath."""
+        from esb.services import status_service
+        from esb.slack.forms import format_status_summary
+
+        area = make_area('Lab', '#lab')
+        make_equipment('Scope', 'Tek', 'TDS', area=area)
+        make_equipment('DMM', 'Fluke', '87V', area=area)
+        dashboard = status_service.get_area_status_dashboard()
+        result = format_status_summary(dashboard)
+        # The count line is present.
+        assert 'Lab' in result
+        # And no equipment item is rendered as a bullet (no per-item lines).
+        assert '*Scope*' not in result
+        assert '*DMM*' not in result
+
+    def test_empty_returns_unchanged_text(self, app):
+        """AC 7 empty-state preservation."""
+        from esb.slack.forms import format_status_summary
+        assert format_status_summary([]) == 'No equipment has been registered yet.'
+
+
+class TestFormatAreaStatusDetail:
+    """Tests for format_area_status_detail()."""
+
+    def test_all_green_area_has_header_and_per_item_lines(self, app, make_area, make_equipment):
+        from esb.services import status_service
+        from esb.slack.forms import format_area_status_detail
+
+        area = make_area('Lab', '#lab')
+        make_equipment('Scope', 'Tek', 'TDS', area=area)
+        make_equipment('DMM', 'Fluke', '87V', area=area)
+        area_data = status_service.get_single_area_status_dashboard(area.id)
+
+        result = format_area_status_detail(area_data)
+        assert ':bar_chart:' in result
+        assert '*Lab*' in result
+        assert ':white_check_mark: *DMM* \u2014 Operational' in result
+        assert ':white_check_mark: *Scope* \u2014 Operational' in result
+
+    def test_mixed_area_shows_detail_for_non_green(self, app, make_area, make_equipment, make_repair_record):
+        from datetime import date
+        from esb.services import status_service
+        from esb.slack.forms import format_area_status_detail
+        from tests.conftest import _create_user
+
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        red_eq = make_equipment('SawStop', 'SS', 'PCS', area=area)
+        yellow_eq = make_equipment('Band Saw', 'Jet', 'JWBS', area=area)
+        make_equipment('Drill', 'Jet', 'DP', area=area)  # green
+        make_repair_record(
+            equipment=red_eq, status='Assigned', severity='Down',
+            description='Motor down', eta=date(2026, 6, 15), assignee_id=tech.id,
+        )
+        make_repair_record(
+            equipment=yellow_eq, status='New', severity='Degraded',
+            description='Belt slip',
+        )
+
+        area_data = status_service.get_single_area_status_dashboard(area.id)
+        result = format_area_status_detail(area_data)
+        assert ':x: *SawStop* \u2014 Down' in result
+        assert '> Motor down' in result
+        assert '> ETA: Jun 15, 2026' in result
+        assert '> Assigned to: alice' in result
+        assert ':warning: *Band Saw* \u2014 Degraded' in result
+        assert '> Belt slip' in result
+        assert ':white_check_mark: *Drill* \u2014 Operational' in result
+
+    def test_empty_area(self, app, make_area):
+        from esb.services import status_service
+        from esb.slack.forms import format_area_status_detail
+
+        area = make_area('Empty', '#empty')
+        area_data = status_service.get_single_area_status_dashboard(area.id)
+        result = format_area_status_detail(area_data)
+        assert ':bar_chart:' in result
+        assert 'Empty' in result
+        assert 'No equipment' in result
+
+
+class TestBuildRepairDispatcherModal:
+    """Tests for build_repair_dispatcher_modal()."""
+
+    def test_modal_metadata(self, app, make_area, make_equipment, make_repair_record):
+        from esb.services import repair_service
+        from esb.slack.forms import build_repair_dispatcher_modal
+
+        area = make_area('Woodshop', '#wood')
+        eq = make_equipment('SawStop', 'SS', 'PCS', area=area)
+        make_repair_record(equipment=eq, status='New', severity='Down', description='broken')
+
+        records = repair_service.get_repair_queue()
+        modal = build_repair_dispatcher_modal(records)
+        assert modal['callback_id'] == 'repair_dispatcher_submission'
+        assert modal['submit']['text'] == 'Continue'
+        assert len(modal['blocks']) == 1
+        block = modal['blocks'][0]
+        assert block['block_id'] == 'repair_select_block'
+        assert block['element']['action_id'] == 'repair_select'
+        assert block['element']['type'] == 'static_select'
+
+    def test_option_groups_by_area_sorted_alphabetically(self, app, make_area, make_equipment, make_repair_record):
+        """AC 31: areas are presented alphabetically across groups."""
+        from esb.services import repair_service
+        from esb.slack.forms import build_repair_dispatcher_modal
+
+        zoo = make_area('Zoo', '#zoo')
+        alpha = make_area('Alpha', '#alpha')
+        zeq = make_equipment('Z-tool', 'X', 'M', area=zoo)
+        aeq = make_equipment('A-tool', 'X', 'M', area=alpha)
+        make_repair_record(equipment=zeq, status='New', severity='Down', description='z')
+        make_repair_record(equipment=aeq, status='New', severity='Down', description='a')
+
+        records = repair_service.get_repair_queue()
+        modal = build_repair_dispatcher_modal(records)
+        groups = modal['blocks'][0]['element']['option_groups']
+        labels = [g['label']['text'] for g in groups]
+        assert labels == ['Alpha', 'Zoo']
+
+    def test_within_group_preserves_caller_order(self, app, make_area, make_equipment, make_repair_record):
+        """AC 31: within an area group, options preserve the caller's input order
+        (severity_priority then created_at_asc as supplied by get_repair_queue())."""
+        from esb.services import repair_service
+        from esb.slack.forms import build_repair_dispatcher_modal
+
+        area = make_area('Shop', '#shop')
+        # Two Down records (older first) and one Degraded record. get_repair_queue
+        # returns ordered by (Down=0, Degraded=1) then created_at asc.
+        eq1 = make_equipment('Old-Down', 'X', 'M', area=area)
+        eq2 = make_equipment('New-Down', 'X', 'M', area=area)
+        eq3 = make_equipment('Degraded-Tool', 'X', 'M', area=area)
+        # Insert older Down first
+        rec1 = make_repair_record(equipment=eq1, status='New', severity='Down', description='oldest')
+        rec3 = make_repair_record(equipment=eq3, status='New', severity='Degraded', description='deg')
+        rec2 = make_repair_record(equipment=eq2, status='New', severity='Down', description='newer')
+
+        records = repair_service.get_repair_queue()
+        # Sanity: queue is severity-priority then created_at asc.
+        assert [r.id for r in records] == [rec1.id, rec2.id, rec3.id]
+
+        modal = build_repair_dispatcher_modal(records)
+        # Single group ('Shop'); option order preserves the caller's order.
+        options = modal['blocks'][0]['element']['option_groups'][0]['options']
+        values = [o['value'] for o in options]
+        assert values == [str(rec1.id), str(rec2.id), str(rec3.id)]
+
+    def test_option_format(self, app, make_area, make_equipment, make_repair_record):
+        from esb.services import repair_service
+        from esb.slack.forms import build_repair_dispatcher_modal
+        from tests.conftest import _create_user
+
+        tech = _create_user('technician', username='alice')
+        area = make_area('Woodshop', '#wood')
+        eq = make_equipment('SawStop', 'SS', 'PCS', area=area)
+        rec = make_repair_record(
+            equipment=eq, status='Assigned', severity='Down',
+            description='broken', assignee_id=tech.id,
+        )
+
+        records = repair_service.get_repair_queue()
+        modal = build_repair_dispatcher_modal(records)
+        opt = modal['blocks'][0]['element']['option_groups'][0]['options'][0]
+        # text starts with #<id>
+        assert opt['text']['text'].startswith(f'#{rec.id} ')
+        assert 'SawStop' in opt['text']['text']
+        assert 'Assigned' in opt['text']['text']
+        # description shows severity | assignee
+        assert opt['description']['text'] == 'Down | alice'
+        assert opt['value'] == str(rec.id)
+
+    def test_option_label_truncated_to_75_chars(self, app, make_area, make_equipment, make_repair_record):
+        from esb.services import repair_service
+        from esb.slack.forms import build_repair_dispatcher_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('A' * 80, 'X', 'M', area=area)
+        make_repair_record(equipment=eq, status='New', severity='Down', description='x')
+
+        records = repair_service.get_repair_queue()
+        modal = build_repair_dispatcher_modal(records)
+        opt = modal['blocks'][0]['element']['option_groups'][0]['options'][0]
+        assert len(opt['text']['text']) <= 75
+
+    def test_option_description_unassigned_when_no_assignee(self, app, make_area, make_equipment, make_repair_record):
+        from esb.services import repair_service
+        from esb.slack.forms import build_repair_dispatcher_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        make_repair_record(equipment=eq, status='New', description='broken')
+
+        records = repair_service.get_repair_queue()
+        modal = build_repair_dispatcher_modal(records)
+        opt = modal['blocks'][0]['element']['option_groups'][0]['options'][0]
+        assert 'Unassigned' in opt['description']['text']
+
+
+class TestBuildRepairActionModal:
+    """Tests for build_repair_action_modal()."""
+
+    def test_modal_metadata_and_private_metadata(self, app, make_area, make_equipment, make_repair_record):
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec = make_repair_record(equipment=eq, status='New', severity='Down', description='broken')
+
+        modal = build_repair_action_modal(rec)
+        assert modal['callback_id'] == 'repair_action_submission'
+        assert modal['private_metadata'] == str(rec.id)
+        assert f'Repair #{rec.id}' in modal['title']['text']
+        assert modal['submit']['text'] == 'Apply'
+
+    def test_action_radio_has_all_four_values(self, app, make_area, make_equipment, make_repair_record):
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec = make_repair_record(equipment=eq, status='New', severity='Down', description='broken')
+
+        modal = build_repair_action_modal(rec)
+        action_block = next(b for b in modal['blocks'] if b.get('block_id') == 'action_block')
+        assert action_block['element']['type'] == 'radio_buttons'
+        values = [o['value'] for o in action_block['element']['options']]
+        assert values == ['claim', 'set_eta', 'set_status', 'resolve_with_note']
+        # No initial_option -- force the user to pick.
+        assert 'initial_option' not in action_block['element']
+
+    def test_eta_status_note_blocks_optional(self, app, make_area, make_equipment, make_repair_record):
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec = make_repair_record(equipment=eq, status='New', severity='Down', description='broken')
+
+        modal = build_repair_action_modal(rec)
+        for bid in ('eta_block', 'status_block', 'note_block'):
+            block = next(b for b in modal['blocks'] if b.get('block_id') == bid)
+            assert block.get('optional') is True
+
+    def test_status_select_has_three_permitted_values(self, app, make_area, make_equipment, make_repair_record):
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec = make_repair_record(equipment=eq, status='New', severity='Down', description='broken')
+
+        modal = build_repair_action_modal(rec)
+        status_block = next(b for b in modal['blocks'] if b.get('block_id') == 'status_block')
+        values = [o['value'] for o in status_block['element']['options']]
+        assert values == ['In Progress', 'Closed - Duplicate', 'Closed - No Issue Found']
+
+    def test_eta_initial_date_when_repair_has_eta(self, app, make_area, make_equipment, make_repair_record):
+        from datetime import date
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec = make_repair_record(
+            equipment=eq, status='New', severity='Down',
+            description='broken', eta=date(2026, 7, 4),
+        )
+
+        modal = build_repair_action_modal(rec)
+        eta_block = next(b for b in modal['blocks'] if b.get('block_id') == 'eta_block')
+        assert eta_block['element']['initial_date'] == '2026-07-04'
+
 
 class TestFormatEquipmentStatusDetail:
     """Tests for format_equipment_status_detail()."""

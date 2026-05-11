@@ -68,6 +68,16 @@
 
             <div class="mb-3">
                 <div class="form-check form-switch">
+                    {{ form.notify_status_changed(class="form-check-input", role="switch") }}
+                    <label class="form-check-label" for="{{ form.notify_status_changed.id }}">
+                        {{ form.notify_status_changed.label.text }}
+                    </label>
+                </div>
+                <div class="form-text">Notify when a repair's status changes between open states (e.g., New &rarr; In Progress).</div>
+            </div>
+
+            <div class="mb-3">
+                <div class="form-check form-switch">
                     {{ form.notify_eta_updated(class="form-check-input", role="switch") }}
                     <label class="form-check-label" for="{{ form.notify_eta_updated.id }}">
                         {{ form.notify_eta_updated.label.text }}

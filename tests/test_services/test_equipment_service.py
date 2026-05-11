@@ -60,6 +60,72 @@ class TestGetArea:
         result = get_area(area.id)
         assert result.name == 'Woodshop'
 
+
+class TestGetAreaByName:
+    """Tests for equipment_service.get_area_by_name()."""
+
+    def test_exact_match_returns_area(self, app, make_area):
+        from esb.services.equipment_service import get_area_by_name
+
+        area = make_area('Woodshop', '#woodshop')
+        result = get_area_by_name('Woodshop')
+        assert result is not None
+        assert result.id == area.id
+
+    def test_case_insensitive_match(self, app, make_area):
+        from esb.services.equipment_service import get_area_by_name
+
+        area = make_area('Woodshop', '#woodshop')
+        assert get_area_by_name('woodshop').id == area.id
+        assert get_area_by_name('WOODSHOP').id == area.id
+        assert get_area_by_name('WoOdShOp').id == area.id
+
+    def test_whitespace_padded_input_matches(self, app, make_area):
+        from esb.services.equipment_service import get_area_by_name
+
+        area = make_area('Woodshop', '#woodshop')
+        assert get_area_by_name('  Woodshop  ').id == area.id
+        assert get_area_by_name('\tWoodshop\n').id == area.id
+
+    def test_no_match_returns_none(self, app, make_area):
+        from esb.services.equipment_service import get_area_by_name
+
+        make_area('Woodshop', '#woodshop')
+        assert get_area_by_name('Nonexistent') is None
+
+    def test_empty_or_whitespace_input_returns_none(self, app, make_area):
+        from esb.services.equipment_service import get_area_by_name
+
+        make_area('Woodshop', '#woodshop')
+        assert get_area_by_name('') is None
+        assert get_area_by_name('   ') is None
+        assert get_area_by_name(None) is None
+
+    def test_archived_area_excluded(self, app, make_area):
+        from esb.services.equipment_service import get_area_by_name
+
+        archived = make_area('Old Lab', '#old')
+        archived.is_archived = True
+        _db.session.commit()
+        assert get_area_by_name('Old Lab') is None
+
+    def test_partial_match_does_not_match(self, app, make_area):
+        """Partial-name input should NOT match (exact-name only)."""
+        from esb.services.equipment_service import get_area_by_name
+
+        make_area('Woodshop', '#woodshop')
+        assert get_area_by_name('Wood') is None
+        assert get_area_by_name('shop') is None
+
+    def test_exact_match_picks_correct_area_when_multiple_exist(self, app, make_area):
+        from esb.services.equipment_service import get_area_by_name
+
+        make_area('Woodshop', '#woodshop')
+        metal = make_area('Metal Shop', '#metal')
+        result = get_area_by_name('Metal Shop')
+        assert result is not None
+        assert result.id == metal.id
+
     def test_raises_on_not_found(self, app):
         """get_area() raises ValidationError when area not found."""
         from esb.services.equipment_service import get_area

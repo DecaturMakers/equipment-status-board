@@ -222,6 +222,56 @@ CLOSED_STATUSES = ['Resolved', 'Closed - No Issue Found', 'Closed - Duplicate']
 KANBAN_COLUMNS = [s for s in REPAIR_STATUSES if s not in CLOSED_STATUSES]
 
 
+def claim_repair_record(
+    repair_record_id: int,
+    claimed_by_user_id: int,
+    claimed_by_username: str,
+) -> RepairRecord:
+    """Claim a repair record for the given user.
+
+    Sets ``assignee_id`` to ``claimed_by_user_id`` always. As a status
+    transition rule (issue #34), if the record's current status is
+    ``'New'``, the claim also promotes status to ``'Assigned'``; on any
+    later open status (``'Assigned'``, ``'In Progress'``, ``'Parts Needed'``,
+    ``'Parts Ordered'``, ``'Parts Received'``, ``'Needs Specialist'``),
+    the status is left untouched -- claim is purely an assignee swap.
+
+    Closed records cannot be claimed; this function raises
+    ``ValidationError`` if the record's current status is in
+    ``CLOSED_STATUSES``. (The dispatcher view handler also pre-checks
+    this for a friendlier error path; the service-level enforcement is
+    here so other callers can't bypass it.)
+
+    Args:
+        repair_record_id: ID of the RepairRecord to claim.
+        claimed_by_user_id: ESB user id of the claiming user.
+        claimed_by_username: Username of the claiming user (for timeline
+            entry attribution).
+
+    Returns:
+        The updated RepairRecord.
+
+    Raises:
+        ValidationError: if the record doesn't exist, the claiming user
+            doesn't exist, or the record is in a closed status.
+    """
+    record = get_repair_record(repair_record_id)
+    if record.status in CLOSED_STATUSES:
+        raise ValidationError(
+            f'Cannot claim repair record {repair_record_id}: '
+            f'status {record.status!r} is closed',
+        )
+    changes: dict = {'assignee_id': claimed_by_user_id}
+    if record.status == 'New':
+        changes['status'] = 'Assigned'
+    return update_repair_record(
+        repair_record_id=repair_record_id,
+        updated_by=claimed_by_username,
+        author_id=claimed_by_user_id,
+        **changes,
+    )
+
+
 def get_kanban_data() -> dict[str, list[RepairRecord]]:
     """Get open repair records grouped by status for the Kanban board.
 
@@ -460,10 +510,15 @@ def update_repair_record(
     if audit_changes:
         from esb.services import config_service
 
-        # Resolved trigger: status changed to a resolved/closed status
         if 'status' in audit_changes and audit_changes['status'][1] in CLOSED_STATUSES:
             if config_service.get_config('notify_resolved', 'true') == 'true':
                 _queue_slack_notification(record.equipment, 'resolved', {
+                    'old_status': audit_changes['status'][0],
+                    'new_status': audit_changes['status'][1],
+                })
+        elif 'status' in audit_changes:
+            if config_service.get_config('notify_status_changed', 'true') == 'true':
+                _queue_slack_notification(record.equipment, 'status_changed', {
                     'old_status': audit_changes['status'][0],
                     'new_status': audit_changes['status'][1],
                 })

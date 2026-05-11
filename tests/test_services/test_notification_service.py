@@ -941,6 +941,7 @@ class TestFormatSlackMessage:
             'has_safety_risk': False,
         })
 
+        assert ':rotating_light:' in text
         assert '*SawStop*' in text
         assert 'Woodshop' in text
         assert 'Down' in text
@@ -957,11 +958,47 @@ class TestFormatSlackMessage:
             'new_status': 'Resolved',
         })
 
+        assert ':white_check_mark:' in text
         assert '*SawStop*' in text
         assert 'Woodshop' in text
         assert 'back in service' in text
         assert 'Resolved' in text
         assert blocks is None
+
+    def test_resolved_format_with_resolved_status(self):
+        """resolved transition to 'Resolved' uses 'back in service' wording."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'resolved',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'new_status': 'Resolved',
+        })
+        assert 'back in service' in text
+        assert 'Status: Resolved' in text
+
+    def test_resolved_format_with_duplicate_status(self):
+        """resolved transition to 'Closed - Duplicate' uses 'closed: ...' wording."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'resolved',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'new_status': 'Closed - Duplicate',
+        })
+        assert ':white_check_mark:' in text
+        assert 'closed: Closed - Duplicate' in text
+        assert 'back in service' not in text
+        assert 'Status: Closed - Duplicate' in text
+
+    def test_resolved_format_with_no_issue_found_status(self):
+        """resolved transition to 'Closed - No Issue Found' uses 'closed: ...' wording."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'resolved',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'new_status': 'Closed - No Issue Found',
+        })
+        assert 'closed: Closed - No Issue Found' in text
+        assert 'back in service' not in text
 
     def test_severity_changed_format(self):
         """severity_changed message includes old and new severity levels."""
@@ -973,10 +1010,26 @@ class TestFormatSlackMessage:
             'new_severity': 'Down',
         })
 
+        assert ':wrench:' in text
         assert '*SawStop*' in text
         assert 'Woodshop' in text
         assert 'Degraded' in text
         assert 'Down' in text
+        assert blocks is None
+
+    def test_status_changed_format(self):
+        """status_changed message includes old and new status with arrows_counterclockwise emoji."""
+        text, blocks = notification_service._format_slack_message({
+            'event_type': 'status_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_status': 'New',
+            'new_status': 'In Progress',
+        })
+        assert ':arrows_counterclockwise:' in text
+        assert '*SawStop*' in text
+        assert 'Woodshop' in text
+        assert 'New -> In Progress' in text
         assert blocks is None
 
     def test_eta_updated_format(self):
@@ -988,6 +1041,7 @@ class TestFormatSlackMessage:
             'eta': '2026-02-20',
         })
 
+        assert ':calendar:' in text
         assert '*SawStop*' in text
         assert 'Woodshop' in text
         assert '2026-02-20' in text
@@ -1003,6 +1057,7 @@ class TestFormatSlackMessage:
             'old_eta': '2026-02-18',
         })
 
+        assert ':calendar:' in text
         assert '2026-02-18' in text
         assert '2026-02-20' in text
 
@@ -1018,8 +1073,9 @@ class TestFormatSlackMessage:
             'has_safety_risk': True,
         })
 
-        assert ':warning:' in text
         assert '*SAFETY RISK*' in text
+        # Safety prefix is exclusive vs the non-safety event prefix
+        assert ':rotating_light:' not in text
 
     def test_safety_risk_highlighted_severity_changed(self):
         """Safety risk is highlighted for severity_changed when has_safety_risk is True."""
@@ -1032,11 +1088,12 @@ class TestFormatSlackMessage:
             'has_safety_risk': True,
         })
 
-        assert ':warning:' in text
         assert '*SAFETY RISK*' in text
+        # Safety prefix is exclusive vs the non-safety event prefix
+        assert ':wrench:' not in text
 
     def test_no_safety_risk_when_false(self):
-        """No safety risk prefix when has_safety_risk is False."""
+        """No safety risk prefix when has_safety_risk is False; non-safety prefix used instead."""
         text, blocks = notification_service._format_slack_message({
             'event_type': 'new_report',
             'equipment_name': 'Test',
@@ -1047,8 +1104,8 @@ class TestFormatSlackMessage:
             'has_safety_risk': False,
         })
 
-        assert ':warning:' not in text
         assert 'SAFETY RISK' not in text
+        assert ':rotating_light:' in text
 
     def test_unknown_event_type_fallback(self):
         """Unknown event type returns generic message."""

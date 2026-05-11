@@ -125,22 +125,51 @@ You can make multiple changes at once — update the status, add a note, change 
 3. Fill in the description, severity, and any other details
 4. Click Save
 
-### Via Slack
+### Via Slack — two distinct flows
 
-Use the `/esb-repair` command in Slack:
+`/esb-repair` does two things depending on whether you give it an argument.
 
-1. Type `/esb-repair` in any channel
-2. Fill out the form that pops up — select equipment, enter description, set severity
-3. Submit
+#### Acting on an existing repair via the dispatcher
+
+1. Type `/esb-repair` (no argument) in any channel.
+2. A modal opens listing every open repair record, grouped by area, showing repair id, equipment, status, severity, and assignee.
+3. Pick one and click **Continue**.
+4. A second modal opens with one **Action** radio plus optional ETA / status / note inputs:
+   - **Claim (assign to me)** — sets you as the assignee. If the repair was still `New`, status moves to `Assigned`; on any later open status, claim only changes the assignee.
+   - **Set ETA** — pick a date. Required when chosen.
+   - **Set Status** — pick `In Progress`, `Closed - Duplicate`, or `Closed - No Issue Found`. Required when chosen.
+   - **Resolve with Note** — sets status to `Resolved` and appends the note you provide. Note is required.
+
+The dispatcher is the easiest path for routine in-Slack work — you no longer need to know a repair id to act on something.
+
+#### Creating a new repair via Slack
+
+1. Type `/esb-repair <equipment name>` in any channel — you **must** supply an argument; the no-args form goes to the dispatcher described above.
+2. The create-record modal opens. If the equipment name matches exactly one piece of equipment (case-insensitive), it is pre-selected for you.
+3. Fill in description, severity, and any other details, then submit.
+
+If the argument matches zero or multiple pieces of equipment (or matches only as a partial substring), the modal opens without a preselection and you pick from the dropdown.
 
 ## Using Slack Commands
 
 | Command | What It Does |
 |---------|-------------|
-| `/esb-report` | Quick problem report — same form as the member QR page report |
-| `/esb-status` | Check equipment status — see all areas or a specific item |
-| `/esb-repair` | Create a new repair record with full details |
-| `/esb-update <id>` | Update an existing repair record — change status, add notes, set severity, assignee, or ETA |
+| `/esb-report` | Quick problem report — same form as the member QR page report. Use this when you want to file a member-style report from Slack. |
+| `/esb-status` | Check status. No args summarises all areas (with non-green equipment listed beneath each area count). `/esb-status <area name>` shows full detail for one area; `/esb-status <equipment name>` shows one item. |
+| `/esb-repair` | Technician dispatcher. No args lists open repairs you can claim, set ETA, change status, or resolve with a note. With an equipment name, opens the create-record modal (equipment is pre-selected when the name matches exactly). |
+| `/esb-update <id>` | Update an existing repair record in depth — change status, add notes, set severity, assignee, or ETA. Use this when the dispatcher's four quick actions aren't enough. |
+
+### Slack notification emojis
+
+Outbound notifications and ephemeral messages start with a small fixed legend so events are visually distinguishable at a glance:
+
+- `:rotating_light:` — a new problem report (no safety risk).
+- `:warning: *SAFETY RISK* :warning:` — safety-risk prefix on a new report or severity change. Replaces the non-safety emoji when the report is flagged as a safety risk.
+- `:wrench:` — repair severity changed.
+- `:arrows_counterclockwise:` — repair status changed between open states (e.g. `New` → `In Progress`). Also appears on dispatcher confirmations for Claim and Set Status (when the new status is not a closure).
+- `:calendar:` — ETA set or changed.
+- `:white_check_mark:` — repair resolved or closed (any closure: `Resolved`, `Closed - Duplicate`, `Closed - No Issue Found`). Also generic success confirmations.
+- `:x:` — error / not-found ephemeral messages.
 
 ## Viewing Equipment Details
 

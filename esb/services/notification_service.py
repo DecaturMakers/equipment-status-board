@@ -17,6 +17,18 @@ from esb.utils.logging import log_mutation
 
 logger = logging.getLogger(__name__)
 
+# Outbound Slack message emoji prefixes (event-type indicators on the leading
+# character of a notification). The status-indicator emoji set lives in
+# esb/slack/forms.py::_STATUS_EMOJI; these are intentionally distinct surfaces
+# even when they reuse the same glyph (e.g., :white_check_mark: appears here
+# for "resolved" and there for "Operational").
+_NEW_REPORT_PREFIX = ':rotating_light: '
+_SAFETY_RISK_PREFIX = ':warning: *SAFETY RISK* :warning: '
+_SEVERITY_PREFIX = ':wrench: '
+_STATUS_PREFIX = ':arrows_counterclockwise: '
+_ETA_PREFIX = ':calendar: '
+_RESOLVED_PREFIX = ':white_check_mark: '
+
 # Exponential backoff schedule (in seconds): 30s, 1m, 2m, 5m, 15m, 1h max
 BACKOFF_SCHEDULE = [30, 60, 120, 300, 900, 3600]
 
@@ -288,30 +300,45 @@ def _format_slack_message(payload: dict) -> tuple[str, list | None]:
     area_name = payload.get('area_name', 'Unknown Area')
 
     if event_type == 'new_report':
-        safety_prefix = ':warning: *SAFETY RISK* :warning: ' if payload.get('has_safety_risk') else ''
+        prefix = _SAFETY_RISK_PREFIX if payload.get('has_safety_risk') else _NEW_REPORT_PREFIX
         severity = payload.get('severity', 'Unknown')
         description = payload.get('description', '')
         reporter = payload.get('reporter_name', 'Unknown')
         text = (
-            f'{safety_prefix}New problem report: *{equipment_name}* ({area_name})\n'
+            f'{prefix}New problem report: *{equipment_name}* ({area_name})\n'
             f'Severity: {severity} | Reported by: {reporter}\n'
             f'{description}'
         )
 
     elif event_type == 'resolved':
         new_status = payload.get('new_status', 'Resolved')
-        text = (
-            f':white_check_mark: *{equipment_name}* ({area_name}) is back in service\n'
-            f'Status: {new_status}'
-        )
+        if new_status == 'Resolved':
+            text = (
+                f'{_RESOLVED_PREFIX}*{equipment_name}* ({area_name}) is back in service\n'
+                f'Status: {new_status}'
+            )
+        else:
+            # Closed-as-Duplicate / Closed-as-No-Issue-Found etc. -- closure, not "back in service"
+            text = (
+                f'{_RESOLVED_PREFIX}*{equipment_name}* ({area_name}) closed: {new_status}\n'
+                f'Status: {new_status}'
+            )
 
     elif event_type == 'severity_changed':
-        safety_prefix = ':warning: *SAFETY RISK* :warning: ' if payload.get('has_safety_risk') else ''
+        prefix = _SAFETY_RISK_PREFIX if payload.get('has_safety_risk') else _SEVERITY_PREFIX
         old_severity = payload.get('old_severity', 'Unknown')
         new_severity = payload.get('new_severity', 'Unknown')
         text = (
-            f'{safety_prefix}Severity changed: *{equipment_name}* ({area_name})\n'
+            f'{prefix}Severity changed: *{equipment_name}* ({area_name})\n'
             f'{old_severity} -> {new_severity}'
+        )
+
+    elif event_type == 'status_changed':
+        old_status = payload.get('old_status', 'Unknown')
+        new_status = payload.get('new_status', 'Unknown')
+        text = (
+            f'{_STATUS_PREFIX}Status changed: *{equipment_name}* ({area_name})\n'
+            f'{old_status} -> {new_status}'
         )
 
     elif event_type == 'eta_updated':
@@ -320,7 +347,7 @@ def _format_slack_message(payload: dict) -> tuple[str, list | None]:
         eta_text = f'ETA: {eta}'
         if old_eta:
             eta_text = f'ETA updated: {old_eta} -> {eta}'
-        text = f'ETA update: *{equipment_name}* ({area_name})\n{eta_text}'
+        text = f'{_ETA_PREFIX}ETA update: *{equipment_name}* ({area_name})\n{eta_text}'
 
     else:
         text = f'Equipment notification: *{equipment_name}* ({area_name})'

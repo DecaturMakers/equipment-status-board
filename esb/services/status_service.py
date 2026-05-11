@@ -4,6 +4,8 @@ Single source of truth for computing equipment operational status
 from open repair records.
 """
 
+from sqlalchemy.orm import joinedload
+
 from esb.extensions import db
 from esb.models.area import Area
 from esb.models.equipment import Equipment
@@ -27,10 +29,15 @@ def _get_open_records(equipment_id: int) -> list:
     deterministic order: the oldest open record wins on ties, with ``id``
     breaking the rare ``created_at``-collision case (e.g. two records
     inserted in the same second on a DB with second-precision timestamps).
+
+    Eager-loads the assignee relationship so callers reading
+    ``best_record.assignee.username`` (e.g., dashboards via
+    ``_derive_status_from_records``) don't trigger an N+1 of lazy-loads.
     """
     return (
         db.session.execute(
             db.select(RepairRecord)
+            .options(joinedload(RepairRecord.assignee))
             .filter(
                 RepairRecord.equipment_id == equipment_id,
                 RepairRecord.status.notin_(CLOSED_STATUSES),
@@ -76,10 +83,12 @@ def _derive_status_from_records(records: list) -> dict:
             and the dashboard prefetch queries already do this.
 
     Returns:
-        dict with keys: color, label, issue_description, severity, eta.
-        ``eta`` is the highest-severity open record's ETA (or ``None`` if
-        empty or unset). When multiple records share the highest severity,
-        the oldest record (earliest ``created_at``) wins.
+        dict with keys: color, label, issue_description, severity, eta,
+        assignee_name. ``eta`` is the highest-severity open record's ETA
+        (or ``None`` if empty or unset). ``assignee_name`` is the same
+        record's ``assignee.username`` (or ``None`` if unassigned).
+        When multiple records share the highest severity, the oldest
+        record (earliest ``created_at``) wins.
     """
     if not records:
         return {
@@ -88,17 +97,21 @@ def _derive_status_from_records(records: list) -> dict:
             'issue_description': None,
             'severity': None,
             'eta': None,
+            'assignee_name': None,
         }
 
     best_record = _find_highest_severity_record(records)
-
     if best_record is None:
+        # No record has a recognized severity; fall through to the oldest record
+        # for description/eta/assignee, but report Degraded.
+        anchor = records[0]
         return {
             'color': 'yellow',
             'label': 'Degraded',
-            'issue_description': records[0].description,
+            'issue_description': anchor.description,
             'severity': None,
-            'eta': records[0].eta,
+            'eta': anchor.eta,
+            'assignee_name': anchor.assignee.username if anchor.assignee else None,
         }
 
     color, label, _ = _SEVERITY_STATUS[best_record.severity]
@@ -108,6 +121,7 @@ def _derive_status_from_records(records: list) -> dict:
         'issue_description': best_record.description,
         'severity': best_record.severity,
         'eta': best_record.eta,
+        'assignee_name': best_record.assignee.username if best_record.assignee else None,
     }
 
 
@@ -120,6 +134,7 @@ def compute_equipment_status(equipment_id: int) -> dict:
         - issue_description: str | None (brief description from highest severity record)
         - severity: str | None (raw severity value from highest severity record)
         - eta: date | None (from highest severity record; oldest wins on ties)
+        - assignee_name: str | None (from highest-severity open record's assignee)
 
     Raises:
         EquipmentNotFound: if equipment_id doesn't exist
@@ -149,21 +164,7 @@ def get_equipment_status_detail(equipment_id: int) -> dict:
     if equipment is None:
         raise EquipmentNotFound(f'Equipment with id {equipment_id} not found')
 
-    open_records = _get_open_records(equipment_id)
-    status = _derive_status_from_records(open_records)
-
-    assignee_name = None
-    if open_records:
-        best_record = _find_highest_severity_record(open_records)
-        if best_record is None:
-            best_record = open_records[0]
-        if best_record.assignee:
-            assignee_name = best_record.assignee.username
-
-    return {
-        **status,
-        'assignee_name': assignee_name,
-    }
+    return _derive_status_from_records(_get_open_records(equipment_id))
 
 
 def get_area_status_dashboard() -> list[dict]:
@@ -176,7 +177,7 @@ def get_area_status_dashboard() -> list[dict]:
                 'equipment': [
                     {
                         'equipment': Equipment instance,
-                        'status': {color, label, issue_description, severity, eta}
+                        'status': {color, label, issue_description, severity, eta, assignee_name}
                     },
                     ...
                 ]
@@ -210,10 +211,13 @@ def get_area_status_dashboard() -> list[dict]:
     for equip in all_equipment:
         equipment_by_area.setdefault(equip.area_id, []).append(equip)
 
-    # Prefetch all open repair records for non-archived equipment in one query
+    # Prefetch all open repair records for non-archived equipment in one query.
+    # Eager-load assignee so dashboard rendering does not lazy-fire one
+    # query per non-green item when it reads ``best_record.assignee.username``.
     open_records = (
         db.session.execute(
             db.select(RepairRecord)
+            .options(joinedload(RepairRecord.assignee))
             .join(RepairRecord.equipment)
             .filter(
                 Equipment.is_archived.is_(False),
@@ -256,7 +260,7 @@ def get_single_area_status_dashboard(area_id: int) -> dict:
         {
             'area': Area instance,
             'equipment': [
-                {'equipment': Equipment, 'status': {color, label, issue_description, severity, eta}},
+                {'equipment': Equipment, 'status': {color, label, issue_description, severity, eta, assignee_name}},
                 ...
             ],
         }
@@ -292,6 +296,7 @@ def get_single_area_status_dashboard(area_id: int) -> dict:
         open_records = (
             db.session.execute(
                 db.select(RepairRecord)
+                .options(joinedload(RepairRecord.assignee))
                 .filter(
                     RepairRecord.equipment_id.in_(equip_ids),
                     RepairRecord.status.notin_(CLOSED_STATUSES),

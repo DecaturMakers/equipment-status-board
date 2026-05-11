@@ -499,7 +499,12 @@ class TestUpdateRepairRecordSlackNotification:
         assert len(notifications) == 2
 
     def test_non_resolved_status_does_not_queue_resolved(self, app, make_area, make_equipment, staff_user, capture):
-        """Status change to non-resolved status does NOT queue resolved notification."""
+        """Status change to non-resolved status does NOT queue resolved notification.
+
+        It DOES queue a status_changed notification (covered in
+        test_open_status_change_queues_status_changed below); this test
+        asserts only that the 'resolved' branch is not taken.
+        """
         from esb.models.pending_notification import PendingNotification
 
         area = make_area(name='Woodshop', slack_channel='#woodshop')
@@ -515,7 +520,113 @@ class TestUpdateRepairRecordSlackNotification:
         notifications = _db.session.execute(
             _db.select(PendingNotification).filter_by(notification_type='slack_message')
         ).scalars().all()
+        # Exactly one queued, and it's a status_changed -- never 'resolved'.
+        event_types = [n.payload['event_type'] for n in notifications]
+        assert 'resolved' not in event_types
+
+    def test_open_status_change_queues_status_changed(self, app, make_area, make_equipment, staff_user, capture):
+        """Status change between open statuses queues a status_changed notification."""
+        from esb.models.pending_notification import PendingNotification
+
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, status='In Progress',
+        )
+
+        notifications = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_message')
+        ).scalars().all()
+        assert len(notifications) == 1
+        assert notifications[0].payload['event_type'] == 'status_changed'
+        assert notifications[0].payload['old_status'] == 'New'
+        assert notifications[0].payload['new_status'] == 'In Progress'
+
+    def test_closed_status_change_does_not_double_queue(self, app, make_area, make_equipment, staff_user, capture):
+        """Transition to a CLOSED_STATUSES value queues 'resolved', NOT 'status_changed'."""
+        from esb.models.pending_notification import PendingNotification
+
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, status='Resolved',
+        )
+
+        notifications = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_message')
+        ).scalars().all()
+        event_types = [n.payload['event_type'] for n in notifications]
+        assert event_types == ['resolved']
+
+    def test_open_status_change_no_notification_when_disabled(self, app, make_area, make_equipment, staff_user, capture):
+        """notify_status_changed='false' suppresses the open-transition queue."""
+        from esb.models.pending_notification import PendingNotification
+        from esb.services import config_service
+
+        config_service.set_config('notify_status_changed', 'false', changed_by='test')
+
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, status='In Progress',
+        )
+
+        notifications = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_message')
+        ).scalars().all()
         assert len(notifications) == 0
+
+    def test_notify_resolved_false_plus_closed_transition_no_notification(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 39: notify_resolved=false + CLOSED transition queues NEITHER 'resolved' nor 'status_changed'.
+
+        The elif must NOT fall through when the transition is to a CLOSED status.
+        """
+        from esb.models.pending_notification import PendingNotification
+        from esb.services import config_service
+
+        config_service.set_config('notify_resolved', 'false', changed_by='test')
+
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, status='Resolved',
+        )
+
+        notifications = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_message')
+        ).scalars().all()
+        assert len(notifications) == 0
+
+    def test_status_changed_logs_notification_queued_mutation(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 37: status_changed event flows through queue_notification's existing log_mutation path."""
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, status='In Progress',
+        )
+
+        messages = [r.getMessage() for r in capture.records]
+        assert any('notification.queued' in m and 'slack_message' in m for m in messages)
 
     def test_closed_no_issue_queues_resolved(self, app, make_area, make_equipment, staff_user, capture):
         """Status change to 'Closed - No Issue Found' queues resolved notification."""
@@ -1241,6 +1352,102 @@ class TestGetKanbanData:
         assert rec.equipment.name == 'Table Saw'
         assert rec.equipment.area.name == 'Woodshop'
         assert rec.assignee.username == 'techuser'
+
+
+class TestClaimRepairRecord:
+    """Tests for the claim_repair_record() service function."""
+
+    def test_claim_new_record_assigns_and_promotes_status(self, app, make_area, make_equipment):
+        """Claim on a 'New' record: assignee set + status moves to 'Assigned'."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        updated = repair_service.claim_repair_record(
+            repair_record_id=record.id,
+            claimed_by_user_id=tech.id,
+            claimed_by_username=tech.username,
+        )
+        assert updated.assignee_id == tech.id
+        assert updated.status == 'Assigned'
+
+    def test_claim_assigned_record_leaves_status(self, app, make_area, make_equipment):
+        """Claim on an 'Assigned' record: assignee changes, status stays."""
+        from tests.conftest import _create_user
+        original = _create_user('technician', username='original')
+        claimer = _create_user('technician', username='claimer')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(
+            equipment_id=eq.id, description='Broken', status='Assigned', assignee_id=original.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        updated = repair_service.claim_repair_record(
+            repair_record_id=record.id,
+            claimed_by_user_id=claimer.id,
+            claimed_by_username=claimer.username,
+        )
+        assert updated.assignee_id == claimer.id
+        assert updated.status == 'Assigned'
+
+    def test_claim_in_progress_record_leaves_status(self, app, make_area, make_equipment):
+        """Claim on an 'In Progress' record: assignee changes, status stays."""
+        from tests.conftest import _create_user
+        claimer = _create_user('technician', username='claimer')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        updated = repair_service.claim_repair_record(
+            repair_record_id=record.id,
+            claimed_by_user_id=claimer.id,
+            claimed_by_username=claimer.username,
+        )
+        assert updated.assignee_id == claimer.id
+        assert updated.status == 'In Progress'
+
+    def test_claim_nonexistent_record_raises(self, app):
+        """Claim on a missing record raises ValidationError (from get_repair_record)."""
+        from esb.utils.exceptions import ValidationError
+        with pytest.raises(ValidationError, match='not found'):
+            repair_service.claim_repair_record(
+                repair_record_id=99999, claimed_by_user_id=1, claimed_by_username='x',
+            )
+
+    def test_claim_closed_record_raises(self, app, make_area, make_equipment):
+        """Claim on a closed record raises ValidationError and does not mutate the record."""
+        from esb.utils.exceptions import ValidationError
+        from tests.conftest import _create_user
+
+        claimer = _create_user('technician', username='claimer')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        for closed_status in ('Resolved', 'Closed - Duplicate', 'Closed - No Issue Found'):
+            record = RepairRecord(
+                equipment_id=eq.id, description=f'X-{closed_status}', status=closed_status,
+            )
+            _db.session.add(record)
+            _db.session.commit()
+            original_assignee = record.assignee_id
+
+            with pytest.raises(ValidationError, match='closed'):
+                repair_service.claim_repair_record(
+                    repair_record_id=record.id,
+                    claimed_by_user_id=claimer.id,
+                    claimed_by_username=claimer.username,
+                )
+
+            _db.session.refresh(record)
+            assert record.assignee_id == original_assignee
+            assert record.status == closed_status
 
 
 class TestGetRepairQueue:

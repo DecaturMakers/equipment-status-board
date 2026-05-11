@@ -222,6 +222,60 @@ Eleven scenarios for manual verification of the Equipment Status Board's core us
 
 ---
 
+## 9b. Slack UX (issue #34)
+
+**Role:** Technician or Staff (with Slack account mapped to ESB user)
+
+**Status query and detail formats:**
+
+1. `/esb-status` (no args) → ephemeral message has the per-area count line followed by a bullet list of every non-green item (severity emoji + name + brief description + ETA when set), and ends with the footer hint pointing at `/esb-status <area name>`.
+2. `/esb-status <area-name>` (any case) → area-detail view: `:bar_chart: *<area>*` header, every equipment item with its status emoji + label, and for each non-green item a blockquote with issue / ETA / assignee.
+3. `/esb-status <equipment-name>` → existing single-equipment detail view (regression).
+4. `/esb-status <name>` where `<name>` matches BOTH an area exactly AND an equipment substring → area-detail view wins (precedence rule).
+
+**`/esb-report` regression:**
+
+5. `/esb-report` opens the existing problem-report modal. (Confirms the dispatcher refactor did not leak into the member-report path.)
+
+**`/esb-repair` dispatcher (no args):**
+
+6. `/esb-repair` (no args) with at least one open repair → dispatcher modal opens, showing options grouped by area (alphabetical), each option labelled `#<id> <equipment> — <status>` with severity / assignee description.
+7. Pick a repair → second modal pushes on top.
+8. For each of the four actions in the action modal, verify behavior + ephemeral confirmation emoji matches the legend:
+    - **Claim** on a `New` repair → status moves to `Assigned`, you are the assignee. Confirmation contains `:arrows_counterclockwise:`.
+    - **Claim** on an `Assigned` / `In Progress` repair → assignee changes to you, status unchanged.
+    - **Set ETA** → record's ETA updates. Confirmation contains `:calendar:`.
+    - **Set Status** → `In Progress` confirmation contains `:arrows_counterclockwise:`; `Closed - Duplicate` / `Closed - No Issue Found` confirmation contains `:white_check_mark:`.
+    - **Resolve with Note** → status moves to `Resolved`, the note appears as a timeline entry. Confirmation contains `:white_check_mark:`.
+9. `/esb-repair` (no args) when there are no open repairs → ephemeral `:wrench: No open repairs.` (no modal).
+
+**`/esb-repair <equipment>` regression:**
+
+10. `/esb-repair <name>` where `<name>` matches exactly one piece of equipment → create-record modal opens with that equipment pre-selected.
+11. `/esb-repair <name>` where `<name>` matches multiple → create-record modal opens with no preselection.
+
+**Outbound notifications:**
+
+12. Trigger one of each event with their corresponding emoji prefix:
+    - `new_report` (without safety_risk) → `:rotating_light:`.
+    - `new_report` (with safety_risk) → `:warning: *SAFETY RISK* :warning:`.
+    - `severity_changed` → `:wrench:`.
+    - `eta_updated` → `:calendar:`.
+    - `status_changed` (e.g., `New` → `In Progress` via dispatcher) → `:arrows_counterclockwise:`.
+    - `resolved` with `new_status='Resolved'` → `:white_check_mark:`, text reads "back in service".
+    - `resolved` with `new_status='Closed - Duplicate'` → `:white_check_mark:`, text reads "closed: Closed - Duplicate" (NOT "back in service").
+    - `resolved` with `new_status='Closed - No Issue Found'` → same closure-text behavior.
+
+**Admin toggle:**
+
+13. As Staff, navigate to **Admin → App Configuration**. Toggle off "Repair status changed (open transitions)", save. Now perform an open-status transition via the dispatcher → verify no Slack notification posts. Toggle back on; verify subsequent transitions resume notifying.
+
+**`/esb-update` regression:**
+
+14. `/esb-update <id>` opens the existing full-edit modal unchanged.
+
+---
+
 ## 10. Authentication and Role-Based Access Control
 
 **Role:** All roles

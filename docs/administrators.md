@@ -198,9 +198,9 @@ Under **Slash Commands**, create four commands:
 | Command | Description |
 |---------|-------------|
 | `/esb-report` | Report an equipment problem |
-| `/esb-status` | Check equipment status |
-| `/esb-repair` | Create a repair record |
-| `/esb-update` | Update a repair record |
+| `/esb-status` | Check equipment status (area or equipment name) |
+| `/esb-repair` | Technician dispatcher (no args) or create a repair record (with arg) |
+| `/esb-update` | Update a repair record (full edit) |
 
 With Socket Mode enabled, slash commands are automatically routed to your app via WebSocket. No Request URL is needed.
 
@@ -227,6 +227,20 @@ After installation:
 
 !!! note
     Socket Mode uses an outbound WebSocket connection — no public URL or reverse proxy is needed. Your ESB server can remain on a private network.
+
+### Notification Trigger Configuration
+
+Slack outbound notifications are governed by per-event app-config keys. Each is a boolean stored in `app_config` (string `'true'` / `'false'`) and toggled via the admin UI at **Admin → App Configuration**. All five default to `'true'`, so a fresh deployment inherits notifications automatically.
+
+| Config key | Default | Fires on |
+|------------|---------|----------|
+| `notify_new_report` | `'true'` | A new problem report is filed (member or technician path). |
+| `notify_resolved` | `'true'` | A repair record's status transitions to a closed status (`Resolved`, `Closed - Duplicate`, `Closed - No Issue Found`). |
+| `notify_severity_changed` | `'true'` | A repair record's severity level changes. |
+| `notify_status_changed` | `'true'` | A repair record's status changes between **open** states (e.g., `New` → `In Progress`, `Assigned` → `Parts Needed`). Closed-status transitions go through `notify_resolved` instead, so disabling this key does not silence resolutions. |
+| `notify_eta_updated` | `'true'` | A repair record's ETA is set or changed. |
+
+If `notify_resolved` is `'false'` AND a status transition lands on a closed status, no notification fires — the elif-structure does NOT fall through to `status_changed`.
 
 ## Static Status Page Setup
 

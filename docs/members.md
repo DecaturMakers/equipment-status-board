@@ -102,8 +102,9 @@ The repair record is created immediately and technicians are notified.
 
 If you'd rather check equipment status from Slack:
 
-- **`/esb-status`** — Shows a summary of all areas and equipment with their current status
-- **`/esb-status [equipment name]`** — Shows the status of a specific piece of equipment (e.g., `/esb-status SawStop`)
+- **`/esb-status`** — Shows a summary of all areas. For each area you also get a bulleted list of any equipment that is currently degraded or down, with a brief description and ETA when known. The summary ends with a tip pointing at `/esb-status <area name>` for one-area detail.
+- **`/esb-status [area name]`** — Shows the full status of one area: every piece of equipment, plus the issue / ETA / assignee for any non-green item (e.g., `/esb-status Woodshop`). Area-name match takes precedence over equipment-name search, so an area named `Woodshop` always wins over an equipment name that contains `Woodshop`.
+- **`/esb-status [equipment name]`** — When the argument doesn't match an area name exactly, it falls back to equipment search. Shows the status of a specific piece of equipment (e.g., `/esb-status SawStop`).
 
 ## Understanding Status Colors
 

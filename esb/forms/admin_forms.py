@@ -37,6 +37,7 @@ class AppConfigForm(FlaskForm):
     notify_new_report = BooleanField('New problem report submitted')
     notify_resolved = BooleanField('Repair record resolved or closed')
     notify_severity_changed = BooleanField('Severity level changed')
+    notify_status_changed = BooleanField('Repair status changed (open transitions)')
     notify_eta_updated = BooleanField('ETA set or updated')
     submit = SubmitField('Save Configuration')
 

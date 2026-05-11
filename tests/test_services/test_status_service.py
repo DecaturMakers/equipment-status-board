@@ -457,3 +457,210 @@ class TestGetSingleAreaStatusDashboard:
         assert by_id[green_eq.id] == 'green'
         assert by_id[yellow_eq.id] == 'yellow'
         assert by_id[red_eq.id] == 'red'
+
+
+class TestDashboardAssigneeNameShape:
+    """Verify the dashboard payloads include assignee_name on every status dict (Task 5b)."""
+
+    def test_compute_equipment_status_includes_assignee_name(
+        self, app, make_equipment, make_repair_record,
+    ):
+        """compute_equipment_status returns assignee_name (None when no assignee)."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        equipment = make_equipment()
+        make_repair_record(
+            equipment=equipment, status='New', severity='Down',
+            description='Broken', assignee_id=tech.id,
+        )
+        result = status_service.compute_equipment_status(equipment.id)
+        assert 'assignee_name' in result
+        assert result['assignee_name'] == 'alice'
+
+    def test_compute_equipment_status_assignee_name_none_when_unassigned(
+        self, app, make_equipment, make_repair_record,
+    ):
+        equipment = make_equipment()
+        make_repair_record(
+            equipment=equipment, status='New', severity='Down',
+            description='Broken',
+        )
+        result = status_service.compute_equipment_status(equipment.id)
+        assert 'assignee_name' in result
+        assert result['assignee_name'] is None
+
+    def test_compute_equipment_status_assignee_name_none_when_green(
+        self, app, make_equipment,
+    ):
+        equipment = make_equipment()
+        result = status_service.compute_equipment_status(equipment.id)
+        assert 'assignee_name' in result
+        assert result['assignee_name'] is None
+
+    def test_get_area_status_dashboard_includes_assignee_name(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='bob')
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='Assigned', severity='Down',
+            description='Broken', assignee_id=tech.id,
+        )
+        dashboard = status_service.get_area_status_dashboard()
+        # Find the area we just created
+        target = next(d for d in dashboard if d['area'].id == area.id)
+        assert target['equipment'][0]['status']['assignee_name'] == 'bob'
+
+    def test_get_single_area_status_dashboard_includes_assignee_name(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='carol')
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Lathe', area=area)
+        make_repair_record(
+            equipment=equip, status='Assigned', severity='Down',
+            description='Broken', assignee_id=tech.id,
+        )
+        result = status_service.get_single_area_status_dashboard(area.id)
+        assert result['equipment'][0]['status']['assignee_name'] == 'carol'
+
+    def test_get_equipment_status_detail_unchanged_after_dedup(
+        self, app, make_equipment, make_repair_record,
+    ):
+        """Regression: after Task 5b removed the redundant override, the contract is unchanged."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='dan')
+        equip = make_equipment()
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='Broken', assignee_id=tech.id,
+        )
+        result = status_service.get_equipment_status_detail(equip.id)
+        assert result['assignee_name'] == 'dan'
+
+
+class TestDashboardEagerLoad:
+    """AC 34: dashboard prefetch eager-loads assignee so dashboard render is O(1) queries.
+
+    Use SQLAlchemy event listener to count assignee-fetch SELECTs during a
+    dashboard call. With joinedload() on the prefetch, the assignee is loaded
+    in the same query; without it, each best_record.assignee access fires a
+    separate SELECT (N+1).
+    """
+
+    def _count_assignee_selects(self, app, dashboard_call):
+        """Count standalone SELECTs against the users table during dashboard_call.
+
+        Returns (n_user_selects, dashboard_result).
+        """
+        import re
+
+        from sqlalchemy import event
+
+        from esb.extensions import db as _db
+
+        user_select_count = {'n': 0}
+        # Match SELECTs against the users table whether the dialect renders it
+        # bare (sqlite) or quoted (postgres -> "users", mysql -> `users`).
+        from_users_pattern = re.compile(r'\bfrom\s+(?:"users"|`users`|users)\b')
+
+        def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+            stripped = statement.strip().lower()
+            if stripped.startswith('select') and from_users_pattern.search(stripped):
+                user_select_count['n'] += 1
+
+        engine = _db.engine
+        event.listen(engine, 'before_cursor_execute', before_cursor_execute)
+        try:
+            result = dashboard_call()
+        finally:
+            event.remove(engine, 'before_cursor_execute', before_cursor_execute)
+        return user_select_count['n'], result
+
+    def test_get_area_status_dashboard_no_n_plus_one(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        """AC 34: assignee fetches do not scale with N non-green records (joinedload keeps it O(1))."""
+        from esb.extensions import db as _db
+        from tests.conftest import _create_user
+
+        area = make_area(name='Shop')
+        # Create 5 equipment items, each with a non-green repair record assigned to a different tech.
+        for i in range(5):
+            tech = _create_user('technician', username=f'tech{i}')
+            equip = make_equipment(name=f'Tool{i}', area=area)
+            make_repair_record(
+                equipment=equip, status='Assigned', severity='Down',
+                description=f'Issue {i}', assignee_id=tech.id,
+            )
+        # Expire all loaded ORM objects so attribute access during the dashboard
+        # render hits the engine.
+        _db.session.expire_all()
+
+        n_user_selects, result = self._count_assignee_selects(
+            app,
+            lambda: status_service.get_area_status_dashboard(),
+        )
+        # Sanity: dashboard returned what we expect.
+        target = next(d for d in result if d['area'].id == area.id)
+        assert len(target['equipment']) == 5
+        assignees = [e['status']['assignee_name'] for e in target['equipment']]
+        assert sorted(a for a in assignees if a) == [f'tech{i}' for i in range(5)]
+        # With joinedload on the prefetch, no separate SELECT against users
+        # fires while reading assignee.username on each record.
+        assert n_user_selects == 0, (
+            f'Expected zero standalone SELECTs against users with joinedload; '
+            f'got {n_user_selects} (suggests N+1 lazy-load).'
+        )
+
+    def test_get_single_area_status_dashboard_no_n_plus_one(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        from esb.extensions import db as _db
+        from tests.conftest import _create_user
+
+        area = make_area(name='Shop')
+        for i in range(4):
+            tech = _create_user('technician', username=f'sat{i}')
+            equip = make_equipment(name=f'SAT{i}', area=area)
+            make_repair_record(
+                equipment=equip, status='Assigned', severity='Down',
+                description=f'Issue {i}', assignee_id=tech.id,
+            )
+        _db.session.expire_all()
+
+        n_user_selects, result = self._count_assignee_selects(
+            app,
+            lambda: status_service.get_single_area_status_dashboard(area.id),
+        )
+        assignees = [e['status']['assignee_name'] for e in result['equipment']]
+        assert sorted(a for a in assignees if a) == [f'sat{i}' for i in range(4)]
+        assert n_user_selects == 0, (
+            f'Expected zero standalone SELECTs against users with joinedload; '
+            f'got {n_user_selects} (suggests N+1 lazy-load).'
+        )
+
+    def test_compute_equipment_status_eager_loads_assignee(
+        self, app, make_equipment, make_repair_record,
+    ):
+        """_get_open_records should joinedload assignee even on the per-item path (QR-code page)."""
+        from esb.extensions import db as _db
+        from tests.conftest import _create_user
+
+        tech = _create_user('technician', username='solo')
+        equip = make_equipment()
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='Broken', assignee_id=tech.id,
+        )
+        _db.session.expire_all()
+
+        n_user_selects, result = self._count_assignee_selects(
+            app,
+            lambda: status_service.compute_equipment_status(equip.id),
+        )
+        assert result['assignee_name'] == 'solo'
+        assert n_user_selects == 0

@@ -211,13 +211,16 @@ class TestEsbRepairCommand:
         client.views_open.assert_not_called()
 
     def test_opens_modal_for_authorized_user(self):
-        """5.5: /esb-repair opens modal for authorized users."""
+        """/esb-repair <equipment-name> opens the create-record modal for authorized users."""
         ack = MagicMock()
         client = MagicMock()
         client.users_info.return_value = {
             'user': {'profile': {'email': self.staff_user.email}},
         }
-        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123'}
+        body = {
+            'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123',
+            'text': 'SawStop',
+        }
 
         self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
 
@@ -242,7 +245,7 @@ class TestEsbRepairCommand:
         client.views_open.assert_not_called()
 
     def test_repair_command_no_equipment_posts_error(self):
-        """M4: /esb-repair posts error when no equipment available."""
+        """/esb-repair <name> with no equipment in DB posts the no-equipment error."""
         from esb.models.equipment import Equipment
         Equipment.query.delete()
         self.db.session.commit()
@@ -252,7 +255,10 @@ class TestEsbRepairCommand:
         client.users_info.return_value = {
             'user': {'profile': {'email': self.staff_user.email}},
         }
-        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123'}
+        body = {
+            'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123',
+            'text': 'SawStop',
+        }
 
         self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
 
@@ -792,6 +798,695 @@ class TestEsbStatusCommand:
         client.chat_postEphemeral.assert_called_once()
         response_text = client.chat_postEphemeral.call_args.kwargs['text']
         assert 'No equipment' in response_text
+
+    def test_area_name_match_shows_area_detail(self):
+        """AC 9: exact case-insensitive area name shows the area-detail view."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'woodshop'}
+
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+
+        response_text = client.chat_postEphemeral.call_args.kwargs['text']
+        # Area-detail formatter starts with :bar_chart: *<area>*
+        assert ':bar_chart:' in response_text
+        assert '*Woodshop*' in response_text
+
+    def test_area_name_takes_precedence_over_equipment(self):
+        """AC 10: when an area and equipment share a substring, area wins by exact-name match."""
+        # The setup creates area 'Woodshop' and equipment 'SawStop'. Create an
+        # equipment whose name CONTAINS 'Woodshop' to force the precedence test.
+        _create_equipment(name='Woodshop Helper', area=self.area)
+
+        ack = MagicMock()
+        client = MagicMock()
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'Woodshop'}
+
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+
+        response_text = client.chat_postEphemeral.call_args.kwargs['text']
+        # Area-detail header is rendered (not the multi-match list).
+        assert ':bar_chart:' in response_text
+        assert 'Multiple equipment items match' not in response_text
+
+    def test_no_area_match_falls_back_to_equipment_search(self):
+        """AC 11: a non-matching area name falls through to equipment search."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'SawStop'}
+
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+
+        response_text = client.chat_postEphemeral.call_args.kwargs['text']
+        # Existing single-equipment detail formatter is used.
+        assert 'SawStop' in response_text
+        assert 'Operational' in response_text
+
+
+class TestEsbRepairDispatcher:
+    """Tests for /esb-repair no-args dispatcher path."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, app, db):
+        self.app = app
+        self.db = db
+        self.area = _create_area(name='Woodshop', slack_channel='#woodshop')
+        self.equipment = _create_equipment(name='SawStop', area=self.area)
+        self.staff_user = _create_user('staff', username='admin1')
+        self.handlers = _register_and_capture(app)
+
+    def test_no_args_opens_dispatcher_modal(self):
+        """AC 12: empty text + at least one open repair → dispatcher modal opens."""
+        _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down',
+            description='broken',
+        )
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': ''}
+
+        self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
+
+        client.views_open.assert_called_once()
+        modal = client.views_open.call_args.kwargs['view']
+        assert modal['callback_id'] == 'repair_dispatcher_submission'
+
+    def test_no_open_repairs_posts_ephemeral(self):
+        """AC 13: empty text + no open repairs → ephemeral, no modal."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': ''}
+
+        self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
+
+        client.views_open.assert_not_called()
+        client.chat_postEphemeral.assert_called_once()
+        text = client.chat_postEphemeral.call_args.kwargs['text']
+        assert ':wrench:' in text
+        assert 'No open repairs' in text
+
+    def test_with_args_opens_create_modal(self):
+        """AC 14 (regression): non-empty text → create-record modal."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'SawStop'}
+
+        self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
+
+        client.views_open.assert_called_once()
+        modal = client.views_open.call_args.kwargs['view']
+        assert modal['callback_id'] == 'repair_create_submission'
+
+    def test_with_args_prefills_equipment_on_exact_match(self):
+        """AC 40: exact equipment-name match preselects in the create-record modal."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'SawStop'}
+
+        self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
+        modal = client.views_open.call_args.kwargs['view']
+        eq_block = next(b for b in modal['blocks'] if b['block_id'] == 'equipment_block')
+        # Initial option is set to the SawStop equipment.
+        assert 'initial_option' in eq_block['element']
+        assert eq_block['element']['initial_option']['value'] == str(self.equipment.id)
+
+    def test_with_args_no_prefill_on_partial_only_match(self):
+        """AC 40: partial-only match (no exact match) → no initial_option.
+
+        Under the spec, preselection happens only on case-insensitive *exact*
+        name match; a substring match that doesn't hit any equipment exactly
+        must NOT preselect (Copilot review on PR #42).
+        """
+        # 'saw' partially matches 'SawStop' but does not exactly match any
+        # equipment name -- preselection must be skipped.
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'saw'}
+
+        self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
+        modal = client.views_open.call_args.kwargs['view']
+        eq_block = next(b for b in modal['blocks'] if b['block_id'] == 'equipment_block')
+        assert 'initial_option' not in eq_block['element']
+
+    def test_with_args_exact_match_wins_over_partial_siblings(self):
+        """AC 40: when an exact match exists alongside other partial matches, the exact match preselects."""
+        _create_equipment(name='SawStop Mini', area=self.area)
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'SawStop'}
+
+        self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
+        modal = client.views_open.call_args.kwargs['view']
+        eq_block = next(b for b in modal['blocks'] if b['block_id'] == 'equipment_block')
+        assert eq_block['element']['initial_option']['value'] == str(self.equipment.id)
+
+    def test_rejects_unauthorized_user(self):
+        """AC 15: non-tech/staff user → ephemeral error, no modal."""
+        member = _create_user('member', username='memberX')
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': member.email}}}
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': ''}
+
+        self.handlers['command:/esb-repair'](ack=ack, body=body, client=client)
+        client.views_open.assert_not_called()
+        text = client.chat_postEphemeral.call_args.kwargs['text']
+        assert 'Technician or Staff' in text
+
+
+class TestRepairDispatcherSubmission:
+    """Tests for repair_dispatcher_submission view handler."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, app, db):
+        self.app = app
+        self.db = db
+        self.area = _create_area(name='Woodshop', slack_channel='#woodshop')
+        self.equipment = _create_equipment(name='SawStop', area=self.area)
+        self.staff_user = _create_user('staff', username='admin1')
+        self.handlers = _register_and_capture(app)
+
+    def _build_view(self, repair_id):
+        return {
+            'state': {
+                'values': {
+                    'repair_select_block': {
+                        'repair_select': {'selected_option': {'value': str(repair_id)}},
+                    },
+                },
+            },
+        }
+
+    def _body(self, email=None):
+        return {'user': {'id': 'U1', 'username': 'admin1'}, 'trigger_id': 'T'}
+
+    def test_pushes_action_modal(self):
+        """AC 16: submitting with selected repair pushes the action modal via response_action='push'."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='broken',
+        )
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        view = self._build_view(record.id)
+
+        self.handlers['view:repair_dispatcher_submission'](
+            ack=ack, body=self._body(), client=client, view=view,
+        )
+
+        ack.assert_called_once()
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'push'
+        assert kwargs['view']['callback_id'] == 'repair_action_submission'
+        assert kwargs['view']['private_metadata'] == str(record.id)
+
+    def test_record_not_found_returns_error(self):
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        view = self._build_view(99999)
+
+        self.handlers['view:repair_dispatcher_submission'](
+            ack=ack, body=self._body(), client=client, view=view,
+        )
+
+        ack.assert_called_once()
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'repair_select_block' in kwargs['errors']
+
+    def test_closed_record_returns_error(self):
+        """F10: record closed between dispatcher open and submit → error, no push."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='Resolved', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        view = self._build_view(record.id)
+
+        self.handlers['view:repair_dispatcher_submission'](
+            ack=ack, body=self._body(), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        # No push happened.
+        assert 'view' not in kwargs
+
+    def test_unauthorized_user_returns_error(self):
+        """AC 24b / F14: member-role caller is rejected at submission time."""
+        member = _create_user('member', username='memberX')
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': member.email}}}
+        view = self._build_view(record.id)
+
+        self.handlers['view:repair_dispatcher_submission'](
+            ack=ack, body=self._body(), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'repair_select_block' in kwargs['errors']
+
+    def test_no_selected_option_returns_error(self):
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': self.staff_user.email}}}
+        view = {
+            'state': {
+                'values': {
+                    'repair_select_block': {'repair_select': {'selected_option': None}},
+                },
+            },
+        }
+
+        self.handlers['view:repair_dispatcher_submission'](
+            ack=ack, body=self._body(), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+
+
+class TestRepairActionSubmission:
+    """Tests for repair_action_submission view handler."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, app, db):
+        self.app = app
+        self.db = db
+        self.area = _create_area(name='Woodshop', slack_channel='#woodshop')
+        self.equipment = _create_equipment(name='SawStop', area=self.area)
+        self.staff_user = _create_user('staff', username='admin1')
+        self.tech_user = _create_user('technician', username='techie')
+        self.handlers = _register_and_capture(app)
+
+    def _build_view(self, repair_id, action=None, eta=None, status=None, note=None):
+        action_block = {'action': {'selected_option': {'value': action}}} if action else {'action': {'selected_option': None}}
+        eta_block = {'eta': {'selected_date': eta}}
+        status_block = {'status': {'selected_option': {'value': status}}} if status else {'status': {'selected_option': None}}
+        note_block = {'note': {'value': note}}
+        return {
+            'private_metadata': str(repair_id),
+            'state': {
+                'values': {
+                    'action_block': action_block,
+                    'eta_block': eta_block,
+                    'status_block': status_block,
+                    'note_block': note_block,
+                },
+            },
+        }
+
+    def _body(self, email):
+        return {'user': {'id': 'U1', 'username': 'caller'}, 'trigger_id': 'T'}
+
+    def _client(self, email):
+        client = MagicMock()
+        client.users_info.return_value = {'user': {'profile': {'email': email}}}
+        return client
+
+    def test_claim_assigns_to_caller_and_sets_status_to_assigned_when_new(self):
+        """AC 17: claim on 'New' record sets assignee + status='Assigned'."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='claim')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        ack.assert_called_once_with()
+        from esb.models.repair_record import RepairRecord
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.assignee_id == self.tech_user.id
+        assert rec.status == 'Assigned'
+
+    def test_claim_leaves_status_when_already_assigned(self):
+        """AC 18 / F11: claim on 'Assigned' updates assignee but not status."""
+        other = _create_user('technician', username='other')
+        record = _create_repair_record(
+            equipment=self.equipment, status='Assigned', severity='Down',
+            description='x', assignee_id=other.id,
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='claim')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        from esb.models.repair_record import RepairRecord
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.assignee_id == self.tech_user.id
+        assert rec.status == 'Assigned'
+
+    def test_claim_leaves_status_when_in_progress(self):
+        """AC 18 / F11: claim on 'In Progress' updates assignee but not status."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='claim')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        from esb.models.repair_record import RepairRecord
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.assignee_id == self.tech_user.id
+        assert rec.status == 'In Progress'
+
+    def test_set_eta_updates_eta_when_value_differs(self):
+        """AC 19: set_eta with new date updates eta + adds eta_update timeline entry."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='set_eta', eta='2026-08-01')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        from datetime import date
+        from esb.models.repair_record import RepairRecord
+        from esb.models.repair_timeline_entry import RepairTimelineEntry
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.eta == date(2026, 8, 1)
+        entries = self.db.session.execute(
+            self.db.select(RepairTimelineEntry)
+            .filter_by(repair_record_id=record.id, entry_type='eta_update')
+        ).scalars().all()
+        assert len(entries) == 1
+
+    def test_set_eta_no_op_when_value_matches(self):
+        """AC 19a / F12: set_eta with matching date → no new timeline entry, ephemeral still posted."""
+        from datetime import date
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down',
+            description='x', eta=date(2026, 8, 1),
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='set_eta', eta='2026-08-01')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        from esb.models.repair_timeline_entry import RepairTimelineEntry
+        entries = self.db.session.execute(
+            self.db.select(RepairTimelineEntry)
+            .filter_by(repair_record_id=record.id, entry_type='eta_update')
+        ).scalars().all()
+        assert len(entries) == 0
+        client.chat_postEphemeral.assert_called_once()
+        text = client.chat_postEphemeral.call_args.kwargs['text']
+        assert ':calendar:' in text
+        assert f'Repair #{record.id}' in text
+
+    def test_set_eta_without_date_returns_error(self):
+        """AC 20."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='set_eta', eta=None)
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'eta_block' in kwargs['errors']
+
+    def test_set_status_updates_status_when_value_differs(self):
+        """AC 21: set_status updates status + creates 'status_change' timeline entry."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='set_status', status='In Progress')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        from esb.models.repair_record import RepairRecord
+        from esb.models.repair_timeline_entry import RepairTimelineEntry
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.status == 'In Progress'
+        entries = self.db.session.execute(
+            self.db.select(RepairTimelineEntry)
+            .filter_by(repair_record_id=record.id, entry_type='status_change')
+        ).scalars().all()
+        assert len(entries) == 1
+
+    def test_set_status_no_op_when_value_matches(self):
+        """AC 21a / F12: set_status to current status → no new timeline entry, ephemeral still posted."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='set_status', status='In Progress')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        from esb.models.repair_timeline_entry import RepairTimelineEntry
+        entries = self.db.session.execute(
+            self.db.select(RepairTimelineEntry)
+            .filter_by(repair_record_id=record.id, entry_type='status_change')
+        ).scalars().all()
+        assert len(entries) == 0
+        text = client.chat_postEphemeral.call_args.kwargs['text']
+        assert ':arrows_counterclockwise:' in text
+        assert 'In Progress' in text
+
+    def test_set_status_without_selection_returns_error(self):
+        """AC 22."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='set_status', status=None)
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'status_block' in kwargs['errors']
+
+    def test_resolve_with_note_sets_resolved_and_adds_note(self):
+        """AC 23."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='resolve_with_note', note='Fixed it')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        from esb.models.repair_record import RepairRecord
+        from esb.models.repair_timeline_entry import RepairTimelineEntry
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.status == 'Resolved'
+        notes = self.db.session.execute(
+            self.db.select(RepairTimelineEntry)
+            .filter_by(repair_record_id=record.id, entry_type='note')
+        ).scalars().all()
+        assert len(notes) == 1
+        assert notes[0].content == 'Fixed it'
+
+    def test_resolve_with_note_queues_only_resolved_notification(self):
+        """AC 23a: exactly one outbound (event_type='resolved'), not two."""
+        from esb.models.pending_notification import PendingNotification
+
+        record = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='resolve_with_note', note='done')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        notifications = self.db.session.execute(
+            self.db.select(PendingNotification).filter_by(notification_type='slack_message')
+        ).scalars().all()
+        event_types = [n.payload['event_type'] for n in notifications]
+        assert event_types == ['resolved']
+
+    def test_resolve_without_note_returns_error(self):
+        """AC 24: blank note → error."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='resolve_with_note', note='   ')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'note_block' in kwargs['errors']
+
+    def test_closed_record_returns_error(self):
+        """AC 24a: closed record between dispatcher select and action submit → error, no DB write."""
+        record = _create_repair_record(
+            equipment=self.equipment, status='Resolved', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(record.id, action='claim')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'action_block' in kwargs['errors']
+
+    def test_unauthorized_user_returns_error(self):
+        """AC 24c / F30: member-role caller rejected, no DB write."""
+        member = _create_user('member', username='memberX')
+        record = _create_repair_record(
+            equipment=self.equipment, status='New', severity='Down', description='x',
+        )
+        ack = MagicMock()
+        client = self._client(member.email)
+        view = self._build_view(record.id, action='claim')
+
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(member.email), client=client, view=view,
+        )
+
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+
+        from esb.models.repair_record import RepairRecord
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.assignee_id is None
+        client.chat_postEphemeral.assert_not_called()
+
+    def test_posts_ephemeral_confirmation_with_legend_emoji(self):
+        """AC 25 / F18 / F35: confirmation emojis match the legend per action."""
+        # claim → :arrows_counterclockwise:
+        rec1 = _create_repair_record(equipment=self.equipment, status='New', severity='Down', description='x')
+        client1 = self._client(self.tech_user.email)
+        self.handlers['view:repair_action_submission'](
+            ack=MagicMock(), body=self._body(self.tech_user.email), client=client1,
+            view=self._build_view(rec1.id, action='claim'),
+        )
+        assert ':arrows_counterclockwise:' in client1.chat_postEphemeral.call_args.kwargs['text']
+
+        # set_eta → :calendar:
+        rec2 = _create_repair_record(equipment=self.equipment, status='New', severity='Down', description='x')
+        client2 = self._client(self.tech_user.email)
+        self.handlers['view:repair_action_submission'](
+            ack=MagicMock(), body=self._body(self.tech_user.email), client=client2,
+            view=self._build_view(rec2.id, action='set_eta', eta='2026-09-01'),
+        )
+        assert ':calendar:' in client2.chat_postEphemeral.call_args.kwargs['text']
+
+        # set_status to non-closed → :arrows_counterclockwise:
+        rec3 = _create_repair_record(equipment=self.equipment, status='New', severity='Down', description='x')
+        client3 = self._client(self.tech_user.email)
+        self.handlers['view:repair_action_submission'](
+            ack=MagicMock(), body=self._body(self.tech_user.email), client=client3,
+            view=self._build_view(rec3.id, action='set_status', status='In Progress'),
+        )
+        assert ':arrows_counterclockwise:' in client3.chat_postEphemeral.call_args.kwargs['text']
+
+        # set_status to a Closed-* → :white_check_mark: (F35)
+        rec4 = _create_repair_record(equipment=self.equipment, status='New', severity='Down', description='x')
+        client4 = self._client(self.tech_user.email)
+        self.handlers['view:repair_action_submission'](
+            ack=MagicMock(), body=self._body(self.tech_user.email), client=client4,
+            view=self._build_view(rec4.id, action='set_status', status='Closed - Duplicate'),
+        )
+        text4 = client4.chat_postEphemeral.call_args.kwargs['text']
+        assert ':white_check_mark:' in text4
+        assert 'closed: Closed - Duplicate' in text4
+
+        # resolve_with_note → :white_check_mark:
+        rec5 = _create_repair_record(equipment=self.equipment, status='In Progress', severity='Down', description='x')
+        client5 = self._client(self.tech_user.email)
+        self.handlers['view:repair_action_submission'](
+            ack=MagicMock(), body=self._body(self.tech_user.email), client=client5,
+            view=self._build_view(rec5.id, action='resolve_with_note', note='done'),
+        )
+        assert ':white_check_mark:' in client5.chat_postEphemeral.call_args.kwargs['text']
+
+
+class TestEsbReportRegression:
+    """AC 30 / F13: /esb-report stays distinct from /esb-repair after the dispatcher refactor."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, app, db):
+        self.app = app
+        self.db = db
+        self.area = _create_area(name='Woodshop', slack_channel='#woodshop')
+        self.equipment = _create_equipment(name='SawStop', area=self.area)
+        self.handlers = _register_and_capture(app)
+
+    def test_report_command_unchanged_after_dispatcher(self):
+        """/esb-report still opens the problem_report_submission modal -- not the dispatcher."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C'}
+
+        self.handlers['command:/esb-report'](ack=ack, body=body, client=client)
+
+        client.views_open.assert_called_once()
+        modal = client.views_open.call_args.kwargs['view']
+        assert modal['callback_id'] == 'problem_report_submission'
 
 
 class TestHandlersWithFlaskAppContext:

@@ -7,9 +7,26 @@ _STATUS_EMOJI = {
     'red': ':x:',
 }
 
+_NON_GREEN_DESC_TRUNCATE = 80
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Truncate text to limit, appending an ellipsis when shortened."""
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + '\u2026'
+
 
 def format_status_summary(dashboard_data):
     """Format area status dashboard data as Slack mrkdwn text.
+
+    Each non-archived area that has at least one piece of equipment
+    renders one count line; areas with no equipment at all are skipped
+    to avoid cluttering the summary with empty "0 / 0 / 0" rows. Areas
+    with non-green equipment also list those items as bullets (severity
+    emoji + name + truncated description + optional ETA). The message
+    ends with a hint pointing users at ``/esb-status <area name>`` for
+    one-area detail.
 
     Args:
         dashboard_data: List of dicts from status_service.get_area_status_dashboard().
@@ -39,6 +56,65 @@ def format_status_summary(dashboard_data):
             f"{counts['yellow']} :warning: degraded, "
             f"{counts['red']} :x: down"
         )
+
+        for equip_data in equipment_list:
+            status = equip_data['status']
+            color = status['color']
+            if color == 'green':
+                continue
+            equip = equip_data['equipment']
+            emoji = _STATUS_EMOJI.get(color, ':grey_question:')
+            parts = [f'\u2022 {emoji} *{equip.name}*']
+            desc = status.get('issue_description')
+            if desc:
+                parts.append(f'\u2014 {_truncate(desc, _NON_GREEN_DESC_TRUNCATE)}')
+            eta = status.get('eta')
+            if eta:
+                parts.append(f'(ETA: {eta.strftime("%b %d, %Y")})')
+            lines.append(' '.join(parts))
+
+    lines.append('')
+    lines.append('_Tip: try `/esb-status <area name>` for full details on one area._')
+
+    return '\n'.join(lines)
+
+
+def format_area_status_detail(area_data):
+    """Format a single area's full status detail (all equipment, with detail for non-green).
+
+    Args:
+        area_data: One element of the list returned by
+            ``status_service.get_area_status_dashboard()`` (or the dict
+            returned by ``get_single_area_status_dashboard``). Shape:
+            ``{'area': Area, 'equipment': [{'equipment': Equipment, 'status': {...}}, ...]}``
+
+    Returns:
+        Slack mrkdwn string with a ``:bar_chart: *<area>*`` header followed
+        by one line per equipment item; non-green items get an indented
+        blockquote with issue description, ETA, and assignee.
+    """
+    area = area_data['area']
+    equipment_list = area_data['equipment']
+    lines = [f':bar_chart: *{area.name}*']
+
+    if not equipment_list:
+        lines.append('_No equipment in this area._')
+        return '\n'.join(lines)
+
+    for equip_data in equipment_list:
+        equip = equip_data['equipment']
+        status = equip_data['status']
+        color = status['color']
+        emoji = _STATUS_EMOJI.get(color, ':grey_question:')
+        lines.append(f'{emoji} *{equip.name}* \u2014 {status["label"]}')
+        if color == 'green':
+            continue
+        if status.get('issue_description'):
+            lines.append(f'> {status["issue_description"]}')
+        if status.get('eta'):
+            lines.append(f'> ETA: {status["eta"].strftime("%b %d, %Y")}')
+        if status.get('assignee_name'):
+            lines.append(f'> Assigned to: {status["assignee_name"]}')
 
     return '\n'.join(lines)
 
@@ -239,28 +315,40 @@ def build_problem_report_modal(equipment_options):
     }
 
 
-def build_repair_create_modal(equipment_options, user_options):
+def build_repair_create_modal(equipment_options, user_options, preselected_equipment_id=None):
     """Build Block Kit modal for technician/staff repair record creation.
 
     Args:
         equipment_options: List of equipment option dicts from build_equipment_options().
         user_options: List of user option dicts from build_user_options().
+        preselected_equipment_id: Optional equipment id (int). When provided
+            and matching one of ``equipment_options``, that option is set as
+            ``initial_option`` so the user sees their slash-command argument
+            already applied. Pass None for no preselection.
 
     Returns:
         Block Kit modal view dict.
     """
     from esb.models.repair_record import REPAIR_SEVERITIES, REPAIR_STATUSES
 
+    equipment_element = {
+        'type': 'static_select',
+        'action_id': 'equipment_select',
+        'placeholder': {'type': 'plain_text', 'text': 'Select equipment'},
+        'options': equipment_options,
+    }
+    if preselected_equipment_id is not None:
+        target_value = str(preselected_equipment_id)
+        for opt in equipment_options:
+            if opt.get('value') == target_value:
+                equipment_element['initial_option'] = opt
+                break
+
     blocks = [
         {
             'type': 'input',
             'block_id': 'equipment_block',
-            'element': {
-                'type': 'static_select',
-                'action_id': 'equipment_select',
-                'placeholder': {'type': 'plain_text', 'text': 'Select equipment'},
-                'options': equipment_options,
-            },
+            'element': equipment_element,
             'label': {'type': 'plain_text', 'text': 'Equipment'},
         },
         {
@@ -457,6 +545,178 @@ def build_repair_update_modal(repair_record, status_options, severity_options, u
         'callback_id': 'repair_update_submission',
         'title': {'type': 'plain_text', 'text': 'Update Repair'},
         'submit': {'type': 'plain_text', 'text': 'Update Record'},
+        'close': {'type': 'plain_text', 'text': 'Cancel'},
+        'private_metadata': str(repair_record.id),
+        'blocks': blocks,
+    }
+
+
+def build_repair_dispatcher_modal(open_records):
+    """Build the dispatcher modal listing open repair records grouped by area.
+
+    Caller must precheck that ``open_records`` is non-empty (the empty case
+    is handled by the ``/esb-repair`` handler with an ephemeral message,
+    not by this builder).
+
+    Sorting:
+        - Within each area's option_group, options preserve the caller's
+          input order (caller is expected to provide records ordered by
+          ``(severity_priority, created_at_asc)`` -- typical
+          ``get_repair_queue()`` output).
+        - Across area groups, areas are presented alphabetically (A-Z).
+
+    Args:
+        open_records: Non-empty list of RepairRecord instances with
+            ``equipment.area`` and ``assignee`` eager-loaded.
+
+    Returns:
+        Block Kit modal view dict.
+    """
+    buckets: dict[str, list] = {}
+    for record in open_records:
+        area_name = record.equipment.area.name if record.equipment.area else 'No Area'
+        buckets.setdefault(area_name, []).append(record)
+
+    option_groups = []
+    for area_name in sorted(buckets):
+        options = []
+        for record in buckets[area_name]:
+            label = f'#{record.id} {record.equipment.name} \u2014 {record.status}'
+            severity = record.severity or '\u2014'
+            assignee = record.assignee.username if record.assignee else 'Unassigned'
+            description = f'{severity} | {assignee}'
+            options.append({
+                'text': {'type': 'plain_text', 'text': label[:75]},
+                'description': {'type': 'plain_text', 'text': description[:75]},
+                'value': str(record.id),
+            })
+        option_groups.append({
+            'label': {'type': 'plain_text', 'text': area_name[:75]},
+            'options': options,
+        })
+
+    return {
+        'type': 'modal',
+        'callback_id': 'repair_dispatcher_submission',
+        'title': {'type': 'plain_text', 'text': 'Open Repairs'},
+        'submit': {'type': 'plain_text', 'text': 'Continue'},
+        'close': {'type': 'plain_text', 'text': 'Cancel'},
+        'private_metadata': '',
+        'blocks': [
+            {
+                'type': 'input',
+                'block_id': 'repair_select_block',
+                'element': {
+                    'type': 'static_select',
+                    'action_id': 'repair_select',
+                    'placeholder': {'type': 'plain_text', 'text': 'Select a repair'},
+                    'option_groups': option_groups,
+                },
+                'label': {'type': 'plain_text', 'text': 'Repair'},
+            },
+        ],
+    }
+
+
+def build_repair_action_modal(repair_record):
+    """Build the dispatcher's action modal (Step B of the two-step flow).
+
+    The action modal is a single form: one ``radio_buttons`` ``Action`` block
+    plus optional ETA / status / note inputs. Slack does not support truly
+    conditional input visibility in a static modal -- the server resolves
+    which inputs apply based on the ``Action`` value at submission time.
+
+    Args:
+        repair_record: The selected RepairRecord (with equipment + area).
+
+    Returns:
+        Block Kit modal view dict; ``private_metadata`` carries the id.
+    """
+    equipment = repair_record.equipment
+    area_name = equipment.area.name if equipment and equipment.area else 'No Area'
+    equipment_name = equipment.name if equipment else 'Unknown'
+    severity_label = repair_record.severity or '\u2014'
+
+    blocks = [
+        {
+            'type': 'context',
+            'elements': [
+                {
+                    'type': 'mrkdwn',
+                    'text': (
+                        f'*{equipment_name}* ({area_name}) '
+                        f'\u2014 {repair_record.status} / {severity_label}'
+                    ),
+                },
+            ],
+        },
+        {
+            'type': 'input',
+            'block_id': 'action_block',
+            'element': {
+                'type': 'radio_buttons',
+                'action_id': 'action',
+                'options': [
+                    {'text': {'type': 'plain_text', 'text': 'Claim (assign to me)'}, 'value': 'claim'},
+                    {'text': {'type': 'plain_text', 'text': 'Set ETA'}, 'value': 'set_eta'},
+                    {'text': {'type': 'plain_text', 'text': 'Set Status'}, 'value': 'set_status'},
+                    {'text': {'type': 'plain_text', 'text': 'Resolve with Note'}, 'value': 'resolve_with_note'},
+                ],
+            },
+            'label': {'type': 'plain_text', 'text': 'Action'},
+        },
+    ]
+
+    eta_element = {
+        'type': 'datepicker',
+        'action_id': 'eta',
+        'placeholder': {'type': 'plain_text', 'text': 'Select a date'},
+    }
+    if repair_record.eta:
+        eta_element['initial_date'] = repair_record.eta.strftime('%Y-%m-%d')
+    blocks.append({
+        'type': 'input',
+        'block_id': 'eta_block',
+        'optional': True,
+        'element': eta_element,
+        'label': {'type': 'plain_text', 'text': "ETA (used when 'Set ETA' chosen)"},
+    })
+
+    blocks.append({
+        'type': 'input',
+        'block_id': 'status_block',
+        'optional': True,
+        'element': {
+            'type': 'static_select',
+            'action_id': 'status',
+            'placeholder': {'type': 'plain_text', 'text': 'Select a status'},
+            'options': [
+                {'text': {'type': 'plain_text', 'text': 'In Progress'}, 'value': 'In Progress'},
+                {'text': {'type': 'plain_text', 'text': 'Closed - Duplicate'}, 'value': 'Closed - Duplicate'},
+                {'text': {'type': 'plain_text', 'text': 'Closed - No Issue Found'}, 'value': 'Closed - No Issue Found'},
+            ],
+        },
+        'label': {'type': 'plain_text', 'text': "New Status (used when 'Set Status' chosen)"},
+    })
+
+    blocks.append({
+        'type': 'input',
+        'block_id': 'note_block',
+        'optional': True,
+        'element': {
+            'type': 'plain_text_input',
+            'action_id': 'note',
+            'multiline': True,
+            'placeholder': {'type': 'plain_text', 'text': 'Add a note (required when resolving)'},
+        },
+        'label': {'type': 'plain_text', 'text': 'Note (required when resolving)'},
+    })
+
+    return {
+        'type': 'modal',
+        'callback_id': 'repair_action_submission',
+        'title': {'type': 'plain_text', 'text': f'Repair #{repair_record.id}'[:24]},
+        'submit': {'type': 'plain_text', 'text': 'Apply'},
         'close': {'type': 'plain_text', 'text': 'Cancel'},
         'private_metadata': str(repair_record.id),
         'blocks': blocks,

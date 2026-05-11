@@ -807,8 +807,8 @@ class TestAppConfig:
             json.loads(r.message) for r in capture.records
             if 'app_config.updated' in r.message
         ]
-        # All 5 values change from defaults (tech_doc false→true, triggers true→false)
-        assert len(entries) == 5
+        # All 6 values change from defaults (tech_doc false→true, 5 triggers true→false)
+        assert len(entries) == 6
         tech_doc_entries = [e for e in entries if e['data']['key'] == 'tech_doc_edit_enabled']
         assert len(tech_doc_entries) == 1
         assert tech_doc_entries[0]['data']['new_value'] == 'true'
@@ -837,6 +837,7 @@ class TestAppConfigNotificationTriggers:
         assert b'notify_new_report' in resp.data
         assert b'notify_resolved' in resp.data
         assert b'notify_severity_changed' in resp.data
+        assert b'notify_status_changed' in resp.data
         assert b'notify_eta_updated' in resp.data
 
     def test_triggers_enabled_by_default(self, staff_client, staff_user):
@@ -846,7 +847,8 @@ class TestAppConfigNotificationTriggers:
         html = resp.data.decode()
         # Each trigger input should be rendered with checked attribute
         for field_name in ('notify_new_report', 'notify_resolved',
-                           'notify_severity_changed', 'notify_eta_updated'):
+                           'notify_severity_changed', 'notify_status_changed',
+                           'notify_eta_updated'):
             # Find the input tag for this field and verify it has 'checked'
             idx = html.find(f'id="{field_name}"')
             assert idx != -1, f'{field_name} input not found'
@@ -863,6 +865,7 @@ class TestAppConfigNotificationTriggers:
             'notify_new_report': 'y',
             'notify_resolved': 'y',
             'notify_severity_changed': 'y',
+            'notify_status_changed': 'y',
             # notify_eta_updated NOT included = disabled
         }, follow_redirects=True)
         assert resp.status_code == 200
@@ -870,6 +873,20 @@ class TestAppConfigNotificationTriggers:
 
         from esb.services import config_service
         assert config_service.get_config('notify_eta_updated') == 'false'
+
+    def test_disable_status_changed_trigger(self, staff_client, staff_user):
+        """Staff can disable the notify_status_changed trigger; subsequent open-status transitions are silent."""
+        resp = staff_client.post('/admin/config', data={
+            'tech_doc_edit_enabled': 'y',
+            'notify_new_report': 'y',
+            'notify_resolved': 'y',
+            'notify_severity_changed': 'y',
+            'notify_eta_updated': 'y',
+            # notify_status_changed NOT included = disabled
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        from esb.services import config_service
+        assert config_service.get_config('notify_status_changed') == 'false'
 
     def test_enable_trigger(self, staff_client, staff_user):
         """Staff can enable a notification trigger."""

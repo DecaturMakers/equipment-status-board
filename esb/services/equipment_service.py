@@ -40,6 +40,34 @@ def get_area(area_id: int) -> Area:
     return area
 
 
+def get_area_by_name(name: str | None) -> Area | None:
+    """Look up a non-archived area by exact (case-insensitive) name.
+
+    The input is stripped of leading/trailing whitespace before comparison
+    because callers (e.g., Slack slash command bodies) provide unsanitized
+    text -- unlike the validated Flask-WTF inputs used by create_area /
+    update_area, which the form layer trims for us.
+
+    Args:
+        name: Candidate area name. Whitespace-only or empty input returns None.
+
+    Returns:
+        The Area instance if a non-archived area matches the trimmed name
+        case-insensitively, otherwise None. Does not raise on miss.
+    """
+    if name is None:
+        return None
+    stripped = name.strip()
+    if not stripped:
+        return None
+    return db.session.execute(
+        db.select(Area).filter(
+            db.func.lower(Area.name) == stripped.lower(),
+            Area.is_archived.is_(False),
+        )
+    ).scalar_one_or_none()
+
+
 def create_area(name: str, slack_channel: str, created_by: str) -> Area:
     """Create a new area.
 
