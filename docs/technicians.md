@@ -144,11 +144,11 @@ The dispatcher is the easiest path for routine in-Slack work — you no longer n
 
 #### Creating a new repair via Slack
 
-1. Type `/esb-repair <equipment name>` (or `/esb-repair` with no equipment name) in any channel.
-2. The create-record modal opens. If the equipment name matches exactly one piece of equipment, it is pre-selected for you.
+1. Type `/esb-repair <equipment name>` in any channel — you **must** supply an argument; the no-args form goes to the dispatcher described above.
+2. The create-record modal opens. If the equipment name matches exactly one piece of equipment (case-insensitive), it is pre-selected for you.
 3. Fill in description, severity, and any other details, then submit.
 
-If the name matches zero or multiple pieces of equipment, the modal opens without a preselection and you pick from the dropdown.
+If the argument matches zero or multiple pieces of equipment (or matches only as a partial substring), the modal opens without a preselection and you pick from the dropdown.
 
 ## Using Slack Commands
 
