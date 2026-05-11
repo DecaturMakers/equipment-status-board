@@ -74,6 +74,11 @@ def create_app(config_name='default'):
     def inject_current_year():
         return {'current_year': datetime.now(timezone.utc).year}
 
+    @app.context_processor
+    def inject_repair_constants():
+        from esb.services.repair_service import CLOSED_STATUSES
+        return {'CLOSED_STATUSES': CLOSED_STATUSES}
+
     # New Relic browser monitoring context processor
     if nr_license:
         @app.context_processor

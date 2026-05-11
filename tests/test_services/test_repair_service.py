@@ -1449,6 +1449,296 @@ class TestClaimRepairRecord:
             assert record.assignee_id == original_assignee
             assert record.status == closed_status
 
+    def test_claim_self_assigned_record_is_noop(self, app, make_area, make_equipment):
+        """Re-claiming a record already assigned to self produces no new timeline entries or notifications."""
+        from tests.conftest import _create_user
+        from esb.models.pending_notification import PendingNotification
+
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(
+            equipment_id=eq.id, description='Broken', status='Assigned', assignee_id=tech.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        timeline_count_before = record.timeline_entries.count()
+        notification_count_before = _db.session.execute(
+            _db.select(_db.func.count()).select_from(PendingNotification)
+        ).scalar_one()
+
+        repair_service.claim_repair_record(
+            repair_record_id=record.id,
+            claimed_by_user_id=tech.id,
+            claimed_by_username=tech.username,
+        )
+
+        _db.session.refresh(record)
+        # No new timeline entry (no assignee_change or status_change fired).
+        assert record.timeline_entries.count() == timeline_count_before
+        # No new pending notification (the status_changed/resolved triggers
+        # didn't fire because audit_changes is empty post no-op guard).
+        notification_count_after = _db.session.execute(
+            _db.select(_db.func.count()).select_from(PendingNotification)
+        ).scalar_one()
+        assert notification_count_after == notification_count_before
+
+
+class TestResolveRepairRecord:
+    """Tests for the resolve_repair_record() service function."""
+
+    def test_resolve_open_record_sets_status_and_creates_note_entry(
+        self, app, make_area, make_equipment,
+    ):
+        """Resolve sets status='Resolved' and appends a 'note' timeline entry."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(
+            equipment_id=eq.id, description='Broken', status='Assigned', assignee_id=tech.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        result = repair_service.resolve_repair_record(
+            repair_record_id=record.id,
+            resolved_by_user_id=tech.id,
+            resolved_by_username=tech.username,
+            note='Fixed',
+        )
+        assert result.status == 'Resolved'
+
+        entries = record.timeline_entries.all()
+        note_entries = [e for e in entries if e.entry_type == 'note']
+        status_entries = [e for e in entries if e.entry_type == 'status_change']
+        assert any(e.content == 'Fixed' for e in note_entries)
+        assert any(e.new_value == 'Resolved' for e in status_entries)
+
+    def test_resolve_from_new_status_is_allowed(self, app, make_area, make_equipment):
+        """Service layer permits resolving from 'New' (UI rule is independent)."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        result = repair_service.resolve_repair_record(
+            repair_record_id=record.id,
+            resolved_by_user_id=tech.id,
+            resolved_by_username=tech.username,
+            note='Done',
+        )
+        assert result.status == 'Resolved'
+
+    def test_resolve_strips_whitespace_from_note(self, app, make_area, make_equipment):
+        """Leading/trailing whitespace stripped from note before save."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='Assigned')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.resolve_repair_record(
+            repair_record_id=record.id,
+            resolved_by_user_id=tech.id,
+            resolved_by_username=tech.username,
+            note='  Fixed  ',
+        )
+        note_entries = [
+            e for e in record.timeline_entries.all() if e.entry_type == 'note'
+        ]
+        assert any(e.content == 'Fixed' for e in note_entries)
+
+    def test_resolve_empty_note_raises(self, app, make_area, make_equipment):
+        """Empty note raises ValidationError with exact message."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='Assigned')
+        _db.session.add(record)
+        _db.session.commit()
+
+        with pytest.raises(ValidationError, match='Resolution note is required'):
+            repair_service.resolve_repair_record(
+                repair_record_id=record.id,
+                resolved_by_user_id=tech.id,
+                resolved_by_username=tech.username,
+                note='',
+            )
+
+    def test_resolve_whitespace_only_note_raises(self, app, make_area, make_equipment):
+        """Whitespace-only note raises the same ValidationError."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='Assigned')
+        _db.session.add(record)
+        _db.session.commit()
+
+        with pytest.raises(ValidationError, match='Resolution note is required'):
+            repair_service.resolve_repair_record(
+                repair_record_id=record.id,
+                resolved_by_user_id=tech.id,
+                resolved_by_username=tech.username,
+                note='   ',
+            )
+
+    def test_resolve_unknown_user_raises(self, app, make_area, make_equipment):
+        """Unknown user id raises ValidationError mentioning the bogus id."""
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='Assigned')
+        _db.session.add(record)
+        _db.session.commit()
+
+        with pytest.raises(ValidationError, match='User with id 99999 not found'):
+            repair_service.resolve_repair_record(
+                repair_record_id=record.id,
+                resolved_by_user_id=99999,
+                resolved_by_username='bogus',
+                note='Fixed',
+            )
+
+    def test_resolve_unknown_record_raises(self, app, make_area, make_equipment):
+        """Unknown record id raises ValidationError with the record-not-found message.
+
+        Note: pass a REAL user_id and a non-empty note so the user-existence
+        check (which fires first per documented order) does NOT fire and the
+        record-not-found branch is exercised.
+        """
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+
+        with pytest.raises(ValidationError, match='Repair record with id 99999 not found'):
+            repair_service.resolve_repair_record(
+                repair_record_id=99999,
+                resolved_by_user_id=tech.id,
+                resolved_by_username=tech.username,
+                note='Fixed',
+            )
+
+    def test_resolve_closed_record_raises(self, app, make_area, make_equipment):
+        """Resolving a record already closed raises and does not mutate the record."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        for closed_status in ('Resolved', 'Closed - Duplicate', 'Closed - No Issue Found'):
+            record = RepairRecord(
+                equipment_id=eq.id, description=f'X-{closed_status}', status=closed_status,
+            )
+            _db.session.add(record)
+            _db.session.commit()
+            entries_before = record.timeline_entries.count()
+
+            with pytest.raises(ValidationError, match='already closed'):
+                repair_service.resolve_repair_record(
+                    repair_record_id=record.id,
+                    resolved_by_user_id=tech.id,
+                    resolved_by_username=tech.username,
+                    note='Trying',
+                )
+
+            _db.session.refresh(record)
+            assert record.status == closed_status
+            assert record.timeline_entries.count() == entries_before
+
+    def test_resolve_queues_resolved_notification(self, app, make_area, make_equipment):
+        """Resolving an open record queues a 'resolved' slack notification."""
+        from esb.models.pending_notification import PendingNotification
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        eq = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.resolve_repair_record(
+            repair_record_id=record.id,
+            resolved_by_user_id=tech.id,
+            resolved_by_username=tech.username,
+            note='Fixed',
+        )
+
+        notifications = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_message')
+        ).scalars().all()
+        resolved = [n for n in notifications if n.payload.get('event_type') == 'resolved']
+        assert len(resolved) == 1
+
+    def test_resolve_does_not_queue_when_notify_resolved_false(
+        self, app, make_area, make_equipment,
+    ):
+        """When notify_resolved='false', no notification is queued on resolve."""
+        from esb.models.pending_notification import PendingNotification
+        from esb.services import config_service
+        from tests.conftest import _create_user
+
+        config_service.set_config('notify_resolved', 'false', changed_by='test')
+
+        tech = _create_user('technician', username='alice')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        eq = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.resolve_repair_record(
+            repair_record_id=record.id,
+            resolved_by_user_id=tech.id,
+            resolved_by_username=tech.username,
+            note='Fixed',
+        )
+
+        notifications = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_message')
+        ).scalars().all()
+        resolved = [n for n in notifications if n.payload.get('event_type') == 'resolved']
+        assert len(resolved) == 0
+
+    def test_resolve_with_non_ascii_note_roundtrips(self, app, make_area, make_equipment):
+        """Non-ASCII (emoji + multilingual) note saves and reads back exactly."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        area = make_area('Shop', '#shop')
+        eq = make_equipment(name='Tool', area=area)
+        record = RepairRecord(equipment_id=eq.id, description='Broken', status='Assigned')
+        _db.session.add(record)
+        _db.session.commit()
+
+        note_text = 'Fixed! 🔧 Тест съел проблема'
+        repair_service.resolve_repair_record(
+            repair_record_id=record.id,
+            resolved_by_user_id=tech.id,
+            resolved_by_username=tech.username,
+            note=note_text,
+        )
+
+        _db.session.refresh(record)
+        note_entries = [
+            e for e in record.timeline_entries.all() if e.entry_type == 'note'
+        ]
+        assert any(e.content == note_text for e in note_entries)
+
+    def test_resolve_combined_failures_uses_documented_validation_order(self, app):
+        """Empty-note check fires FIRST even when user and record are also invalid."""
+        with pytest.raises(ValidationError, match='Resolution note is required'):
+            repair_service.resolve_repair_record(
+                repair_record_id=99999,
+                resolved_by_user_id=99999,
+                resolved_by_username='bogus',
+                note='',
+            )
+
 
 class TestGetRepairQueue:
     """Tests for get_repair_queue()."""
@@ -1572,3 +1862,86 @@ class TestGetRepairQueue:
         assert results[0].equipment.name == 'Table Saw'
         assert results[0].equipment.area.name == 'Woodshop'
         assert results[0].assignee.username == 'techuser'
+
+    def test_queue_filter_by_assignee_id(self, app, make_area, make_equipment):
+        """assignee_id kwarg filters to records assigned to that user."""
+        from tests.conftest import _create_user
+        a = _create_user('technician', username='alice')
+        b = _create_user('technician', username='bob')
+        area = make_area()
+        eq = make_equipment('Saw', area=area)
+        r1 = RepairRecord(equipment_id=eq.id, description='r1', assignee_id=a.id)
+        r2 = RepairRecord(equipment_id=eq.id, description='r2', assignee_id=a.id)
+        r3 = RepairRecord(equipment_id=eq.id, description='r3', assignee_id=b.id)
+        _db.session.add_all([r1, r2, r3])
+        _db.session.commit()
+        r1_id, r2_id, r3_id = r1.id, r2.id, r3.id
+
+        results = repair_service.get_repair_queue(assignee_id=a.id)
+        result_ids = {r.id for r in results}
+        assert result_ids == {r1_id, r2_id}
+        assert r3_id not in result_ids
+
+    def test_queue_filter_unassigned(self, app, make_area, make_equipment):
+        """unassigned=True filters to records with assignee_id IS NULL."""
+        from tests.conftest import _create_user
+        a = _create_user('technician', username='alice')
+        area = make_area()
+        eq = make_equipment('Saw', area=area)
+        r1 = RepairRecord(equipment_id=eq.id, description='r1', assignee_id=None)
+        r2 = RepairRecord(equipment_id=eq.id, description='r2', assignee_id=None)
+        r3 = RepairRecord(equipment_id=eq.id, description='r3', assignee_id=a.id)
+        _db.session.add_all([r1, r2, r3])
+        _db.session.commit()
+        r1_id, r2_id, r3_id = r1.id, r2.id, r3.id
+
+        results = repair_service.get_repair_queue(unassigned=True)
+        result_ids = {r.id for r in results}
+        assert result_ids == {r1_id, r2_id}
+        assert r3_id not in result_ids
+
+    def test_queue_filter_assignee_id_and_unassigned_mutual_exclusion(self, app):
+        """Passing both assignee_id and unassigned=True raises ValidationError."""
+        with pytest.raises(ValidationError) as exc_info:
+            repair_service.get_repair_queue(assignee_id=1, unassigned=True)
+        msg = str(exc_info.value)
+        assert 'assignee_id' in msg
+        assert 'unassigned' in msg
+
+    def test_queue_no_filter_returns_all_open(self, app, make_area, make_equipment):
+        """Regression: get_repair_queue() with no kwargs unchanged from before extension."""
+        from tests.conftest import _create_user
+        a = _create_user('technician', username='alice')
+        area = make_area()
+        eq = make_equipment('Saw', area=area)
+        _db.session.add_all([
+            RepairRecord(equipment_id=eq.id, description='r1', status='New', assignee_id=a.id),
+            RepairRecord(equipment_id=eq.id, description='r2', status='Assigned'),
+            RepairRecord(equipment_id=eq.id, description='r3', status='Resolved'),
+        ])
+        _db.session.commit()
+
+        results = repair_service.get_repair_queue()
+        descriptions = {r.description for r in results}
+        # Only the two open records appear (Resolved is filtered out).
+        assert descriptions == {'r1', 'r2'}
+
+    def test_queue_combined_area_and_assignee_filter(self, app, make_area, make_equipment):
+        """area_id + assignee_id compose with AND logic."""
+        from tests.conftest import _create_user
+        tech = _create_user('technician', username='alice')
+        other = _create_user('technician', username='bob')
+        area1 = make_area('Woodshop')
+        area2 = make_area('Metalshop', slack_channel='#metalshop')
+        eq1 = make_equipment('Saw', area=area1)
+        eq2 = make_equipment('Welder', area=area2)
+        _db.session.add_all([
+            RepairRecord(equipment_id=eq1.id, description='area1-tech', assignee_id=tech.id),
+            RepairRecord(equipment_id=eq1.id, description='area1-other', assignee_id=other.id),
+            RepairRecord(equipment_id=eq2.id, description='area2-tech', assignee_id=tech.id),
+        ])
+        _db.session.commit()
+
+        results = repair_service.get_repair_queue(area_id=area1.id, assignee_id=tech.id)
+        descriptions = [r.description for r in results]
+        assert descriptions == ['area1-tech']

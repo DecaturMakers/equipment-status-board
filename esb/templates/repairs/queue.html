@@ -30,10 +30,17 @@
             {% endfor %}
         </select>
     </div>
+    <div class="col-auto">
+        <select id="assignee-filter" class="form-select form-select-sm" aria-label="Filter by assignee">
+            <option value="" {% if not active_assignee %}selected{% endif %}>All Assignees</option>
+            <option value="me" {% if active_assignee == 'me' %}selected{% endif %}>Mine</option>
+            <option value="unassigned" {% if active_assignee == 'unassigned' %}selected{% endif %}>Unassigned</option>
+        </select>
+    </div>
 </div>
 
 {# --- Desktop Table (>=768px) --- #}
-<div id="queue-table-wrapper" class="d-none d-md-block">
+<div id="queue-table-wrapper" class="d-none d-md-block" data-current-user-id="{{ current_user.id }}">
     <table class="table table-hover" id="queue-table">
         <thead>
             <tr>
@@ -44,11 +51,12 @@
                 <th data-sort="status" role="button" class="sortable">Status <span class="sort-indicator"></span></th>
                 <th>ETA<span class="sort-indicator"></span></th>
                 <th data-sort="assignee" role="button" class="sortable">Assignee <span class="sort-indicator"></span></th>
+                <th class="text-end">Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for record in records %}
-            <tr class="queue-row" role="link" tabindex="0"
+            <tr class="queue-row" tabindex="0"
                 data-href="{{ url_for('repairs.detail', id=record.id) }}"
                 data-equipment-name="{{ record.equipment.name }}"
                 data-severity-priority="{{ '0' if record.severity == 'Down' else ('1' if record.severity == 'Degraded' else ('2' if record.severity == 'Not Sure' else '3')) }}"
@@ -56,7 +64,9 @@
                 data-area="{{ record.equipment.area.name }}"
                 data-age-seconds="{{ (now_utc - record.created_at).total_seconds()|int }}"
                 data-status="{{ record.status }}"
-                data-assignee="{{ record.assignee.username if record.assignee else '' }}">
+                data-assignee="{{ record.assignee.username if record.assignee else '' }}"
+                data-assignee-id="{{ record.assignee_id if record.assignee_id is not none else '' }}"
+                data-unassigned="{{ 'true' if record.assignee_id is none else 'false' }}">
                 <td>{{ record.equipment.name }}</td>
                 <td>
                     {% if record.severity == 'Down' %}
@@ -74,6 +84,26 @@
                 <td>{{ record.status }}</td>
                 <td class="queue-eta-cell" data-eta-iso="{{ record.eta.isoformat() if record.eta else '' }}">{{ record.eta|format_date }}</td>
                 <td>{{ record.assignee.username if record.assignee else '' }}</td>
+                <td class="text-end" data-no-nav>
+                    {% if record.status == 'New' and record.assignee_id != current_user.id %}
+                    <form method="post" action="{{ url_for('repairs.claim', id=record.id) }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="next" value="{{ request.path }}">
+                        <button type="submit" class="btn btn-sm btn-outline-primary"
+                                aria-label="Claim Repair #{{ record.id }}: {{ record.equipment.name }}">
+                            Claim
+                        </button>
+                    </form>
+                    {% endif %}
+                    {% if record.status != 'New' and record.status not in CLOSED_STATUSES %}
+                    <button type="button" class="btn btn-sm btn-outline-success"
+                            data-bs-toggle="modal" data-bs-target="#resolveModal"
+                            data-repair-id="{{ record.id }}"
+                            aria-label="Resolve Repair #{{ record.id }}: {{ record.equipment.name }}">
+                        Resolve
+                    </button>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -83,39 +113,65 @@
 {# --- Mobile Cards (<768px) --- #}
 <div id="queue-cards-wrapper" class="d-md-none">
     {% for record in records %}
-    <a href="{{ url_for('repairs.detail', id=record.id) }}" class="text-decoration-none text-body">
-        <div class="card mb-2 queue-card"
-             data-equipment-name="{{ record.equipment.name }}"
-             data-severity-priority="{{ '0' if record.severity == 'Down' else ('1' if record.severity == 'Degraded' else ('2' if record.severity == 'Not Sure' else '3')) }}"
-             data-area-id="{{ record.equipment.area_id }}"
-             data-area="{{ record.equipment.area.name }}"
-             data-age-seconds="{{ (now_utc - record.created_at).total_seconds()|int }}"
-             data-status="{{ record.status }}"
-             data-assignee="{{ record.assignee.username if record.assignee else '' }}">
-            <div class="card-body py-2 px-3">
-                <div class="d-flex justify-content-between align-items-center">
-                    <strong>{{ record.equipment.name }}</strong>
-                    {% if record.severity == 'Down' %}
-                    <span class="badge bg-danger">Down</span>
-                    {% elif record.severity in ['Degraded', 'Not Sure'] %}
-                    <span class="badge bg-warning text-dark">{{ record.severity }}</span>
-                    {% elif record.severity %}
-                    <span class="badge bg-secondary">{{ record.severity }}</span>
-                    {% else %}
-                    <span class="badge bg-secondary">None</span>
-                    {% endif %}
-                </div>
-                <div class="small text-muted mt-1">
-                    <span class="badge bg-info text-dark">{{ record.status }}</span>
-                    &middot; {{ record.equipment.area.name }}
-                    &middot; {{ record.created_at|relative_time }}
-                    {% if record.eta %}
-                    &middot; ETA: {{ record.eta|format_date }}
-                    {% endif %}
-                </div>
+    <div class="card mb-2 queue-card text-body"
+         data-href="{{ url_for('repairs.detail', id=record.id) }}"
+         tabindex="0"
+         data-equipment-name="{{ record.equipment.name }}"
+         data-severity-priority="{{ '0' if record.severity == 'Down' else ('1' if record.severity == 'Degraded' else ('2' if record.severity == 'Not Sure' else '3')) }}"
+         data-area-id="{{ record.equipment.area_id }}"
+         data-area="{{ record.equipment.area.name }}"
+         data-age-seconds="{{ (now_utc - record.created_at).total_seconds()|int }}"
+         data-status="{{ record.status }}"
+         data-assignee="{{ record.assignee.username if record.assignee else '' }}"
+         data-assignee-id="{{ record.assignee_id if record.assignee_id is not none else '' }}"
+         data-unassigned="{{ 'true' if record.assignee_id is none else 'false' }}">
+        <div class="card-body py-2 px-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <strong>{{ record.equipment.name }}</strong>
+                {% if record.severity == 'Down' %}
+                <span class="badge bg-danger">Down</span>
+                {% elif record.severity in ['Degraded', 'Not Sure'] %}
+                <span class="badge bg-warning text-dark">{{ record.severity }}</span>
+                {% elif record.severity %}
+                <span class="badge bg-secondary">{{ record.severity }}</span>
+                {% else %}
+                <span class="badge bg-secondary">None</span>
+                {% endif %}
             </div>
+            <div class="small text-muted mt-1">
+                <span class="badge bg-info text-dark">{{ record.status }}</span>
+                &middot; {{ record.equipment.area.name }}
+                &middot; {{ record.created_at|relative_time }}
+                {% if record.eta %}
+                &middot; ETA: {{ record.eta|format_date }}
+                {% endif %}
+            </div>
+            {% set show_claim = record.status == 'New' and record.assignee_id != current_user.id %}
+            {% set show_resolve = record.status != 'New' and record.status not in CLOSED_STATUSES %}
+            {% if show_claim or show_resolve %}
+            <div class="mt-2 d-flex gap-2" data-no-nav>
+                {% if show_claim %}
+                <form method="post" action="{{ url_for('repairs.claim', id=record.id) }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="{{ request.path }}">
+                    <button type="submit" class="btn btn-sm btn-outline-primary"
+                            aria-label="Claim Repair #{{ record.id }}: {{ record.equipment.name }}">
+                        Claim
+                    </button>
+                </form>
+                {% endif %}
+                {% if show_resolve %}
+                <button type="button" class="btn btn-sm btn-outline-success"
+                        data-bs-toggle="modal" data-bs-target="#resolveModal"
+                        data-repair-id="{{ record.id }}"
+                        aria-label="Resolve Repair #{{ record.id }}: {{ record.equipment.name }}">
+                    Resolve
+                </button>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
-    </a>
+    </div>
     {% endfor %}
 </div>
 
@@ -123,4 +179,6 @@
 <div id="queue-empty" class="text-center py-5 {% if records %}d-none{% endif %}">
     <p class="text-muted fs-5">No open repair records. All equipment is operational.</p>
 </div>
+
+{% include 'components/_resolve_modal.html' %}
 {% endblock %}

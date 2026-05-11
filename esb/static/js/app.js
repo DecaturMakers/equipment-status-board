@@ -1,17 +1,38 @@
 /* ESB custom JavaScript */
 
 document.addEventListener('DOMContentLoaded', function () {
-  // --- Clickable queue rows (with keyboard support) ---
-  document.querySelectorAll('.queue-row[data-href], .repair-history-row[data-href]').forEach(function (row) {
+  // --- Clickable queue rows / cards (with keyboard support) ---
+  // Action buttons + forms inside rows/cards must NOT trigger row-nav.
+  // The closest('button, a[href], form, [data-no-nav]') guard catches
+  // both interactive descendants and "dead zone" containers (button
+  // padding, action-row gaps) tagged with [data-no-nav].
+  function isNavBlocker(el) {
+    return !!(el && el.closest('button, a[href], form, [data-no-nav]'));
+  }
+
+  document.querySelectorAll('.queue-row[data-href], .queue-card[data-href], .repair-history-row[data-href]').forEach(function (row) {
     row.style.cursor = 'pointer';
-    row.addEventListener('click', function () {
+    row.addEventListener('click', function (e) {
+      if (isNavBlocker(e.target)) return;
+      // Respect ctrl/cmd/shift modifiers: open in new tab/window like a real link.
+      if (e.ctrlKey || e.metaKey || e.shiftKey) {
+        window.open(row.dataset.href, '_blank', 'noopener');
+        return;
+      }
       window.location.href = row.dataset.href;
     });
+    // auxclick fires for middle-click (button === 1); open in new tab.
+    row.addEventListener('auxclick', function (e) {
+      if (e.button !== 1) return;
+      if (isNavBlocker(e.target)) return;
+      e.preventDefault();
+      window.open(row.dataset.href, '_blank', 'noopener');
+    });
     row.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        window.location.href = row.dataset.href;
-      }
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (isNavBlocker(e.target)) return;
+      e.preventDefault();
+      window.location.href = row.dataset.href;
     });
   });
 
@@ -80,18 +101,37 @@ document.addEventListener('DOMContentLoaded', function () {
   // --- Queue filtering ---
   var areaFilter = document.getElementById('area-filter');
   var statusFilter = document.getElementById('status-filter');
+  var assigneeFilter = document.getElementById('assignee-filter');
+  var queueContainer = document.getElementById('queue-table-wrapper');
+  var currentUserId = queueContainer ? queueContainer.dataset.currentUserId : '';
 
-  if (areaFilter && statusFilter) {
+  if (areaFilter || statusFilter || assigneeFilter) {
     function applyFilters() {
-      var areaVal = areaFilter.value;
-      var statusVal = statusFilter.value;
+      var areaVal = areaFilter ? areaFilter.value : '';
+      var statusVal = statusFilter ? statusFilter.value : '';
+      var assigneeVal = assigneeFilter ? assigneeFilter.value : '';
       var visibleCount = 0;
+
+      function matchesAssignee(el) {
+        if (!assigneeVal) return true;
+        if (assigneeVal === 'me') {
+          // Defensive: if currentUserId is missing (queue container absent or
+          // anonymous render), match nothing rather than falling through to
+          // matching every row with empty assignee_id (which would silently
+          // turn "Mine" into "Unassigned").
+          if (!currentUserId) return false;
+          return el.dataset.assigneeId === currentUserId;
+        }
+        if (assigneeVal === 'unassigned') return el.dataset.unassigned === 'true';
+        return true;
+      }
 
       // Filter table rows (canonical count source)
       document.querySelectorAll('.queue-row').forEach(function (row) {
         var areaMatch = !areaVal || row.dataset.areaId === areaVal;
         var statusMatch = !statusVal || row.dataset.status === statusVal;
-        var visible = areaMatch && statusMatch;
+        var assigneeMatch = matchesAssignee(row);
+        var visible = areaMatch && statusMatch && assigneeMatch;
         row.style.display = visible ? '' : 'none';
         if (visible) visibleCount++;
       });
@@ -100,10 +140,8 @@ document.addEventListener('DOMContentLoaded', function () {
       document.querySelectorAll('.queue-card').forEach(function (card) {
         var areaMatch = !areaVal || card.dataset.areaId === areaVal;
         var statusMatch = !statusVal || card.dataset.status === statusVal;
-        var link = card.closest('a');
-        if (link) {
-          link.style.display = (areaMatch && statusMatch) ? '' : 'none';
-        }
+        var assigneeMatch = matchesAssignee(card);
+        card.style.display = (areaMatch && statusMatch && assigneeMatch) ? '' : 'none';
       });
 
       // Show/hide empty state
@@ -113,8 +151,27 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     }
 
-    areaFilter.addEventListener('change', applyFilters);
-    statusFilter.addEventListener('change', applyFilters);
+    if (areaFilter) areaFilter.addEventListener('change', applyFilters);
+    if (statusFilter) statusFilter.addEventListener('change', applyFilters);
+    if (assigneeFilter) assigneeFilter.addEventListener('change', applyFilters);
+  }
+
+  // --- Resolve modal: wire up dynamic action + clear stale textarea ---
+  var resolveModal = document.getElementById('resolveModal');
+  if (resolveModal) {
+    // Cache element references once at DOMContentLoaded -- they're stable
+    // for the page lifetime.
+    var resolveModalForm = document.getElementById('resolveModalForm');
+    var resolveModalNote = document.getElementById('resolveModalNote');
+    var resolveModalRepairIdSpan = document.getElementById('resolveModalRepairId');
+    resolveModal.addEventListener('show.bs.modal', function (event) {
+      var trigger = event.relatedTarget;
+      if (!trigger) return;
+      var repairId = trigger.getAttribute('data-repair-id');
+      if (resolveModalForm) resolveModalForm.setAttribute('action', '/repairs/' + repairId + '/resolve');
+      if (resolveModalNote) resolveModalNote.value = '';
+      if (resolveModalRepairIdSpan) resolveModalRepairIdSpan.textContent = '#' + repairId;
+    });
   }
 
   // --- Kiosk shrink-to-fit scaling ---

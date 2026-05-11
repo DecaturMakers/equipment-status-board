@@ -1,0 +1,35 @@
+{# Bootstrap 5 modal -- include once per page. The form lives INSIDE
+   modal-content, sibling to modal-header, wrapping body+footer. This
+   differs from admin/areas.html's modal (which puts the form inside
+   modal-footer wrapping one button) because we need a textarea inside
+   the form. The form's action is patched at show.bs.modal time by the
+   handler in app.js. #}
+<div class="modal fade" id="resolveModal" tabindex="-1" aria-labelledby="resolveModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="resolveModalLabel">
+          Resolve Repair <span id="resolveModalRepairId"></span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      {# action is patched per-trigger by app.js show.bs.modal handler. The
+         sentinel below ensures that if JS fails to load, the form submits to
+         a non-existent endpoint and returns 404 instead of silently POSTing
+         to the current page URL. #}
+      <form method="post" action="/repairs/_resolve_modal_inert" id="resolveModalForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <div class="modal-body">
+          <label for="resolveModalNote" class="form-label">Resolution Note <span class="text-danger">*</span></label>
+          <textarea id="resolveModalNote" name="note" class="form-control" rows="4" maxlength="5000" required></textarea>
+          <div class="form-text">Describe what was done. Required.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-success">Resolve</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

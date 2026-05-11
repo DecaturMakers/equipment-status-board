@@ -3,7 +3,7 @@
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileAllowed, FileField, FileRequired
 from wtforms import BooleanField, DateField, SelectField, StringField, SubmitField, TextAreaField
-from wtforms.validators import DataRequired, Email, Length, Optional
+from wtforms.validators import DataRequired, Email, InputRequired, Length, Optional
 
 from esb.models.repair_record import REPAIR_SEVERITIES
 
@@ -90,3 +90,29 @@ class RepairPhotoUploadForm(FlaskForm):
         ),
     ])
     submit = SubmitField('Upload Photo')
+
+
+class RepairClaimForm(FlaskForm):
+    """Form for claim quick action -- CSRF only, no inputs."""
+
+    # No fields: CSRF is auto-included by FlaskForm; submit button is
+    # hard-coded in the template, so no SubmitField is needed.
+    pass
+
+
+class RepairResolveForm(FlaskForm):
+    """Form for resolve quick action -- requires a note.
+
+    Uses InputRequired (not DataRequired) so whitespace-only input passes
+    the form layer and the service-layer resolve_repair_record helper
+    catches it with the canonical 'Resolution note is required' message.
+    DataRequired would strip whitespace and reject at the form layer,
+    splitting the empty-note rejection across two layers with inconsistent
+    messages.
+    """
+
+    note = TextAreaField(
+        'Resolution Note',
+        validators=[InputRequired(), Length(max=5000)],
+    )
+    # Submit button is hard-coded in the modal template; no SubmitField.

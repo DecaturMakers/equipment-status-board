@@ -933,3 +933,609 @@ class TestKanbanBoard:
         classes = _main_element_classes(resp.data.decode())
         assert 'container' in classes
         assert 'container-fluid' not in classes
+
+
+class TestClaimRepairRoute:
+    """Tests for POST /repairs/<id>/claim."""
+
+    def test_tech_claims_new_record_promotes_to_assigned(
+        self, tech_client, tech_user, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='New')
+
+        resp = tech_client.post(
+            f'/repairs/{record.id}/claim',
+            data={'next': f'/repairs/{record.id}'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Assigned'
+        assert record.assignee_id == tech_user.id
+
+        with tech_client.session_transaction() as s:
+            flashes = s.get('_flashes', [])
+            assert any(
+                cat == 'success' and f'Claimed Repair #{record.id}.' in msg
+                for cat, msg in flashes
+            )
+
+    def test_staff_claims_record(
+        self, staff_client, staff_user, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='New')
+
+        resp = staff_client.post(f'/repairs/{record.id}/claim')
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Assigned'
+        assert record.assignee_id == staff_user.id
+
+    def test_tech_claims_assigned_record_swaps_assignee_keeps_status(
+        self, tech_client, tech_user, make_area, make_equipment,
+    ):
+        from tests.conftest import _create_user
+        other = _create_user('technician', username='other')
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = RepairRecord(
+            equipment_id=eq.id, description='X', status='Assigned', assignee_id=other.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        resp = tech_client.post(f'/repairs/{record.id}/claim')
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.assignee_id == tech_user.id
+        assert record.status == 'Assigned'
+
+    def test_claim_on_closed_record_flashes_danger_and_does_not_mutate(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='Resolved')
+        original_assignee = record.assignee_id
+
+        resp = tech_client.post(f'/repairs/{record.id}/claim')
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Resolved'
+        assert record.assignee_id == original_assignee
+
+        with tech_client.session_transaction() as s:
+            flashes = s.get('_flashes', [])
+            assert any(cat == 'danger' and 'closed' in msg for cat, msg in flashes)
+
+    def test_claim_nonexistent_returns_404(self, tech_client):
+        resp = tech_client.post('/repairs/99999/claim')
+        assert resp.status_code == 404
+
+    def test_claim_unauthenticated_redirects_to_login(self, client, make_repair_record):
+        record = make_repair_record()
+        resp = client.post(f'/repairs/{record.id}/claim')
+        assert resp.status_code == 302
+        assert '/auth/login' in resp.headers['Location']
+
+    def test_claim_as_member_returns_403(self, client, make_repair_record):
+        from tests.conftest import _create_user
+        _create_user('member', 'memberuser')
+        client.post('/auth/login', data={'username': 'memberuser', 'password': 'testpass'})
+        record = make_repair_record()
+        resp = client.post(f'/repairs/{record.id}/claim')
+        assert resp.status_code == 403
+
+    def test_claim_respects_safe_next_url_for_queue(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='New')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/claim',
+            data={'next': '/repairs/queue'},
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/repairs/queue')
+
+    def test_claim_respects_safe_next_url_for_detail(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='New')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/claim',
+            data={'next': f'/repairs/{record.id}'},
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith(f'/repairs/{record.id}')
+
+    def test_claim_rejects_other_record_detail_next(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record_a = make_repair_record(equipment=eq, status='New', description='A')
+        record_b = make_repair_record(equipment=eq, status='New', description='B')
+        resp = tech_client.post(
+            f'/repairs/{record_a.id}/claim',
+            data={'next': f'/repairs/{record_b.id}'},
+        )
+        assert resp.status_code == 302
+        # Cross-record next-leak protection -> falls back to record_a's detail.
+        assert resp.headers['Location'].endswith(f'/repairs/{record_a.id}')
+
+    def test_claim_rejects_protocol_relative_next(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='New')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/claim',
+            data={'next': '//evil.example.com/'},
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith(f'/repairs/{record.id}')
+
+    def test_claim_rejects_scheme_next(self, tech_client, make_repair_record):
+        record = make_repair_record(status='New')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/claim',
+            data={'next': 'http://evil.example.com/'},
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith(f'/repairs/{record.id}')
+
+    def test_claim_rejects_backslash_next(self, tech_client, make_repair_record):
+        record = make_repair_record(status='New')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/claim',
+            data={'next': '/\\evil.com/path'},
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith(f'/repairs/{record.id}')
+
+
+class TestResolveRepairRoute:
+    """Tests for POST /repairs/<id>/resolve."""
+
+    def test_tech_resolves_open_record_with_note(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='Assigned')
+
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Fixed'},
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Resolved'
+
+        note_entries = [
+            e for e in record.timeline_entries.all() if e.entry_type == 'note'
+        ]
+        assert any(e.content == 'Fixed' for e in note_entries)
+
+    def test_staff_resolves_record(
+        self, staff_client, make_area, make_equipment, make_repair_record,
+    ):
+        record = make_repair_record(status='Assigned')
+        resp = staff_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Done'},
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Resolved'
+
+    def test_resolve_empty_note_flashes_form_error(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='Assigned')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': ''},
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Assigned'  # no mutation
+
+        with tech_client.session_transaction() as s:
+            flashes = s.get('_flashes', [])
+            assert any(cat == 'danger' for cat, _ in flashes)
+
+    def test_resolve_whitespace_only_note_flashes_service_error(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='Assigned')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': '   '},
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Assigned'
+
+        with tech_client.session_transaction() as s:
+            flashes = s.get('_flashes', [])
+            assert any(
+                cat == 'danger' and 'Resolution note is required' in msg
+                for cat, msg in flashes
+            )
+
+    def test_resolve_on_closed_record_flashes_danger_and_does_not_mutate(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='Resolved')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Whatever'},
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Resolved'
+
+        with tech_client.session_transaction() as s:
+            flashes = s.get('_flashes', [])
+            assert any(
+                cat == 'danger' and 'already closed' in msg for cat, msg in flashes
+            )
+
+    def test_resolve_nonexistent_returns_404(self, tech_client):
+        resp = tech_client.post('/repairs/99999/resolve', data={'note': 'Fixed'})
+        assert resp.status_code == 404
+
+    def test_resolve_unauthenticated_redirects_to_login(self, client, make_repair_record):
+        record = make_repair_record()
+        resp = client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Fixed'},
+        )
+        assert resp.status_code == 302
+        assert '/auth/login' in resp.headers['Location']
+
+    def test_resolve_as_member_returns_403(self, client, make_repair_record):
+        from tests.conftest import _create_user
+        _create_user('member', 'memberuser')
+        client.post('/auth/login', data={'username': 'memberuser', 'password': 'testpass'})
+        record = make_repair_record()
+        resp = client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Fixed'},
+        )
+        assert resp.status_code == 403
+
+    def test_resolve_from_new_status_allowed_via_route(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='New')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Fixed'},
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        assert record.status == 'Resolved'
+
+    def test_resolve_respects_safe_next_url_for_queue(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='Assigned')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Fixed', 'next': '/repairs/queue'},
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/repairs/queue')
+
+    def test_resolve_rejects_unsafe_next_url(self, tech_client, make_repair_record):
+        record = make_repair_record(status='Assigned')
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': 'Fixed', 'next': 'http://evil.example.com/'},
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith(f'/repairs/{record.id}')
+
+    def test_resolve_with_non_ascii_note_succeeds(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='Assigned')
+        note_text = 'Fixed! 🔧'
+        resp = tech_client.post(
+            f'/repairs/{record.id}/resolve',
+            data={'note': note_text},
+        )
+        assert resp.status_code == 302
+        _db.session.refresh(record)
+        note_entries = [
+            e for e in record.timeline_entries.all() if e.entry_type == 'note'
+        ]
+        assert any(e.content == note_text for e in note_entries)
+
+
+class TestQueueQuickActionsRendering:
+    """Tests for queue.html rendering of Claim/Resolve buttons + Assignee filter + modal."""
+
+    def test_queue_renders_claim_button_for_new_unclaimed(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='New')
+        resp = tech_client.get('/repairs/queue')
+        assert f'/repairs/{record.id}/claim'.encode() in resp.data
+        assert b'>Claim<' in resp.data or b'Claim\n' in resp.data
+
+    def test_queue_omits_claim_button_when_self_assigned(
+        self, tech_client, tech_user, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='New', assignee_id=tech_user.id)
+        resp = tech_client.get('/repairs/queue')
+        assert f'/repairs/{record.id}/claim'.encode() not in resp.data
+
+    def test_queue_renders_resolve_button_for_assigned(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='Assigned')
+        resp = tech_client.get('/repairs/queue')
+        assert b'data-bs-target="#resolveModal"' in resp.data
+        assert f'data-repair-id="{record.id}"'.encode() in resp.data
+
+    def test_queue_includes_resolve_modal(self, tech_client, make_repair_record):
+        make_repair_record(status='Assigned')
+        resp = tech_client.get('/repairs/queue')
+        assert b'id="resolveModal"' in resp.data
+
+    def test_queue_embeds_current_user_id(
+        self, tech_client, tech_user, make_repair_record,
+    ):
+        make_repair_record(status='New')
+        resp = tech_client.get('/repairs/queue')
+        assert f'data-current-user-id="{tech_user.id}"'.encode() in resp.data
+
+    def test_queue_embeds_current_user_id_when_empty(self, tech_client, tech_user):
+        # No records created -- queue is empty.
+        resp = tech_client.get('/repairs/queue')
+        assert f'data-current-user-id="{tech_user.id}"'.encode() in resp.data
+
+    def test_queue_assignee_filter_select_rendered(self, tech_client):
+        resp = tech_client.get('/repairs/queue')
+        assert b'id="assignee-filter"' in resp.data
+        assert b'value=""' in resp.data
+        assert b'value="me"' in resp.data
+        assert b'value="unassigned"' in resp.data
+
+    def test_queue_mobile_card_has_data_href(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='Assigned')
+        resp = tech_client.get('/repairs/queue')
+        pattern = (
+            rb'<div[^>]*\bclass="[^"]*\bqueue-card\b[^"]*"[^>]*\bdata-href="/repairs/'
+            + str(record.id).encode() + rb'"'
+        )
+        assert re.search(pattern, resp.data)
+
+    def test_queue_mobile_card_has_assignee_data_attrs(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        other = _create_user('technician', username='other')
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        make_repair_record(equipment=eq, status='New', description='unassigned-rec')
+        make_repair_record(
+            equipment=eq, status='Assigned', description='assigned-rec',
+            assignee_id=other.id,
+        )
+        resp = tech_client.get('/repairs/queue')
+        assert b'data-unassigned="true"' in resp.data
+        assert f'data-assignee-id="{other.id}"'.encode() in resp.data
+
+    def test_queue_row_has_assignee_data_attrs(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        other = _create_user('technician', username='other')
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        make_repair_record(equipment=eq, status='New', description='unassigned-rec')
+        make_repair_record(
+            equipment=eq, status='Assigned', description='assigned-rec',
+            assignee_id=other.id,
+        )
+        resp = tech_client.get('/repairs/queue')
+        # Row-level: queue-row class element with data-unassigned and data-assignee-id.
+        assert re.search(
+            rb'<tr[^>]*\bclass="[^"]*\bqueue-row\b[^"]*"[^>]*\bdata-unassigned="true"',
+            resp.data,
+        )
+        assert re.search(
+            rb'<tr[^>]*\bclass="[^"]*\bqueue-row\b[^"]*"[^>]*\bdata-assignee-id="'
+            + str(other.id).encode() + rb'"',
+            resp.data,
+        )
+
+    def test_queue_url_param_assignee_me_filters_server_side(
+        self, tech_client, tech_user, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        other = _create_user('technician', username='other')
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        make_repair_record(equipment=eq, status='Assigned',
+                           description='MARKER-A', assignee_id=tech_user.id)
+        make_repair_record(equipment=eq, status='Assigned',
+                           description='MARKER-B', assignee_id=tech_user.id)
+        make_repair_record(equipment=eq, status='Assigned',
+                           description='MARKER-C', assignee_id=other.id)
+
+        resp = tech_client.get('/repairs/queue?assignee=me')
+        # Marker data leaks into rendered description? Not directly in the queue
+        # template -- but it's embedded in mobile-card content via record-loops.
+        # Use a different visible marker: assignee_id on each row.
+        # We rely on row count via data-assignee-id presence:
+        my_rows = resp.data.count(f'data-assignee-id="{tech_user.id}"'.encode())
+        other_rows = resp.data.count(f'data-assignee-id="{other.id}"'.encode())
+        # Two rows for each "my" record (desktop + mobile).
+        assert my_rows == 4  # 2 records * 2 (desktop tr + mobile card)
+        assert other_rows == 0
+
+    def test_queue_url_param_assignee_unassigned_filters_server_side(
+        self, tech_client, tech_user, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        make_repair_record(equipment=eq, status='New', description='U1')
+        make_repair_record(equipment=eq, status='New', description='U2')
+        make_repair_record(equipment=eq, status='Assigned', description='A1',
+                           assignee_id=tech_user.id)
+
+        resp = tech_client.get('/repairs/queue?assignee=unassigned')
+        # Each unassigned record rendered twice (desktop row + mobile card).
+        unassigned_rows = resp.data.count(b'data-unassigned="true"')
+        assigned_rows = resp.data.count(b'data-unassigned="false"')
+        assert unassigned_rows == 4
+        assert assigned_rows == 0
+
+    def test_queue_url_param_assignee_empty_returns_all(
+        self, tech_client, tech_user, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        other = _create_user('technician', username='other')
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        make_repair_record(equipment=eq, status='New')
+        make_repair_record(equipment=eq, status='Assigned', assignee_id=tech_user.id)
+        make_repair_record(equipment=eq, status='Assigned', assignee_id=other.id)
+
+        resp = tech_client.get('/repairs/queue?assignee=')
+        # All three records render (desktop row + mobile card = 6 occurrences).
+        rows = resp.data.count(b'class="queue-row"')
+        assert rows == 3
+
+    def test_queue_url_param_assignee_unknown_returns_all(
+        self, tech_client, tech_user, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        other = _create_user('technician', username='other')
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        make_repair_record(equipment=eq, status='New')
+        make_repair_record(equipment=eq, status='Assigned', assignee_id=tech_user.id)
+        make_repair_record(equipment=eq, status='Assigned', assignee_id=other.id)
+
+        resp = tech_client.get('/repairs/queue?assignee=bogus')
+        assert resp.status_code == 200
+        rows = resp.data.count(b'class="queue-row"')
+        assert rows == 3
+
+    def test_queue_dropdown_selected_reflects_url_param(self, tech_client):
+        resp = tech_client.get('/repairs/queue?assignee=me')
+        assert re.search(
+            rb'<option[^>]*\bvalue="me"[^>]*\bselected\b[^>]*>', resp.data,
+        )
+
+    def test_queue_dropdown_default_selected_when_no_url_param(self, tech_client):
+        resp = tech_client.get('/repairs/queue')
+        assert re.search(
+            rb'<option[^>]*\bvalue=""[^>]*\bselected\b[^>]*>', resp.data,
+        )
+
+    def test_queue_dropdown_selects_all_when_assignee_unknown(self, tech_client):
+        resp = tech_client.get('/repairs/queue?assignee=bogus')
+        assert re.search(
+            rb'<option[^>]*\bvalue=""[^>]*\bselected\b[^>]*>', resp.data,
+        )
+
+
+class TestDetailQuickActions:
+    """Tests for detail.html Claim/Resolve buttons + modal."""
+
+    def test_detail_shows_claim_for_new_not_self_assigned(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        from tests.conftest import _create_user
+        other = _create_user('technician', username='other')
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(
+            equipment=eq, status='New', assignee_id=other.id,
+        )
+        resp = tech_client.get(f'/repairs/{record.id}')
+        assert f'/repairs/{record.id}/claim'.encode() in resp.data
+
+    def test_detail_hides_claim_when_self_assigned(
+        self, tech_client, tech_user, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(
+            equipment=eq, status='New', assignee_id=tech_user.id,
+        )
+        resp = tech_client.get(f'/repairs/{record.id}')
+        assert f'/repairs/{record.id}/claim'.encode() not in resp.data
+
+    def test_detail_shows_resolve_for_open_non_new(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='Assigned')
+        resp = tech_client.get(f'/repairs/{record.id}')
+        assert b'data-bs-target="#resolveModal"' in resp.data
+        assert f'data-repair-id="{record.id}"'.encode() in resp.data
+
+    def test_detail_hides_resolve_for_new(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        record = make_repair_record(equipment=eq, status='New')
+        resp = tech_client.get(f'/repairs/{record.id}')
+        # The detail page should NOT carry this specific record's modal trigger.
+        assert f'data-repair-id="{record.id}"'.encode() not in resp.data
+
+    def test_detail_hides_both_buttons_for_closed_record(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        from esb.services.repair_service import CLOSED_STATUSES
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        for status in CLOSED_STATUSES:
+            record = make_repair_record(
+                equipment=eq, status=status, description=f'closed-{status}',
+            )
+            resp = tech_client.get(f'/repairs/{record.id}')
+            assert f'/repairs/{record.id}/claim'.encode() not in resp.data
+            assert f'data-repair-id="{record.id}"'.encode() not in resp.data
+
+    def test_detail_modal_included(
+        self, tech_client, make_repair_record,
+    ):
+        record = make_repair_record(status='Assigned')
+        resp = tech_client.get(f'/repairs/{record.id}')
+        assert b'id="resolveModal"' in resp.data
+
+    def test_detail_edit_button_still_visible(
+        self, tech_client, make_area, make_equipment, make_repair_record,
+    ):
+        area = make_area('Shop')
+        eq = make_equipment('Tool', area=area)
+        for status in ('New', 'Assigned', 'In Progress', 'Resolved'):
+            record = make_repair_record(
+                equipment=eq, status=status, description=f'edit-test-{status}',
+            )
+            resp = tech_client.get(f'/repairs/{record.id}')
+            assert f'/repairs/{record.id}/edit'.encode() in resp.data

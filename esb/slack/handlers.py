@@ -570,6 +570,10 @@ def register_handlers(bolt_app, app):
             # repair_service.claim_repair_record() so other call paths
             # (REST, web UI, CLI) can reuse it.
             changes: dict = {}
+            # Defensive: bind resolve_note in the outer scope so the dispatch
+            # block below never hits an UnboundLocalError if branches are
+            # rearranged. Only the 'resolve_with_note' branch reassigns it.
+            resolve_note: str | None = None
             if action == 'claim':
                 pass  # handled below
             elif action == 'set_eta':
@@ -601,8 +605,9 @@ def register_handlers(bolt_app, app):
                         'note_block': 'Note is required when resolving.',
                     })
                     return
-                changes['status'] = 'Resolved'
-                changes['note'] = note_val.strip()
+                # The new resolve_repair_record service call (below) takes
+                # the note as a kwarg, so we don't add it to `changes`.
+                resolve_note = note_val.strip()
             else:
                 ack(response_action='errors', errors={
                     'action_block': f'Unknown action: {action}',
@@ -615,6 +620,13 @@ def register_handlers(bolt_app, app):
                         repair_record_id=repair_record_id,
                         claimed_by_user_id=esb_user.id,
                         claimed_by_username=esb_user.username,
+                    )
+                elif action == 'resolve_with_note':
+                    repair_service.resolve_repair_record(
+                        repair_record_id=repair_record_id,
+                        resolved_by_user_id=esb_user.id,
+                        resolved_by_username=esb_user.username,
+                        note=resolve_note,
                     )
                 else:
                     repair_service.update_repair_record(

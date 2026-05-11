@@ -12,7 +12,31 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1>Repair #{{ record.id }}</h1>
-    <div>
+    <div class="d-flex gap-2 align-items-center">
+        {# Quick-action buttons gated to roles that the corresponding routes
+           accept (@role_required('technician'); staff admits via hierarchy).
+           If a future role gains read-access to detail pages, this guard
+           prevents members from seeing buttons that 403 on click. #}
+        {% if current_user.role in ('staff', 'technician') %}
+        {% if record.status == 'New' and record.assignee_id != current_user.id %}
+        <form method="post" action="{{ url_for('repairs.claim', id=record.id) }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="btn btn-outline-primary"
+                    aria-label="Claim Repair #{{ record.id }}: {{ record.equipment.name }}">
+                Claim
+            </button>
+        </form>
+        {% endif %}
+        {% if record.status != 'New' and record.status not in CLOSED_STATUSES %}
+        <button type="button" class="btn btn-outline-success"
+                data-bs-toggle="modal" data-bs-target="#resolveModal"
+                data-repair-id="{{ record.id }}"
+                aria-label="Resolve Repair #{{ record.id }}: {{ record.equipment.name }}">
+            Resolve
+        </button>
+        {% endif %}
+        {% endif %}
         <a href="{{ url_for('repairs.edit', id=record.id) }}" class="btn btn-primary">Edit</a>
         <span class="badge bg-{{ 'danger' if record.severity == 'Down' else ('warning text-dark' if record.severity in ['Degraded', 'Not Sure'] else 'secondary') }}">
             {{ record.severity or 'No Severity' }}
@@ -101,4 +125,6 @@
     <li class="list-group-item text-muted">No timeline entries yet.</li>
     {% endif %}
 </ol>
+
+{% include 'components/_resolve_modal.html' %}
 {% endblock %}
