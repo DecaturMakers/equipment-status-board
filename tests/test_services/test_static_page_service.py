@@ -282,8 +282,16 @@ class TestGenerate:
 
         html = static_page_service.generate()
 
-        assert 'open-record-gray' in html
-        assert '<span class="record-severity">' not in html
+        # Scope to the open-records-list and anchor on the rendered element
+        # form, not the bare class name (which also appears in the inline
+        # CSS rule .open-record-gray { ... }).
+        list_start = html.find('<ul class="open-records-list">')
+        list_end = html.find('</ul>', list_start)
+        assert list_start != -1 and list_end != -1
+        record_block = html[list_start:list_end]
+
+        assert 'class="open-record open-record-gray"' in record_block
+        assert '<span class="record-severity">' not in record_block
 
     def test_open_records_uses_gray_class_and_suppresses_badge_for_unknown_severity(
         self, app, make_area, make_equipment, make_repair_record,
@@ -295,9 +303,17 @@ class TestGenerate:
 
         html = static_page_service.generate()
 
-        assert 'open-record-gray' in html
-        assert '<span class="record-severity">' not in html
-        assert '[Critical]' not in html
+        # Scope to the open-records-list and anchor on the rendered element
+        # form, not the bare class name (which also appears in the inline
+        # CSS rule .open-record-gray { ... }).
+        list_start = html.find('<ul class="open-records-list">')
+        list_end = html.find('</ul>', list_start)
+        assert list_start != -1 and list_end != -1
+        record_block = html[list_start:list_end]
+
+        assert 'class="open-record open-record-gray"' in record_block
+        assert '<span class="record-severity">' not in record_block
+        assert '[Critical]' not in record_block
 
     def test_open_records_omits_eta_when_unset(
         self, app, make_area, make_equipment, make_repair_record,
