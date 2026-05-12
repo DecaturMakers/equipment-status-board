@@ -253,17 +253,13 @@ def get_area_status_dashboard() -> list[dict]:
         .all()
     )
 
-    # Group open records by equipment_id
+    # Group open records by equipment_id. Lists stay in the prefetch's
+    # (created_at, id) ASC order so `_derive_status_from_records` sees the
+    # input it documents (oldest-first). `open_records` for the static page
+    # needs a different order, so we sort a copy below.
     records_by_equipment: dict[int, list[RepairRecord]] = {}
     for record in open_records:
         records_by_equipment.setdefault(record.equipment_id, []).append(record)
-
-    # Sort each per-equipment list by (severity priority, created_at) ASC.
-    # Stable sort preserves the prefetch's (created_at, id) ASC order on
-    # priority ties, so `_derive_status_from_records`'s oldest-wins tie-break
-    # is unaffected.
-    for records in records_by_equipment.values():
-        records.sort(key=_open_records_sort_key)
 
     result = []
     for area in areas:
@@ -271,10 +267,14 @@ def get_area_status_dashboard() -> list[dict]:
         for equip in equipment_by_area.get(area.id, []):
             equip_records = records_by_equipment.get(equip.id, [])
             status = _derive_status_from_records(equip_records)
+            # Sorted copy: severity-priority order for at-a-glance display
+            # on the static page. The derivation above used the original
+            # (created_at, id) ASC order per its documented contract.
+            open_records_sorted = sorted(equip_records, key=_open_records_sort_key)
             equip_statuses.append({
                 'equipment': equip,
                 'status': status,
-                'open_records': equip_records,
+                'open_records': open_records_sorted,
             })
 
         result.append({
