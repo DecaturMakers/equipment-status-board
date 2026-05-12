@@ -27,6 +27,7 @@ revision_history:
   - '2026-05-11 — applied 20 adversarial-review findings (R1F1–R1F20)'
   - '2026-05-11 — applied real findings from round-2 adversarial review (R2F1–R2F21: 16 applied, 5 deferred as noise)'
   - '2026-05-11 — applied real findings from round-3 adversarial review (R3F1–R3F17: all 17 applied; R3F1 invalidated the R2F1 "load-bearing tzdata" framing, recharacterized as defensive pin)'
+  - '2026-05-12 — applied selected round-4 adversarial-review findings (R4F1, R4F2, R4F4, R4F10 applied; R4F3/R4F5/R4F6/R4F7 deferred as low-value polish; R4F8/R4F9 noise). Round-4 reviewer verdict: "spec is mature, ready for fresh dev agent."'
 ---
 
 # Tech-Spec: Static status page export improvements
@@ -124,7 +125,14 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
 ### Technical Decisions
 
 1. **Extend `get_area_status_dashboard()` to include an `open_records` list per equipment.** Records are already prefetched and grouped in `records_by_equipment`; threading the list through is a one-line change. Rejected the "new helper" option to avoid duplicating ~40 lines of prefetch code. Existing callers (live dashboard, kiosk, Slack formatters) ignore the new key.
-2. **Sort open records by `(severity priority, created_at)` ASC.** Rationale: the static page is the fallback at-a-glance view. Sorting by severity ensures `Down` records bubble above `Degraded`/`Not Sure`/unknown within each equipment's record list. Sort key: `(priority, rec.created_at)` where `priority = _SEVERITY_STATUS.get(rec.severity, (..., ..., _SEVERITY_STATUS['Not Sure'][2]))[2]`. **No `id` in the sort key** — Python's `list.sort()` is stable and the prefetch query order (`created_at ASC, id ASC`) is preserved on ties. **Unknown severity strings and `None` both fall back to the `Not Sure` priority (2)** — same as the equipment-level status derivation — to avoid an inversion where the equipment dot says yellow but the unknown-severity record sorts beneath Not-Sure records (R2F8).
+2. **Sort open records by `(severity priority, created_at)` ASC.** Rationale: the static page is the fallback at-a-glance view. Sorting by severity ensures `Down` records bubble above `Degraded`/`Not Sure`/unknown within each equipment's record list. Sort-key implementation (canonical — see Task 1 for the same snippet):
+   ```python
+   def _open_records_sort_key(rec):
+       sev_entry = _SEVERITY_STATUS.get(rec.severity)
+       priority = sev_entry[2] if sev_entry else _NOT_SURE_PRIORITY
+       return (priority, rec.created_at)
+   ```
+   **No `id` in the sort key** — Python's `list.sort()` is stable and the prefetch query order (`created_at ASC, id ASC`) is preserved on ties. **Unknown severity strings and `None` both fall back to the `Not Sure` priority (2)** — same as the equipment-level status derivation — to avoid an inversion where the equipment dot says yellow but the unknown-severity record sorts beneath Not-Sure records (R2F8). (R4F2: Decision #2 and Task 1 now share the same two-line snippet.)
 3. **Local-timezone generation timestamp.** Implemented in module-level helper `_compute_generated_at()` in `static_page_service.py` (so tests can patch it). Uses `datetime.now().astimezone()` (no `tzinfo` argument) — Python picks up the host system's TZ from `TZ` env / `/etc/localtime`. Format: `'%Y-%m-%d %H:%M:%S '` + `dt.tzname()` → `2026-05-11 14:32:15 EDT`. Seconds are included for debugging value when multiple pushes happen within a minute. **Explicit tzname validation** (R3F5): the helper checks `tzname = dt.tzname(); if not tzname: raise RuntimeError(...)` — this is a real loud-failure guarantee that catches both `None` (TypeError on concatenation) AND empty-string (silent trailing space) cases. Build the string by concatenation (not `%Z`) so the trailing token is explicit.
 4. **Footer text is inlined verbatim** from `_footer.html` (copyright line + GitHub link + MIT license link, INCLUDING `<small>` wrapper and all `aria-label` attributes) into `static_page.html`, NOT included via `{% include %}`. Reasons: (a) the static page must remain self-contained (no external sub-resources); (b) an include couples the export to a fragment used by the live site, which is brittle if that fragment later pulls in Bootstrap classes; (c) copyright text is short and stable. **Drift mitigation:** Task 4 case 12 adds a unit test that loads `_footer.html` through Flask's Jinja loader and asserts its **three load-bearing substrings** (`Jason Antman`, the GitHub URL, the MIT URL) appear in the rendered static page. The test is explicitly named `test_footer_text_pin` — it pins owner + URLs only, NOT year-token markup or `<small>`/aria attribute wrapping. Those are covered by their own ACs (AC 8 / AC 9).
 5. **Per-record styling**. Repair-record `<li>` items use a small inline left-border indicator color-coded by severity using the same mapping as the equipment-level dot (`Down`→red, `Degraded`/`Not Sure`→yellow, everything else including `None` and unknown strings → gray). Display order within the record: `[status badge] [severity badge if canonical severity] description …ETA: …`. Severity text badge is **retained for canonical severities** (`Down`/`Degraded`/`Not Sure`) as an accessibility/redundancy feature — color alone is a WCAG concern, and the text badge gives the same information non-visually. **For non-canonical severities (R3F3)** — unknown strings AND `None` — the badge is suppressed entirely; the gray border serves as the "unrecognized data" signal. This resolves the prior tri-state inconsistency where an unknown severity produced yellow-priority sort + gray border + raw-text badge.
@@ -189,9 +197,10 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
            return (dt.strftime('%Y-%m-%d %H:%M:%S ') + tzname, dt.year)
        ```
        Explicit `if not tzname:` check covers both `None` and empty-string cases (R3F5). Build the string by concatenation (not `%Z`) so the trailing token is explicit.
-    3. Update `generate()`:
+    3. Update `generate()` — import `REPAIR_SEVERITIES` from the model and pass it as a template context kwarg so the template's badge guard isn't a hardcoded copy of the canonical list (R4F1):
        ```python
        def generate() -> str:
+           from esb.models.repair_record import REPAIR_SEVERITIES
            from esb.services import status_service
            areas = status_service.get_area_status_dashboard()
            generated_at, generated_year = _compute_generated_at()
@@ -200,6 +209,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
                areas=areas,
                generated_at=generated_at,
                generated_year=generated_year,
+               repair_severities=REPAIR_SEVERITIES,
            )
        ```
   - Notes: No new external deps. Tests patch `esb.services.static_page_service._compute_generated_at` to inject deterministic timestamps regardless of host TZ.
@@ -267,7 +277,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
                     <ul class="open-records-list">
                         {% for rec in item.open_records %}
                         <li class="open-record open-record-{{ 'red' if rec.severity == 'Down' else 'yellow' if rec.severity in ('Degraded', 'Not Sure') else 'gray' }}">
-                            <span class="record-status">{{ rec.status }}</span>{% if rec.severity in ('Down', 'Degraded', 'Not Sure') %} <span class="record-severity">[{{ rec.severity }}]</span>{% endif %} <span class="record-description">{{ rec.description }}</span>{% if rec.eta %} <span class="record-eta">ETA: {{ rec.eta|format_date }}</span>{% endif %}
+                            <span class="record-status">{{ rec.status }}</span>{% if rec.severity in repair_severities %} <span class="record-severity">[{{ rec.severity }}]</span>{% endif %} <span class="record-description">{{ rec.description }}</span>{% if rec.eta %} <span class="record-eta">ETA: {{ rec.eta|format_date }}</span>{% endif %}
                         </li>
                         {% endfor %}
                     </ul>
@@ -287,7 +297,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
     </html>
     ```
 
-  - Key changes vs. previous template: `.equipment-item` becomes `display: block`; the existing dot/name/label/eta row is wrapped in `<div class="equipment-row">`; new `<ul class="open-records-list">` rendered only when equipment is non-green AND has open records; **severity badge guard changed from `{% if rec.severity %}` to `{% if rec.severity in ('Down', 'Degraded', 'Not Sure') %}`** so unknown/None severities suppress the badge entirely (R3F3); old `<div class="footer">Generated: …</div>` replaced by `<footer class="site-footer" role="contentinfo" aria-label="Site copyright and license">` with a `<small>` wrapper and `aria-label` on the GitHub and MIT anchors (mirrors `_footer.html`); new `.generated-at` sub-heading directly under the `<h1>`. The footer uses `generated_year` (local-tz, from `_compute_generated_at()`), NOT `current_year`. The CSP directive is unchanged.
+  - Key changes vs. previous template: `.equipment-item` becomes `display: block`; the existing dot/name/label/eta row is wrapped in `<div class="equipment-row">`; new `<ul class="open-records-list">` rendered only when equipment is non-green AND has open records; **severity badge guard is `{% if rec.severity in repair_severities %}`** (where `repair_severities = REPAIR_SEVERITIES` from `esb.models.repair_record`, passed via `generate()` context) so unknown/None severities suppress the badge entirely (R3F3) AND a future addition to `REPAIR_SEVERITIES` automatically picks up badge rendering without a template edit (R4F1); old `<div class="footer">Generated: …</div>` replaced by `<footer class="site-footer" role="contentinfo" aria-label="Site copyright and license">` with a `<small>` wrapper and `aria-label` on the GitHub and MIT anchors (mirrors `_footer.html`); new `.generated-at` sub-heading directly under the `<h1>`. The footer uses `generated_year` (local-tz, from `_compute_generated_at()`), NOT `current_year`. The CSP directive is unchanged. Note: the color-class chain `{{ 'red' if rec.severity == 'Down' else 'yellow' if rec.severity in ('Degraded', 'Not Sure') else 'gray' }}` intentionally keeps hardcoded membership — color is a semantic mapping per severity (not derivable from the list alone), so adding a new canonical severity also requires a deliberate color decision in this template.
 
 - [ ] **Task 4: Add tests in `tests/test_services/test_static_page_service.py`.**
   - File: `tests/test_services/test_static_page_service.py`
@@ -360,9 +370,14 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
     24. **Update existing `test_includes_generated_timestamp`** — Replace `assert 'UTC' in html` with `assert 'Generated:' in html`. The timezone token now depends on host TZ / patched helper.
 
   - Notes:
-    - Use `from datetime import UTC, datetime` (Python 3.11+) for `created_at` kwarg values.
-    - Use `from zoneinfo import ZoneInfo` for the tzname-formats test.
     - The fixture `make_repair_record(equipment=None, status='New', description='Test issue', **kwargs)` — pass `equipment=…` explicitly to avoid auto-create side effects; pass `severity`, `eta`, `created_at` via kwargs.
+    - **Explicit imports required by the new test cases** (R4F4 — make these unambiguous for a fresh dev):
+      - `from datetime import UTC, datetime` (Python 3.11+) — cases 12, 21, 22, 23 for `created_at` kwarg values.
+      - `from zoneinfo import ZoneInfo` — case 3 for `ZoneInfo('America/New_York')`.
+      - `from unittest.mock import patch` — cases 2, 3, 4, 14.
+      - `from jinja2.exceptions import TemplateNotFound` — case 15.
+      - `import re` — case 5.
+      - `from esb.services import static_page_service` — cases 2, 3, 4, 5 (the cases that patch helper internals or call them directly; the broader test module already imports it).
 
 - [ ] **Task 5: Add a regression test for the new `open_records` key in `tests/test_services/test_status_service.py`.**
   - File: `tests/test_services/test_status_service.py`
@@ -517,11 +532,11 @@ DC 1, DC 2, DC 3 are verified by code review at PR time.
    - Under each non-green equipment item: a list with one row per open record, colored by severity, showing status + `[severity]` badge (only for canonical severities) + description (multi-line / long text wrapping correctly) + ETA (when set). Records sorted with `Down` records on top.
    - Bottom: centered copyright footer with `<small>` wrapper, GitHub and MIT license anchors, aria-labels present (verifiable in DevTools); year matches the generation sub-heading year.
    - View source: no `<link>`, no `<script src=...>`, no external `<img>`; CSP meta tag value is `default-src 'none'; style-src 'unsafe-inline'` verbatim; `<footer>` has `role="contentinfo"` and `aria-label="Site copyright and license"`.
-5. **End-to-end Docker production smoke check:** Build the image with the Dockerfile change applied. Run:
+5. **End-to-end Docker production smoke check:** Build the image with the Dockerfile change applied. Run the actual helper inside the worker container (R4F10 — calls the real codepath, not just `datetime.now().astimezone().tzname()`):
    ```bash
-   TZ=America/New_York docker compose run --rm worker python -c "from datetime import datetime; print(datetime.now().astimezone().tzname())"
+   TZ=America/New_York docker compose run --rm worker python -c "from esb.services.static_page_service import _compute_generated_at; print(_compute_generated_at())"
    ```
-   Confirm output is `EDT`/`EST` (not `UTC`). This is the authoritative production verification — step 3 only covers the dev's local environment.
+   Confirm output looks like `('2026-05-12 14:32:15 EDT', 2026)` — non-UTC tzname, current local-tz year. This is the authoritative production verification: it exercises `_compute_generated_at()` directly, so a future regression that breaks the helper (wrong return shape, missing `.astimezone()`, etc.) will surface here. Step 3 only covers the dev's local environment.
 
 ### Notes
 
@@ -579,4 +594,19 @@ GitHub issue #44 text:
 | R3F16 | Low | DC 2 rewritten as "defensive dependency pin (not a current-bug fix)" with explicit warning against size-optimization removal. |
 | R3F17 | Low | New AC 6 regex assertion + new test case 5 (`test_compute_generated_at_format_matches_regex`) runs the **unpatched** helper and asserts the format end-to-end. |
 
-**Round 1 and Round 2 resolutions remain authoritative** — see commit history (`b95... ` and `2862a82`/`c88d833`) for full audit trails of those rounds' fixes.
+**Round 4 (2026-05-12):** 10 findings (R4F1–R4F10); 4 applied, 4 deferred as low-value polish, 2 noise. **Reviewer's explicit verdict: "spec is mature, ready for fresh dev agent; I would ship this with fix #1 applied."**
+
+| ID | Severity | Resolution |
+| --- | --- | --- |
+| R4F1 | Med | Applied. `generate()` now imports `REPAIR_SEVERITIES` from `esb.models.repair_record` and passes it as `repair_severities=` template context. Template badge guard rewritten to `{% if rec.severity in repair_severities %}`. A future addition to `REPAIR_SEVERITIES` automatically picks up badge rendering without a template edit. The color-class chain in the template intentionally retains its hardcoded membership — color is a per-severity semantic decision, not derivable from list membership alone. |
+| R4F2 | Low | Applied. Decision #2 now shows the same two-line `_open_records_sort_key` snippet as Task 1, removing the prior `.get()`-with-tuple-default variant. |
+| R4F4 | Low | Applied. Task 4 Notes now lists explicit imports per test case: `from datetime import UTC, datetime`, `from zoneinfo import ZoneInfo`, `from unittest.mock import patch`, `from jinja2.exceptions import TemplateNotFound`, `import re`, with case-number annotations. |
+| R4F10 | Low | Applied. Smoke step 5 now calls `_compute_generated_at()` directly instead of inline `datetime.now().astimezone().tzname()` — exercises the real helper codepath. |
+| R4F3 | Low | Deferred. Risk that case 5's `RuntimeError` from a tzdata-missing CI masks the test's stated intent is real but rare; failure is still red. Notes section discusses the failure mode under R3F6. |
+| R4F5 | Low | Deferred. `_compute_generated_at()` returns a positional 2-tuple. Tests pin the shape; a NamedTuple is cosmetic. |
+| R4F6 | Low | Deferred. Decision #11 wording is fine; both patching paths are valid, and the tests demonstrate which is canonical for each use. |
+| R4F7 | Low | Deferred. AC 18's "no `<div class=\"area\">`" is brittle only to a future empty-state UI; that's a separate spec when it happens. |
+| R4F8 | Noise | Not applied. Regex `\S+` is fine for all IANA TZ names on Debian trixie. |
+| R4F9 | Noise | Not applied. Dockerfile layer cache + ~3MB tzdata is negligible. |
+
+**Round 1, Round 2, Round 3 resolutions remain authoritative** — see commit history for full audit trails of those rounds' fixes.
