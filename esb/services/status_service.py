@@ -20,6 +20,22 @@ _SEVERITY_STATUS = {
     'Not Sure': ('yellow', 'Degraded', 2),
 }
 
+_NOT_SURE_PRIORITY = _SEVERITY_STATUS['Not Sure'][2]
+
+
+def _open_records_sort_key(rec):
+    """Sort key for open repair records.
+
+    Returns ``(severity priority, created_at)``. Unknown severities and
+    ``None`` fold to the ``Not Sure`` priority — same fallback the
+    equipment-level status derivation uses — so a per-record list and
+    its equipment-level dot cannot disagree about which records sort
+    above which.
+    """
+    sev_entry = _SEVERITY_STATUS.get(rec.severity)
+    priority = sev_entry[2] if sev_entry else _NOT_SURE_PRIORITY
+    return (priority, rec.created_at)
+
 
 def _get_open_records(equipment_id: int) -> list:
     """Query open (non-closed) repair records for an equipment item.
@@ -177,13 +193,21 @@ def get_area_status_dashboard() -> list[dict]:
                 'equipment': [
                     {
                         'equipment': Equipment instance,
-                        'status': {color, label, issue_description, severity, eta, assignee_name}
+                        'status': {color, label, issue_description, severity, eta, assignee_name},
+                        'open_records': [RepairRecord, ...],
                     },
                     ...
                 ]
             },
             ...
         ]
+
+    ``open_records`` is the list of non-closed ``RepairRecord`` instances for
+    each equipment item, sorted by ``(severity priority ASC, created_at ASC)``.
+    Unknown severities and ``None`` fold to the ``Not Sure`` priority (matching
+    the equipment-level status fallback). Ties on those fields preserve the
+    prefetch query's ``(created_at, id) ASC`` order (Python's ``list.sort()``
+    is stable).
     """
     areas = (
         db.session.execute(
@@ -234,6 +258,13 @@ def get_area_status_dashboard() -> list[dict]:
     for record in open_records:
         records_by_equipment.setdefault(record.equipment_id, []).append(record)
 
+    # Sort each per-equipment list by (severity priority, created_at) ASC.
+    # Stable sort preserves the prefetch's (created_at, id) ASC order on
+    # priority ties, so `_derive_status_from_records`'s oldest-wins tie-break
+    # is unaffected.
+    for records in records_by_equipment.values():
+        records.sort(key=_open_records_sort_key)
+
     result = []
     for area in areas:
         equip_statuses = []
@@ -243,6 +274,7 @@ def get_area_status_dashboard() -> list[dict]:
             equip_statuses.append({
                 'equipment': equip,
                 'status': status,
+                'open_records': equip_records,
             })
 
         result.append({

@@ -273,6 +273,73 @@ class TestGetAreaStatusDashboard:
         area_names = [r['area'].name for r in result]
         assert area_names == ['Electronics Lab', 'Metal Shop', 'Woodshop']
 
+    def test_includes_open_records_list_per_equipment(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        """open_records is a list of non-closed RepairRecord instances."""
+        from esb.models.repair_record import RepairRecord
+
+        area = make_area(name='Shop')
+        eq = make_equipment(name='Tool', area=area)
+        make_repair_record(equipment=eq, status='New', severity='Down', description='one')
+        make_repair_record(equipment=eq, status='In Progress', severity='Degraded', description='two')
+        make_repair_record(equipment=eq, status='Resolved', severity='Down', description='closed')
+
+        result = status_service.get_area_status_dashboard()
+
+        records = result[0]['equipment'][0]['open_records']
+        assert isinstance(records, list)
+        assert len(records) == 2
+        assert all(isinstance(r, RepairRecord) for r in records)
+        descriptions = {r.description for r in records}
+        assert descriptions == {'one', 'two'}
+
+    def test_open_records_sorted_by_severity_then_created_at(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        """Sort key: (severity priority ASC, created_at ASC). Unknown sev folds to Not Sure priority."""
+        from datetime import UTC, datetime
+
+        area = make_area(name='Shop')
+        eq = make_equipment(name='Tool', area=area)
+        make_repair_record(
+            equipment=eq, status='New', severity='Down', description='down',
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        make_repair_record(
+            equipment=eq, status='New', severity='Not Sure', description='notsure',
+            created_at=datetime(2026, 4, 1, tzinfo=UTC),
+        )
+        make_repair_record(
+            equipment=eq, status='New', severity='Degraded', description='degraded',
+            created_at=datetime(2026, 4, 15, tzinfo=UTC),
+        )
+        make_repair_record(
+            equipment=eq, status='New', severity=None, description='nosev',
+            created_at=datetime(2026, 3, 1, tzinfo=UTC),
+        )
+        make_repair_record(
+            equipment=eq, status='New', severity='Critical', description='unknown',
+            created_at=datetime(2026, 2, 1, tzinfo=UTC),
+        )
+
+        result = status_service.get_area_status_dashboard()
+        records = result[0]['equipment'][0]['open_records']
+        descriptions = [r.description for r in records]
+        # Down (priority 0), Degraded (priority 1), then priority 2 tied on
+        # created_at ASC: Critical (Feb), nosev (Mar), Not Sure (Apr).
+        assert descriptions == ['down', 'degraded', 'unknown', 'nosev', 'notsure']
+
+    def test_empty_open_records_list_for_green_equipment(
+        self, app, make_area, make_equipment,
+    ):
+        """Equipment with no open records has open_records == []."""
+        area = make_area(name='Shop')
+        make_equipment(name='Tool', area=area)
+
+        result = status_service.get_area_status_dashboard()
+        assert result[0]['equipment'][0]['open_records'] == []
+
 
 class TestGetEquipmentStatusDetail:
     """Tests for get_equipment_status_detail()."""

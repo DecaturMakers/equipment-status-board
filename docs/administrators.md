@@ -93,6 +93,7 @@ Open `http://localhost:5000` in a browser (or the server's IP/hostname on port 5
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service account JSON key file. Only needed if `STATIC_PAGE_PUSH_METHOD=gcs` and not using instance metadata or Workload Identity. | No | _(empty)_ | `/path/to/service-account.json` |
 | `NEW_RELIC_LICENSE_KEY` | New Relic license key. Enables APM and browser monitoring when set. Leave empty to disable. | No | _(empty)_ | `abc123def456...` |
 | `NEW_RELIC_APP_NAME` | Application name shown in the New Relic dashboard. | No | `Equipment Status Board` | `ESB Production` |
+| `TZ` | IANA timezone name for the worker container. Controls the timezone displayed in the static status page's generation timestamp (sub-heading near top of page) and the year used in the footer. Set this to your local timezone for accurate display. The `worker` service is the only consumer; if you set `TZ` via `.env` it will also propagate to the `app` container (currently unused there) since both services load the same env file. | No | `America/New_York` | `America/Chicago` |
 
 !!! warning
     Always set `SECRET_KEY` to a unique random value in production. The default value is insecure and only suitable for development.
@@ -255,6 +256,8 @@ Set the push method via the `STATIC_PAGE_PUSH_METHOD` environment variable:
 - **`gcs`** — Uploads the static page to a Google Cloud Storage bucket specified by `STATIC_PAGE_PUSH_TARGET`. Uses Google's default credential chain (`GOOGLE_APPLICATION_CREDENTIALS` environment variable, GCE instance metadata, or Workload Identity). When using Docker with a service account key file, add a volume mount for the credentials file in `docker-compose.yml` (e.g., `- ./service-account.json:/app/service-account.json:ro`) and set `GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json`.
 
 The static page is pushed by the background worker whenever it detects a status change during its polling cycle.
+
+The static page's generation timestamp reflects the `worker` container's `TZ` environment variable. The variable resolves against the OS tzdata database (`/usr/share/zoneinfo`), which is provided by the `tzdata` system package. Both the `python:3.14-slim` base image and this image's Dockerfile install list include `tzdata`; do not remove it. To use a non-default zone, set `TZ` in `.env` before running `docker compose up`.
 
 ## New Relic Monitoring (Optional)
 

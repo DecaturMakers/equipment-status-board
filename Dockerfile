@@ -5,10 +5,14 @@ FROM python:3.14-slim
 
 WORKDIR /app
 
-# Install system dependencies for MariaDB client
+# Install system dependencies for MariaDB client.
+# tzdata is a defensive pin: python:3.14-slim already ships it, but pinning
+# guards against future base-image variants dropping the package, which would
+# break the static status page's local-timezone generation timestamp.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libzbar0 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

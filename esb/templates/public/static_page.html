@@ -8,11 +8,13 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #212529; background: #f8f9fa; padding: 1rem; }
-        h1 { font-size: 1.5rem; margin-bottom: 1rem; text-align: center; }
+        h1 { font-size: 1.5rem; margin-bottom: 0.25rem; text-align: center; }
+        .generated-at { text-align: right; font-size: 0.85rem; color: #6c757d; margin-bottom: 1rem; }
         .area { margin-bottom: 1.5rem; }
         .area h2 { font-size: 1.1rem; border-bottom: 2px solid #dee2e6; padding-bottom: 0.3rem; margin-bottom: 0.5rem; }
         .equipment-list { list-style: none; }
-        .equipment-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+        .equipment-item { display: block; padding: 0.25rem 0; }
+        .equipment-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
         .status-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
         .status-green { background-color: #198754; }
         .status-yellow { background-color: #ffc107; }
@@ -21,11 +23,22 @@
         .status-label { font-size: 0.8rem; color: #6c757d; }
         .eta-label { font-size: 0.8rem; color: #6c757d; margin-left: 0.25rem; }
         .no-equipment { color: #6c757d; font-size: 0.9rem; }
-        .footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: #6c757d; }
+        .open-records-list { list-style: none; margin: 0.4rem 0 0.6rem 1.5rem; }
+        .open-record { font-size: 0.85rem; padding: 0.25rem 0.4rem; margin-bottom: 0.2rem; border-left: 3px solid #6c757d; background: #fff; }
+        .open-record-red { border-left-color: #dc3545; }
+        .open-record-yellow { border-left-color: #ffc107; }
+        .open-record-gray { border-left-color: #6c757d; }
+        .record-status { font-weight: 600; }
+        .record-severity { color: #6c757d; }
+        .record-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .record-eta { color: #6c757d; margin-left: 0.25rem; }
+        .site-footer { text-align: center; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #dee2e6; font-size: 0.8rem; color: #6c757d; word-break: break-word; }
+        .site-footer a { color: #6c757d; }
     </style>
 </head>
 <body>
     <h1>Equipment Status</h1>
+    <div class="generated-at">Generated: {{ generated_at }}</div>
     {% for area_data in areas %}
     <div class="area">
         <h2>{{ area_data.area.name }}</h2>
@@ -33,10 +46,28 @@
         <ul class="equipment-list">
             {% for item in area_data.equipment %}
             <li class="equipment-item">
-                <span class="status-dot status-{{ item.status.color }}" aria-hidden="true"></span>
-                <span class="equipment-name">{{ item.equipment.name }}</span>
-                <span class="status-label">{{ item.status.label }}</span>
-                {% if item.status.eta %}<span class="eta-label">ETA: {{ item.status.eta|format_date }}</span>{% endif %}
+                <div class="equipment-row">
+                    <span class="status-dot status-{{ item.status.color }}" aria-hidden="true"></span>
+                    <span class="equipment-name">{{ item.equipment.name }}</span>
+                    <span class="status-label">{{ item.status.label }}</span>
+                    {% if item.status.eta %}<span class="eta-label">ETA: {{ item.status.eta|format_date }}</span>{% endif %}
+                </div>
+                {% if item.status.color != 'green' and item.open_records %}
+                {# The color chain below is intentionally hardcoded against the
+                   three canonical severities, NOT derived from `repair_severities`:
+                   color is a per-severity semantic decision (red/yellow/gray) that
+                   must be made deliberately when a new severity is added to
+                   REPAIR_SEVERITIES. The badge guard `rec.severity in
+                   repair_severities` is auto-derived for the same reason — text
+                   surfacing is safe to extend automatically, color isn't. #}
+                <ul class="open-records-list">
+                    {% for rec in item.open_records %}
+                    <li class="open-record open-record-{{ 'red' if rec.severity == 'Down' else 'yellow' if rec.severity in ('Degraded', 'Not Sure') else 'gray' }}">
+                        <span class="record-status">{{ rec.status }}</span>{% if rec.severity in repair_severities %} <span class="record-severity">[{{ rec.severity }}]</span>{% endif %} <span class="record-description">{{ rec.description }}</span>{% if rec.eta %} <span class="record-eta">ETA: {{ rec.eta|format_date }}</span>{% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
             </li>
             {% endfor %}
         </ul>
@@ -45,8 +76,8 @@
         {% endif %}
     </div>
     {% endfor %}
-    <div class="footer">
-        Generated: {{ generated_at }}
-    </div>
+    <footer class="site-footer" role="contentinfo" aria-label="Site copyright and license">
+        <small>&copy; {{ generated_year }} Jason Antman. <a href="https://github.com/jantman/equipment-status-board" rel="noopener noreferrer" aria-label="Source code on GitHub">github.com/jantman/equipment-status-board</a> <a href="https://opensource.org/license/mit" rel="noopener noreferrer" aria-label="MIT License (opensource.org)">MIT licensed</a>.</small>
+    </footer>
 </body>
 </html>

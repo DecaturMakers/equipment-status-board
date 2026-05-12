@@ -2,8 +2,8 @@
 title: 'Static status page export improvements'
 slug: 'static-status-page-export-improvements'
 created: '2026-05-11'
-status: 'ready-for-dev'
-stepsCompleted: [1, 2, 3, 4]
+status: 'Completed'
+stepsCompleted: [1, 2, 3, 4, 5, 6]
 tech_stack: ['Python 3.14', 'Flask', 'Jinja2', 'pytest', 'Docker (python:3.14-slim, Debian 13 trixie)']
 files_to_modify:
   - 'esb/services/static_page_service.py'
@@ -28,7 +28,22 @@ revision_history:
   - '2026-05-11 — applied real findings from round-2 adversarial review (R2F1–R2F21: 16 applied, 5 deferred as noise)'
   - '2026-05-11 — applied real findings from round-3 adversarial review (R3F1–R3F17: all 17 applied; R3F1 invalidated the R2F1 "load-bearing tzdata" framing, recharacterized as defensive pin)'
   - '2026-05-12 — applied selected round-4 adversarial-review findings (R4F1, R4F2, R4F4, R4F10 applied; R4F3/R4F5/R4F6/R4F7 deferred as low-value polish; R4F8/R4F9 noise). Round-4 reviewer verdict: "spec is mature, ready for fresh dev agent."'
+  - '2026-05-12 — implementation complete. Post-impl adversarial review returned 16 findings; 9 applied (F1, F2, F3, F4, F5, F6, F9, F11, F12), 7 skipped (F7 cosmetic test-name, F8 feature-creep, F10/F16 undecided, F13 audit-only, F14 noise, F15 spec-mandated combined-test). All 1422 tests passing; lint clean.'
 ---
+
+## Review Notes
+
+- Adversarial review completed.
+- Findings: 16 total, 9 fixed, 7 skipped.
+- Resolution approach: auto-fix all "real" findings; skip noise/undecided/feature-creep.
+- Skipped, with rationale:
+  - **F7** — Test name "archived areas and equipment" accurately reflects its two-part body; rename would not add coverage.
+  - **F8** — Startup tzname log line is a feature addition, not a defect fix.
+  - **F10** — Concatenation placement is exactly what the spec mandates; refactor undecided.
+  - **F13** — Audit pass over substring-vs-element assertions already completed; the two real collisions (cases 7, 11) were caught at first test run.
+  - **F14** — Module-level `tzinfo` import is cosmetic.
+  - **F15** — Spec explicitly combined the two archived-exclusion scenarios into one test (Task 4 case 21).
+  - **F16** — Live-vs-static year inconsistency note in admin docs is undecided polish.
 
 # Tech-Spec: Static status page export improvements
 
@@ -147,7 +162,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
 
 ### Tasks
 
-- [ ] **Task 1: Extend `get_area_status_dashboard()` to include sorted per-equipment open repair records.**
+- [x] **Task 1: Extend `get_area_status_dashboard()` to include sorted per-equipment open repair records.**
   - File: `esb/services/status_service.py`
   - Action:
     1. Inside `get_area_status_dashboard()`, after the `records_by_equipment` grouping, add a sort: for each list in `records_by_equipment.values()`, sort in place by `(priority, created_at)`. Helper:
@@ -167,7 +182,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
     3. Update the function's docstring to document the new `open_records` key — list of `RepairRecord` instances, sorted by `(severity priority, created_at)` with unknown severities folded to `Not Sure` priority; ties on those fields preserve the prefetch query's `(created_at, id)` ASC order (stable sort).
   - Notes: Existing live-page templates (`public/status_dashboard.html`, `public/kiosk.html`) and Slack formatters (`esb/slack/forms.py`) iterate `area_data.equipment` but reference only `item.equipment` and `item.status`. The additive key is safe. `get_single_area_status_dashboard()` is **not** changed.
 
-- [ ] **Task 2: Add `_compute_generated_at()` helper and hoist `datetime` import in `static_page_service.py`.**
+- [x] **Task 2: Add `_compute_generated_at()` helper and hoist `datetime` import in `static_page_service.py`.**
   - File: `esb/services/static_page_service.py`
   - Action:
     1. Move `from datetime import UTC, datetime` from inside `generate()` to the module-level imports. Remove the unused `UTC` if not referenced elsewhere.
@@ -214,7 +229,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
        ```
   - Notes: No new external deps. Tests patch `esb.services.static_page_service._compute_generated_at` to inject deterministic timestamps regardless of host TZ.
 
-- [ ] **Task 3: Update `static_page.html` template structure.**
+- [x] **Task 3: Update `static_page.html` template structure.**
   - File: `esb/templates/public/static_page.html`
   - Below is the full intended template (replace the file's contents). Read the existing file first to confirm no other recent edits.
 
@@ -299,7 +314,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
 
   - Key changes vs. previous template: `.equipment-item` becomes `display: block`; the existing dot/name/label/eta row is wrapped in `<div class="equipment-row">`; new `<ul class="open-records-list">` rendered only when equipment is non-green AND has open records; **severity badge guard is `{% if rec.severity in repair_severities %}`** (where `repair_severities = REPAIR_SEVERITIES` from `esb.models.repair_record`, passed via `generate()` context) so unknown/None severities suppress the badge entirely (R3F3) AND a future addition to `REPAIR_SEVERITIES` automatically picks up badge rendering without a template edit (R4F1); old `<div class="footer">Generated: …</div>` replaced by `<footer class="site-footer" role="contentinfo" aria-label="Site copyright and license">` with a `<small>` wrapper and `aria-label` on the GitHub and MIT anchors (mirrors `_footer.html`); new `.generated-at` sub-heading directly under the `<h1>`. The footer uses `generated_year` (local-tz, from `_compute_generated_at()`), NOT `current_year`. The CSP directive is unchanged. Note: the color-class chain `{{ 'red' if rec.severity == 'Down' else 'yellow' if rec.severity in ('Degraded', 'Not Sure') else 'gray' }}` intentionally keeps hardcoded membership — color is a semantic mapping per severity (not derivable from the list alone), so adding a new canonical severity also requires a deliberate color decision in this template.
 
-- [ ] **Task 4: Add tests in `tests/test_services/test_static_page_service.py`.**
+- [x] **Task 4: Add tests in `tests/test_services/test_static_page_service.py`.**
   - File: `tests/test_services/test_static_page_service.py`
   - Add the following tests (inside `class TestGenerate` unless noted). Always pass `equipment=…` explicitly to `make_repair_record` to avoid the fixture auto-creating its own area/equipment.
 
@@ -379,7 +394,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
       - `import re` — case 5.
       - `from esb.services import static_page_service` — cases 2, 3, 4, 5 (the cases that patch helper internals or call them directly; the broader test module already imports it).
 
-- [ ] **Task 5: Add a regression test for the new `open_records` key in `tests/test_services/test_status_service.py`.**
+- [x] **Task 5: Add a regression test for the new `open_records` key in `tests/test_services/test_status_service.py`.**
   - File: `tests/test_services/test_status_service.py`
   - Add (in an existing `TestGetAreaStatusDashboard` class, or create one):
 
@@ -391,12 +406,12 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
 
   - Notes: Verify existing tests still pass — the new key is additive.
 
-- [ ] **Task 6: Configure default TZ in `docker-compose.yml` worker service.**
+- [x] **Task 6: Configure default TZ in `docker-compose.yml` worker service.**
   - File: `docker-compose.yml`
   - Action: In the `worker:` service's `environment:` block, add a new line: `      - TZ=${TZ:-America/New_York}`. Place it adjacent to the existing `PYTHONUNBUFFERED=1` and `WORKER_HEARTBEAT_PATH=…` entries.
   - Notes: The `${TZ:-America/New_York}` syntax means "use the `TZ` env var if set in `.env` or shell, otherwise default to `America/New_York`." This matches the makerspace location (Decatur Makers) while letting other deployments override. The `app` service does **not** need TZ — only the worker calls `generate()`. This is the load-bearing change for the local-tz feature.
 
-- [ ] **Task 7: Document the `TZ` environment variable in `docs/administrators.md`.**
+- [x] **Task 7: Document the `TZ` environment variable in `docs/administrators.md`.**
   - File: `docs/administrators.md`
   - Action: In the Environment Variable Reference table, add a new row:
     ```markdown
@@ -404,7 +419,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
     ```
   - Also add a short paragraph in the "Static Status Page Setup" section: "The static page's generation timestamp reflects the `worker` container's `TZ` environment variable. The variable resolves against the OS tzdata database (`/usr/share/zoneinfo`), which is provided by the `tzdata` system package. Both the `python:3.14-slim` base image and this image's Dockerfile install list include `tzdata`; do not remove it. To use a non-default zone, set `TZ` in `.env` before running `docker compose up`."
 
-- [ ] **Task 8: Add `tzdata` to the Dockerfile as a defensive dependency pin.**
+- [x] **Task 8: Add `tzdata` to the Dockerfile as a defensive dependency pin.**
   - File: `Dockerfile`
   - Action: In the existing `apt-get install` line, add `tzdata` alongside `gcc` and `libzbar0`:
     ```dockerfile
@@ -416,7 +431,7 @@ Update `static_page_service.generate()` to pass through (a) the open repair reco
     ```
   - Notes: **This is a defensive dependency pin, NOT a fix for a current bug.** The `python:3.14-slim` base image (Debian 13 trixie) already ships `tzdata` by default — verified via `docker run --rm python:3.14-slim dpkg -l tzdata` showing `tzdata 2026a-0+deb13u1`. With the base image as-is, `TZ=America/New_York` already resolves correctly. The explicit install guarantees `tzdata` remains in the image if a future base-image variant ever drops the package (or if a Debian repository retraction makes it disappear). `apt-get install -y --no-install-recommends` is fully non-interactive on Debian trixie without needing `DEBIAN_FRONTEND=noninteractive`.
 
-- [ ] **Task 9: Run lint and full test suite.**
+- [x] **Task 9: Run lint and full test suite.**
   - Commands: `make lint` then `make test`.
   - Expected: All green. Existing test `test_includes_generated_timestamp` was updated in Task 4 case 24; `test_produces_self_contained_html` continues to pass; existing `test_includes_csp_meta_tag` is replaced/strengthened per Task 4 case 18. The full suite covers Slack formatter tests (`tests/test_slack/`) which exercise consumers of `get_area_status_dashboard()` — confirms no regression.
 
