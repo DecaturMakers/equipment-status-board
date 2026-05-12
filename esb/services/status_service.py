@@ -206,8 +206,8 @@ def get_area_status_dashboard() -> list[dict]:
     each equipment item, sorted by ``(severity priority ASC, created_at ASC)``.
     Unknown severities and ``None`` fold to the ``Not Sure`` priority (matching
     the equipment-level status fallback). Ties on those fields preserve the
-    prefetch query's ``(created_at, id) ASC`` order (Python's ``list.sort()``
-    is stable).
+    prefetch query's ``(created_at, id) ASC`` order (Python's ``sorted()`` is
+    stable).
     """
     areas = (
         db.session.execute(

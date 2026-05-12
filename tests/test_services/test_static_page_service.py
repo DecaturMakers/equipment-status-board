@@ -156,7 +156,12 @@ class TestGenerate:
             html = static_page_service.generate()
 
         assert 'Generated: 2026-05-11 14:32:15 EDT' in html
-        assert '2026' in html
+        # Scope the year check to <footer> with the entity prefix so a regression
+        # to a wrong footer year isn't masked by the timestamp's '2026'.
+        footer_start = html.find('<footer class="site-footer"')
+        footer_end = html.find('</footer>', footer_start)
+        assert footer_start != -1 and footer_end != -1
+        assert '&copy; 2026 Jason Antman' in html[footer_start:footer_end]
 
     def test_compute_generated_at_formats_tzname(self, app):
         """_compute_generated_at() formats datetime + tzname correctly."""
