@@ -58,6 +58,9 @@ services:
       # of sync with the healthcheck command below. `environment:` overrides
       # any value coming from env_file, so this is authoritative.
       - WORKER_HEARTBEAT_PATH=/tmp/worker_heartbeat
+      # Local timezone for the static status page's "Generated:" timestamp
+      # and footer year. Override via TZ in .env for non-default deployments.
+      - TZ=${TZ:-America/New_York}
     healthcheck:
       # The worker writes /tmp/worker_heartbeat at startup, after each DB poll
       # returns, and after each individual notification is processed. If that

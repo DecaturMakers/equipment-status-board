@@ -2,12 +2,37 @@
 
 import logging
 import os
+from datetime import datetime
 
 from flask import current_app, render_template
 
 from esb.utils.logging import log_mutation
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_generated_at() -> tuple[str, int]:
+    """Compute the generation timestamp string and year in the system's local timezone.
+
+    Returns:
+        (timestamp_str, year) where timestamp_str is formatted like
+        '2026-05-11 14:32:15 EDT'. year is the local-tz year of the
+        same instant (datetime.astimezone() returns a datetime whose
+        .year reflects the converted zone, not the source UTC year).
+
+    Raises:
+        RuntimeError: if the local timezone has no resolvable tzname
+            (indicates the runtime is missing tzdata, e.g. a stripped
+            Docker image). The Dockerfile pins tzdata; this guard is
+            defense-in-depth against future image-content drift.
+    """
+    dt = datetime.now().astimezone()
+    tzname = dt.tzname()
+    if not tzname:
+        raise RuntimeError(
+            "Local timezone has no resolvable tzname; tzdata may be missing."
+        )
+    return (dt.strftime('%Y-%m-%d %H:%M:%S ') + tzname, dt.year)
 
 
 def generate() -> str:
@@ -19,13 +44,18 @@ def generate() -> str:
     Returns:
         Rendered HTML string (self-contained, no external dependencies).
     """
-    from datetime import UTC, datetime
-
+    from esb.models.repair_record import REPAIR_SEVERITIES
     from esb.services import status_service
 
     areas = status_service.get_area_status_dashboard()
-    generated_at = datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')
-    return render_template('public/static_page.html', areas=areas, generated_at=generated_at)
+    generated_at, generated_year = _compute_generated_at()
+    return render_template(
+        'public/static_page.html',
+        areas=areas,
+        generated_at=generated_at,
+        generated_year=generated_year,
+        repair_severities=REPAIR_SEVERITIES,
+    )
 
 
 def push(html_content: str) -> None:
