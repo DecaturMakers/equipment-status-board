@@ -524,6 +524,27 @@ class TestFormatStatusSummary:
         from esb.slack.forms import format_status_summary
         assert format_status_summary([]) == 'No equipment has been registered yet.'
 
+    def test_format_status_summary_respects_area_sort_order(
+        self, app, make_area, make_equipment,
+    ):
+        """Per-area lines follow (sort_order, name) ordering."""
+        from esb.services import status_service
+        from esb.slack.forms import format_status_summary
+
+        area_a = make_area('Area A', '#a', sort_order=10)
+        area_b = make_area('Area B', '#b', sort_order=5)
+        area_c = make_area('Area C', '#c', sort_order=5)
+        make_equipment('Tool A', 'X', 'M', area=area_a)
+        make_equipment('Tool B', 'X', 'M', area=area_b)
+        make_equipment('Tool C', 'X', 'M', area=area_c)
+
+        summary = format_status_summary(status_service.get_area_status_dashboard())
+        pos_b = summary.find('Area B')
+        pos_c = summary.find('Area C')
+        pos_a = summary.find('Area A')
+        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, summary
+        assert pos_b < pos_c < pos_a
+
 
 class TestFormatAreaStatusDetail:
     """Tests for format_area_status_detail()."""
@@ -606,23 +627,30 @@ class TestBuildRepairDispatcherModal:
         assert block['element']['action_id'] == 'repair_select'
         assert block['element']['type'] == 'static_select'
 
-    def test_option_groups_by_area_sorted_alphabetically(self, app, make_area, make_equipment, make_repair_record):
-        """AC 31: areas are presented alphabetically across groups."""
+    def test_option_groups_by_area_sorted_by_sort_order_then_name(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        """Area groups across the dispatcher modal follow (sort_order, name)."""
         from esb.services import repair_service
         from esb.slack.forms import build_repair_dispatcher_modal
 
-        zoo = make_area('Zoo', '#zoo')
-        alpha = make_area('Alpha', '#alpha')
-        zeq = make_equipment('Z-tool', 'X', 'M', area=zoo)
-        aeq = make_equipment('A-tool', 'X', 'M', area=alpha)
-        make_repair_record(equipment=zeq, status='New', severity='Down', description='z')
-        make_repair_record(equipment=aeq, status='New', severity='Down', description='a')
+        # Mixed sort_order so the result distinguishes (sort_order, name)
+        # from a plain alphabetical sort.
+        area_a = make_area('A', '#a', sort_order=10)
+        area_b = make_area('B', '#b', sort_order=5)
+        area_c = make_area('C', '#c', sort_order=5)
+        eq_a = make_equipment('A-tool', 'X', 'M', area=area_a)
+        eq_b = make_equipment('B-tool', 'X', 'M', area=area_b)
+        eq_c = make_equipment('C-tool', 'X', 'M', area=area_c)
+        make_repair_record(equipment=eq_a, status='New', severity='Down', description='a')
+        make_repair_record(equipment=eq_b, status='New', severity='Down', description='b')
+        make_repair_record(equipment=eq_c, status='New', severity='Down', description='c')
 
         records = repair_service.get_repair_queue()
         modal = build_repair_dispatcher_modal(records)
         groups = modal['blocks'][0]['element']['option_groups']
         labels = [g['label']['text'] for g in groups]
-        assert labels == ['Alpha', 'Zoo']
+        assert labels == ['B', 'C', 'A']
 
     def test_within_group_preserves_caller_order(self, app, make_area, make_equipment, make_repair_record):
         """AC 31: within an area group, options preserve the caller's input order

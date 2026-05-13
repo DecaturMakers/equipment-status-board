@@ -16,6 +16,7 @@
         <thead>
             <tr>
                 <th>Name</th>
+                <th>Sort Order</th>
                 <th>Slack Channel</th>
                 <th>Actions</th>
             </tr>
@@ -24,6 +25,7 @@
             {% for area in areas %}
             <tr>
                 <td>{{ area.name }}</td>
+                <td>{{ area.sort_order }}</td>
                 <td>{{ area.slack_channel or '—' }}</td>
                 <td>
                     <a href="{{ url_for('admin.edit_area', id=area.id) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
@@ -42,6 +44,7 @@
         <div class="card-body">
             <h6 class="card-title mb-1">{{ area.name }}</h6>
             <p class="card-text text-muted mb-2">{{ area.slack_channel or '—' }}</p>
+            <p class="card-text text-muted mb-2 small">Sort order: {{ area.sort_order }}</p>
             <a href="{{ url_for('admin.edit_area', id=area.id) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
             <button type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#archiveModal{{ area.id }}">Archive</button>
         </div>

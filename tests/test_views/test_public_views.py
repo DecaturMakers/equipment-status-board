@@ -400,6 +400,26 @@ class TestStatusDashboardView:
         assert 'bg-warning' in html
         assert 'Making odd sounds' in html
 
+    def test_status_dashboard_renders_areas_in_sort_order_then_name(
+        self, client, make_area, make_equipment,
+    ):
+        """Status dashboard renders area sections by (sort_order, name)."""
+        area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
+        area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
+        area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
+        make_equipment(name='Tool A', area=area_a)
+        make_equipment(name='Tool B', area=area_b)
+        make_equipment(name='Tool C', area=area_c)
+
+        resp = client.get('/public/')
+        pos_b = resp.data.find(b'Area B')
+        pos_c = resp.data.find(b'Area C')
+        pos_a = resp.data.find(b'Area A')
+        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, (
+            'one or more area names missing from response'
+        )
+        assert pos_b < pos_c < pos_a
+
 
 class TestKioskView:
     """Tests for the kiosk display route."""
@@ -696,6 +716,26 @@ class TestKioskView:
         assert response.status_code == 200
         html = response.data.decode()
         assert 'js/app.js' in html
+
+    def test_kiosk_renders_areas_in_sort_order_then_name(
+        self, client, make_area, make_equipment,
+    ):
+        """Kiosk renders area sections by (sort_order, name)."""
+        area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
+        area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
+        area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
+        make_equipment(name='Tool A', area=area_a)
+        make_equipment(name='Tool B', area=area_b)
+        make_equipment(name='Tool C', area=area_c)
+
+        resp = client.get('/public/kiosk')
+        pos_b = resp.data.find(b'Area B')
+        pos_c = resp.data.find(b'Area C')
+        pos_a = resp.data.find(b'Area A')
+        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, (
+            'one or more area names missing from response'
+        )
+        assert pos_b < pos_c < pos_a
 
 
 class TestPerAreaKioskView:

@@ -68,6 +68,19 @@ class TestListEquipment:
         resp = tech_client.get('/equipment/')
         assert b'Add Equipment' not in resp.data
 
+    def test_area_filter_dropdown_in_sort_order_then_name(
+        self, staff_client, make_area,
+    ):
+        """The /equipment area filter dropdown options follow (sort_order, name)."""
+        make_area(name='Area A', slack_channel='#a', sort_order=10)
+        make_area(name='Area B', slack_channel='#b', sort_order=5)
+        make_area(name='Area C', slack_channel='#c', sort_order=5)
+
+        resp = staff_client.get('/equipment/')
+        options = re.findall(r'<option[^>]*>([^<]+)</option>', resp.data.decode())
+        area_options = [o for o in options if o in ('Area A', 'Area B', 'Area C')]
+        assert area_options == ['Area B', 'Area C', 'Area A']
+
 
 class TestCreateEquipment:
     """Tests for GET/POST /equipment/new."""
@@ -169,6 +182,20 @@ class TestCreateEquipment:
         resp = client.get('/equipment/new')
         assert resp.status_code == 302
         assert '/auth/login' in resp.headers['Location']
+
+    def test_area_dropdown_in_sort_order_then_name(self, staff_client, make_area):
+        """The /equipment/new area dropdown options follow (sort_order, name)."""
+        make_area(name='Area A', slack_channel='#a', sort_order=10)
+        make_area(name='Area B', slack_channel='#b', sort_order=5)
+        make_area(name='Area C', slack_channel='#c', sort_order=5)
+
+        resp = staff_client.get('/equipment/new')
+        options = re.findall(r'<option[^>]*>([^<]+)</option>', resp.data.decode())
+        area_options = [
+            o for o in options if o not in ('-- Select Area --',)
+            and o.startswith('Area ')
+        ]
+        assert area_options == ['Area B', 'Area C', 'Area A']
 
 
 class TestEquipmentDetail:
@@ -410,6 +437,23 @@ class TestEditEquipment:
         resp = staff_client.get(f'/equipment/{eq.id}/edit')
         assert resp.status_code == 200
         assert b'Edit Equipment' in resp.data
+
+    def test_area_dropdown_in_sort_order_then_name(
+        self, staff_client, make_area, make_equipment,
+    ):
+        """The /equipment/<id>/edit area dropdown follows (sort_order, name)."""
+        area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
+        make_area(name='Area B', slack_channel='#b', sort_order=5)
+        make_area(name='Area C', slack_channel='#c', sort_order=5)
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS', area=area_a)
+
+        resp = staff_client.get(f'/equipment/{eq.id}/edit')
+        options = re.findall(r'<option[^>]*>([^<]+)</option>', resp.data.decode())
+        area_options = [
+            o for o in options if o not in ('-- Select Area --',)
+            and o.startswith('Area ')
+        ]
+        assert area_options == ['Area B', 'Area C', 'Area A']
 
     def test_technician_gets_403(self, tech_client, make_equipment):
         """Technicians cannot access the edit form."""

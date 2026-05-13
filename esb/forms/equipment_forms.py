@@ -6,12 +6,13 @@ from wtforms import (
     BooleanField,
     DateField,
     DecimalField,
+    IntegerField,
     SelectField,
     StringField,
     SubmitField,
     TextAreaField,
 )
-from wtforms.validators import URL, DataRequired, Length, Optional
+from wtforms.validators import URL, DataRequired, Length, NumberRange, Optional
 
 from esb.models.document import DOCUMENT_CATEGORIES
 from esb.services.qr_service import QR_SIZE_PRESETS
@@ -24,6 +25,18 @@ class AreaCreateForm(FlaskForm):
 
     name = StringField('Name', validators=[DataRequired(), Length(max=80)])
     slack_channel = StringField('Slack Channel', validators=[DataRequired(), Length(max=80)])
+    sort_order = IntegerField(
+        'Sort Order',
+        default=0,
+        validators=[
+            Optional(),
+            NumberRange(
+                min=0,
+                max=999999,
+                message='Sort order must be between 0 and 999999.',
+            ),
+        ],
+    )
     submit = SubmitField('Create Area')
 
 
@@ -32,6 +45,18 @@ class AreaEditForm(FlaskForm):
 
     name = StringField('Name', validators=[DataRequired(), Length(max=80)])
     slack_channel = StringField('Slack Channel', validators=[DataRequired(), Length(max=80)])
+    sort_order = IntegerField(
+        'Sort Order',
+        default=0,
+        validators=[
+            Optional(),
+            NumberRange(
+                min=0,
+                max=999999,
+                message='Sort order must be between 0 and 999999.',
+            ),
+        ],
+    )
     submit = SubmitField('Save Changes')
 
 

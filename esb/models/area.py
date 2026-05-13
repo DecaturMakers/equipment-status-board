@@ -14,6 +14,7 @@ class Area(db.Model):
     name = db.Column(db.String(80), unique=True, nullable=False, index=True)
     slack_channel = db.Column(db.String(80), nullable=True)
     is_archived = db.Column(db.Boolean, default=False, nullable=False)
+    sort_order = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
