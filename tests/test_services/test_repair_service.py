@@ -2188,6 +2188,32 @@ class TestDuplicatedRepairId:
         ).scalar_one()
         assert audit.changes['duplicated_repair_id'] == [str(r2.id), None]
 
+    def test_clearing_dup_id_while_status_remains_closed_duplicate_raises(
+        self, app, make_equipment, staff_user,
+    ):
+        """Bug fix: cannot clear dup_id to None while status stays Closed - Duplicate."""
+        eq = make_equipment()
+        target = RepairRecord(equipment_id=eq.id, description='Target', status='In Progress')
+        _db.session.add(target)
+        _db.session.commit()
+        record = RepairRecord(
+            equipment_id=eq.id,
+            description='Existing dup',
+            status='Closed - Duplicate',
+            duplicated_repair_id=target.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        with pytest.raises(ValidationError, match='Closed - Duplicate'):
+            repair_service.update_repair_record(
+                record.id, 'staffuser', author_id=staff_user.id,
+                status='Closed - Duplicate', duplicated_repair_id=None,
+            )
+        _db.session.expire_all()
+        unchanged = _db.session.get(RepairRecord, record.id)
+        assert unchanged.duplicated_repair_id == target.id
+
     def test_legacy_record_unaffected_for_unrelated_edit(
         self, app, make_equipment, staff_user,
     ):

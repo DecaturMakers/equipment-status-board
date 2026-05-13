@@ -392,6 +392,29 @@ class TestEsbUpdateCommand:
         assert modal['callback_id'] == 'repair_update_submission'
         assert modal['private_metadata'] == str(self.record.id)
 
+    def test_modal_status_options_exclude_closed_duplicate(self):
+        """Closed - Duplicate filtered from /esb-update modal: the update flow
+        does not collect a dup target, so setting that status here would always
+        trip the service-layer validation."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.staff_user.email}},
+        }
+        body = {
+            'trigger_id': 'T123',
+            'user_id': 'U123',
+            'channel_id': 'C123',
+            'text': str(self.record.id),
+        }
+
+        self.handlers['command:/esb-update'](ack=ack, body=body, client=client)
+
+        modal = client.views_open.call_args.kwargs['view']
+        status_block = next(b for b in modal['blocks'] if b.get('block_id') == 'status_block')
+        values = [o['value'] for o in status_block['element']['options']]
+        assert 'Closed - Duplicate' not in values
+
     def test_without_id_returns_error(self):
         """5.8: /esb-update without ID returns error message."""
         ack = MagicMock()

@@ -344,8 +344,12 @@ def edit(id):
                 eta=form.eta.data,
                 specialist_description=form.specialist_description.data or None,
                 duplicated_repair_id=(
-                    form.duplicated_repair_id.data
-                    if form.duplicated_repair_id.data != 0
+                    # Force None when status is not Closed - Duplicate so the
+                    # service receives an explicit clear. The JS only toggles
+                    # the dropdown's display -- it does not reset the value --
+                    # so a browser will otherwise POST the stale dup_id.
+                    (form.duplicated_repair_id.data if form.duplicated_repair_id.data != 0 else None)
+                    if form.status.data == 'Closed - Duplicate'
                     else None
                 ),
                 note=form.note.data or None,

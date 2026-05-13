@@ -549,6 +549,18 @@ def update_repair_record(
         raise ValidationError(
             "'Closed - Duplicate' status requires a duplicated_repair_id",
         )
+    # Forbid clearing an existing dup_id to NULL while status stays Closed - Duplicate.
+    # The legacy carve-out (record.duplicated_repair_id is None) is preserved so
+    # legacy rows with NULL dup_id can still be edited for unrelated fields.
+    if (
+        effective_status == 'Closed - Duplicate'
+        and 'duplicated_repair_id' in changes
+        and changes['duplicated_repair_id'] is None
+        and record.duplicated_repair_id is not None
+    ):
+        raise ValidationError(
+            "'Closed - Duplicate' status requires a duplicated_repair_id",
+        )
     if setting_dup_explicit and effective_status != 'Closed - Duplicate':
         raise ValidationError(
             "duplicated_repair_id may only be set when status is 'Closed - Duplicate'",
@@ -565,9 +577,11 @@ def update_repair_record(
                 'Duplicated repair must be on the same equipment',
             )
 
-    # Silent clear when status transitions away from Closed - Duplicate.
-    # Callers must surface a user-visible notice -- see views/repairs.py edit()
-    # and slack/handlers.py handle_repair_action_submission.
+    # Silent clear for callers that pass status but omit duplicated_repair_id
+    # when transitioning away from Closed - Duplicate. The web edit flow does
+    # NOT rely on this path -- it explicitly forces duplicated_repair_id=None
+    # at the view layer so the per-field loop handles the clear deterministically.
+    # This branch protects future callers (CLI, REST) that send a partial update.
     if (
         transitioning_away_from_closed_dup
         and record.duplicated_repair_id is not None
