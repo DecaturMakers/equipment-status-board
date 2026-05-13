@@ -240,7 +240,11 @@ Tasks are ordered by dependency: schema → service → web → Slack → verifi
   - Action: After `list_repair_records` (line 217), add:
     ```python
     def list_duplicate_candidates(repair_record_id: int) -> list[RepairRecord]:
-        """Return same-equipment repair records (excluding self), newest first."""
+        """Return same-equipment repair records (excluding self), newest first.
+
+        Raises:
+            ValidationError: if ``repair_record_id`` does not exist.
+        """
         record = get_repair_record(repair_record_id)
         query = (
             db.select(RepairRecord)
@@ -255,7 +259,7 @@ Tasks are ordered by dependency: schema → service → web → Slack → verifi
 - [ ] **Task 5: Extend `_REPAIR_UPDATABLE_FIELDS` and add validation + timeline entry to `update_repair_record`.**
   - File: `esb/services/repair_service.py`
   - Action:
-    1. Line 22: append `'duplicated_repair_id'` to `_REPAIR_UPDATABLE_FIELDS`.
+    1. Line 22: extend `_REPAIR_UPDATABLE_FIELDS` to include the new field. The constant is a `tuple` (no `.append()` method), so rewrite the literal in place: `_REPAIR_UPDATABLE_FIELDS = ('status', 'severity', 'assignee_id', 'eta', 'specialist_description', 'duplicated_repair_id')`.
     2. In `update_repair_record` (line 470+), after the existing input validations (after line 507, before `note = changes.pop(...)`), insert the validation block per Technical Decisions §3. **Note the transition guards — all rules require `record.status` to differ from `changes['status']` so the web form re-asserting an unchanged status is a no-op (preserves the legacy carve-out):**
        ```python
        effective_status = changes.get('status', record.status)
@@ -310,7 +314,9 @@ Tasks are ordered by dependency: schema → service → web → Slack → verifi
        ```
     3. In the per-field timeline-entry loop (line 519+), add an `elif field_name == 'duplicated_repair_id':` branch emitting `RepairTimelineEntry(repair_record_id=record.id, entry_type='duplicated_repair_id_change', author_id=author_id, author_name=updated_by, old_value=str(old_value) if old_value is not None else None, new_value=str(new_value) if new_value is not None else None)`.
     4. In `esb/models/repair_timeline_entry.py`, append `'duplicated_repair_id_change'` to `TIMELINE_ENTRY_TYPES` (line 7-14). This constant is the authoritative list of legal entry_type values; adding the new type without updating it leaves the constant stale and breaks any future code that validates against it.
-  - Notes: `audit_changes['duplicated_repair_id']` and `log_mutation` flow through automatically because the field is now in `_REPAIR_UPDATABLE_FIELDS`. Place validation BEFORE the unknown-keys check at line 513.
+  - Notes:
+    - `audit_changes['duplicated_repair_id']` and `log_mutation` flow through automatically because the field is now in `_REPAIR_UPDATABLE_FIELDS`.
+    - **Timeline entry ordering when both fields change in one call:** the per-field loop iterates over `_REPAIR_UPDATABLE_FIELDS` in its declared order (`status`, `severity`, `assignee_id`, `eta`, `specialist_description`, `duplicated_repair_id`), so a `status_change` entry is emitted *before* a `duplicated_repair_id_change` entry when both occur in the same `update_repair_record` call. This is deterministic and matches the order users will read the timeline (status first, then duplicate-link change).
 
 - [ ] **Task 6: Service-layer tests.**
   - File: `tests/test_services/test_repair_service.py`
@@ -565,7 +571,7 @@ Tasks are ordered by dependency: schema → service → web → Slack → verifi
 
 - **AC-23** Given an open repair R1 and another R2 on the same equipment, when the action-modal handler is invoked with `action=set_status`, status=`Closed - Duplicate`, and no `duplicate_block.duplicated_repair_id.selected_option`, then `ack` is called with `response_action='errors'` and `errors['duplicate_block']` set to the "Selecting which repair this duplicates is required." string, and `update_repair_record` is NOT called.
 
-- **AC-24** (Stale-modal race) Given an open repair R1, when (a) `build_repair_action_modal(R1)` is called and the resulting view contains an option for R2; (b) R2 is then deleted from the database in another session; (c) the Slack handler is invoked with that view's submitted state (action=`set_status`, status=`Closed - Duplicate`, `duplicate_block.duplicated_repair_id.selected_option.value == str(R2.id)`); then the service raises `ValidationError("Duplicated repair {R2.id} not found")`, the handler calls `ack(response_action='errors', errors={'action_block': <message>})`, R1 is unchanged, and no ephemeral confirmation is posted. (This race is acceptable — the service is the source of truth — but the test asserts the failure surfaces cleanly rather than crashing the handler.)
+- **AC-24** (Stale-modal race) Given an open repair R1, when (a) `build_repair_action_modal(R1)` is called and the resulting view contains an option for R2; (b) R2 is then deleted from the database in another session; (c) the Slack handler is invoked with that view's submitted state (action=`set_status`, status=`Closed - Duplicate`, `duplicate_block.duplicated_repair_id.selected_option.value == str(R2.id)`); then the service raises `ValidationError("Duplicated repair {R2.id} not found")`, the handler calls `ack(response_action='errors', errors={'action_block': "Duplicated repair {R2.id} not found"})`, R1 is unchanged, and no ephemeral confirmation is posted. **User-visible wording note:** the Slack user sees the literal service message (`"Duplicated repair {id} not found"`); the spec does not require a special "this was deleted" copy — the service message is acceptable because the race is rare and the wording is clear enough for a user to retry. The test asserts the failure surfaces cleanly rather than crashing the handler.
 
 **Cross-cutting**
 
