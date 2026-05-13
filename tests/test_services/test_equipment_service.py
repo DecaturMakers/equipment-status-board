@@ -16,7 +16,12 @@ class TestListAreas:
     """Tests for equipment_service.list_areas()."""
 
     def test_returns_active_areas_ordered(self, app, make_area):
-        """list_areas() returns active areas ordered by name."""
+        """list_areas() returns active areas ordered by ``(sort_order, name)``.
+
+        All areas here keep the default ``sort_order=0``, so the alphabetical
+        secondary key drives the result. See
+        ``test_orders_by_sort_order_then_name`` for the compound-order case.
+        """
         from esb.services.equipment_service import list_areas
 
         make_area('Woodshop', '#woodshop')
@@ -27,6 +32,17 @@ class TestListAreas:
         assert len(areas) == 3
         names = [a.name for a in areas]
         assert names == ['Electronics Lab', 'Metal Shop', 'Woodshop']
+
+    def test_orders_by_sort_order_then_name(self, app, make_area):
+        """list_areas() orders by ``(sort_order ASC, name ASC)``."""
+        from esb.services.equipment_service import list_areas
+
+        make_area(name='Area A', slack_channel='#a', sort_order=10)
+        make_area(name='Area B', slack_channel='#b', sort_order=5)
+        make_area(name='Area C', slack_channel='#c', sort_order=5)
+
+        names = [a.name for a in list_areas()]
+        assert names == ['Area B', 'Area C', 'Area A']
 
     def test_excludes_archived_areas(self, app, make_area):
         """list_areas() excludes archived areas."""
@@ -202,6 +218,32 @@ class TestCreateArea:
         with pytest.raises(ValidationError, match='archived area'):
             create_area('Woodshop', '#new', 'staffuser')
 
+    def test_creates_area_with_sort_order(self, app):
+        """create_area() persists an explicit sort_order value."""
+        from esb.services.equipment_service import create_area
+
+        area = create_area('Woodshop', '#woodshop', 'staffuser', sort_order=42)
+        assert area.sort_order == 42
+
+    def test_creates_area_with_default_sort_order(self, app):
+        """create_area() defaults sort_order to 0 when omitted."""
+        from esb.services.equipment_service import create_area
+
+        area = create_area('Woodshop', '#woodshop', 'staffuser')
+        assert area.sort_order == 0
+
+    def test_logs_sort_order_in_created_event(self, app, capture):
+        """create_area() includes sort_order in the area.created mutation event."""
+        from esb.services.equipment_service import create_area
+
+        create_area('Woodshop', '#woodshop', 'staffuser', sort_order=42)
+        created_entries = [
+            json.loads(r.message) for r in capture.records
+            if 'area.created' in r.message
+        ]
+        assert len(created_entries) == 1
+        assert created_entries[0]['data']['sort_order'] == 42
+
 
 class TestUpdateArea:
     """Tests for equipment_service.update_area()."""
@@ -292,6 +334,45 @@ class TestUpdateArea:
 
         with pytest.raises(ValidationError, match='archived area'):
             update_area(area.id, 'Taken Name', '#current', 'staffuser')
+
+    def test_updates_sort_order(self, app, capture, make_area):
+        """update_area() mutates sort_order and logs the change."""
+        from esb.services.equipment_service import update_area
+
+        area = make_area('Area', '#area', sort_order=0)
+        capture.records.clear()
+        update_area(area.id, 'Area', '#area', 'staffuser', sort_order=7)
+        found = _db.session.get(Area, area.id)
+        assert found.sort_order == 7
+
+        updated_entries = [
+            json.loads(r.message) for r in capture.records
+            if 'area.updated' in r.message
+        ]
+        assert len(updated_entries) == 1
+        assert updated_entries[0]['data']['changes']['sort_order'] == [0, 7]
+
+    def test_no_log_when_sort_order_unchanged(self, app, capture, make_area):
+        """update_area() skips mutation log when sort_order is re-saved unchanged."""
+        from esb.services.equipment_service import update_area
+
+        area = make_area('Area', '#area', sort_order=5)
+        capture.records.clear()
+        update_area(area.id, 'Area', '#area', 'staffuser', sort_order=5)
+        updated_entries = [
+            json.loads(r.message) for r in capture.records
+            if 'area.updated' in r.message
+        ]
+        assert len(updated_entries) == 0
+
+    def test_omitted_sort_order_kwarg_preserves_value(self, app, make_area):
+        """Legacy positional update_area() calls do not clobber sort_order."""
+        from esb.services.equipment_service import update_area
+
+        area = make_area('Same Name', '#same', sort_order=5)
+        update_area(area.id, 'Same Name', '#same', 'staffuser')
+        found = _db.session.get(Area, area.id)
+        assert found.sort_order == 5
 
 
 class TestArchiveArea:

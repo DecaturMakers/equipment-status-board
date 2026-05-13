@@ -563,7 +563,8 @@ def build_repair_dispatcher_modal(open_records):
           input order (caller is expected to provide records ordered by
           ``(severity_priority, created_at_asc)`` -- typical
           ``get_repair_queue()`` output).
-        - Across area groups, areas are presented alphabetically (A-Z).
+        - Across area groups, areas are presented by ``(sort_order, name)``
+          ascending, matching the ordering used everywhere else in the app.
 
     Args:
         open_records: Non-empty list of RepairRecord instances with
@@ -573,12 +574,16 @@ def build_repair_dispatcher_modal(open_records):
         Block Kit modal view dict.
     """
     buckets: dict[str, list] = {}
+    area_sort_keys: dict[str, tuple[int, str]] = {}
     for record in open_records:
-        area_name = record.equipment.area.name if record.equipment.area else 'No Area'
+        area = record.equipment.area
+        area_name = area.name if area else 'No Area'
+        sort_order = area.sort_order if area else 0
+        area_sort_keys[area_name] = (sort_order, area_name)
         buckets.setdefault(area_name, []).append(record)
 
     option_groups = []
-    for area_name in sorted(buckets):
+    for area_name in sorted(buckets, key=lambda n: area_sort_keys[n]):
         options = []
         for record in buckets[area_name]:
             label = f'#{record.id} {record.equipment.name} \u2014 {record.status}'

@@ -264,7 +264,12 @@ class TestGetAreaStatusDashboard:
         assert status['label'] == 'Operational'
 
     def test_multiple_areas_sorted_by_name(self, app, make_area, make_equipment):
-        """Areas are returned sorted by name."""
+        """Areas are returned sorted by ``(sort_order, name)``.
+
+        All three areas keep the default ``sort_order=0``, so the secondary
+        ``name ASC`` key drives the result. See
+        ``test_orders_areas_by_sort_order_then_name`` for the compound case.
+        """
         make_area(name='Woodshop')
         make_area(name='Electronics Lab')
         make_area(name='Metal Shop')
@@ -272,6 +277,21 @@ class TestGetAreaStatusDashboard:
         result = status_service.get_area_status_dashboard()
         area_names = [r['area'].name for r in result]
         assert area_names == ['Electronics Lab', 'Metal Shop', 'Woodshop']
+
+    def test_orders_areas_by_sort_order_then_name(
+        self, app, make_area, make_equipment,
+    ):
+        """Areas are ordered by ``(sort_order ASC, name ASC)``."""
+        area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
+        area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
+        area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
+        make_equipment(name='Tool A', area=area_a)
+        make_equipment(name='Tool B', area=area_b)
+        make_equipment(name='Tool C', area=area_c)
+
+        result = status_service.get_area_status_dashboard()
+        area_names = [r['area'].name for r in result]
+        assert area_names == ['Area B', 'Area C', 'Area A']
 
     def test_includes_open_records_list_per_equipment(
         self, app, make_area, make_equipment, make_repair_record,

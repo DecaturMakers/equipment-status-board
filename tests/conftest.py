@@ -74,9 +74,9 @@ def _create_user(role, username=None, password='testpass'):
     return user
 
 
-def _create_area(name='Test Area', slack_channel='#test-area'):
+def _create_area(name='Test Area', slack_channel='#test-area', sort_order=0):
     """Helper to create an area in the test database."""
-    area = Area(name=name, slack_channel=slack_channel)
+    area = Area(name=name, slack_channel=slack_channel, sort_order=sort_order)
     _db.session.add(area)
     _db.session.commit()
     return area

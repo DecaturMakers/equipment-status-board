@@ -20,10 +20,10 @@ from esb.utils.logging import log_mutation
 
 
 def list_areas() -> list[Area]:
-    """Return all active (non-archived) areas ordered by name."""
+    """Return all active (non-archived) areas ordered by ``(sort_order, name)``."""
     return list(
         db.session.execute(
-            db.select(Area).filter_by(is_archived=False).order_by(Area.name)
+            db.select(Area).filter_by(is_archived=False).order_by(Area.sort_order, Area.name)
         ).scalars().all()
     )
 
@@ -68,7 +68,7 @@ def get_area_by_name(name: str | None) -> Area | None:
     ).scalar_one_or_none()
 
 
-def create_area(name: str, slack_channel: str, created_by: str) -> Area:
+def create_area(name: str, slack_channel: str, created_by: str, sort_order: int = 0) -> Area:
     """Create a new area.
 
     Raises:
@@ -82,7 +82,7 @@ def create_area(name: str, slack_channel: str, created_by: str) -> Area:
             raise ValidationError(f'An archived area with name {name!r} already exists')
         raise ValidationError(f'An area with name {name!r} already exists')
 
-    area = Area(name=name, slack_channel=slack_channel)
+    area = Area(name=name, slack_channel=slack_channel, sort_order=sort_order)
     db.session.add(area)
     db.session.commit()
 
@@ -90,12 +90,20 @@ def create_area(name: str, slack_channel: str, created_by: str) -> Area:
         'id': area.id,
         'name': area.name,
         'slack_channel': area.slack_channel,
+        'sort_order': area.sort_order,
     })
 
     return area
 
 
-def update_area(area_id: int, name: str, slack_channel: str, updated_by: str) -> Area:
+def update_area(
+    area_id: int,
+    name: str,
+    slack_channel: str,
+    updated_by: str,
+    *,
+    sort_order: int | None = None,
+) -> Area:
     """Update an area.
 
     Raises:
@@ -123,6 +131,10 @@ def update_area(area_id: int, name: str, slack_channel: str, updated_by: str) ->
     if area.slack_channel != slack_channel:
         changes['slack_channel'] = [area.slack_channel, slack_channel]
         area.slack_channel = slack_channel
+    if sort_order is not None:
+        if area.sort_order != sort_order:
+            changes['sort_order'] = [area.sort_order, sort_order]
+            area.sort_order = sort_order
 
     db.session.commit()
 

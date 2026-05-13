@@ -1,6 +1,7 @@
 """Tests for admin views (user management, area management)."""
 
 import json
+import re
 from unittest.mock import MagicMock, patch
 
 from esb.extensions import db as _db
@@ -585,6 +586,33 @@ class TestListAreas:
         resp = staff_client.get('/admin/areas')
         assert b'/admin/users' in resp.data
 
+    def test_table_shows_sort_order_column(self, staff_client, staff_user, make_area):
+        """Areas list shows the Sort Order column and value."""
+        make_area(name='Woodshop', slack_channel='#woodshop', sort_order=7)
+        resp = staff_client.get('/admin/areas')
+        assert b'Sort Order' in resp.data
+        # Match the Woodshop row's sort_order cell, anchored on the row text
+        # so the assertion isn't satisfied by a stray '7' elsewhere on the page.
+        row_match = re.search(
+            rb'<tr>\s*<td>Woodshop</td>\s*<td>7</td>',
+            resp.data,
+        )
+        assert row_match is not None, resp.data
+
+    def test_areas_listed_in_sort_order_then_name(
+        self, staff_client, staff_user, make_area,
+    ):
+        """Areas in the admin list are ordered by (sort_order, name)."""
+        make_area(name='Area A', slack_channel='#a', sort_order=10)
+        make_area(name='Area B', slack_channel='#b', sort_order=5)
+        make_area(name='Area C', slack_channel='#c', sort_order=5)
+        resp = staff_client.get('/admin/areas')
+        pos_b = resp.data.find(b'Area B')
+        pos_c = resp.data.find(b'Area C')
+        pos_a = resp.data.find(b'Area A')
+        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, resp.data
+        assert pos_b < pos_c < pos_a
+
 
 class TestCreateAreaForm:
     """Tests for GET /admin/areas/new."""
@@ -655,6 +683,79 @@ class TestCreateAreaPost:
         }, follow_redirects=True)
         assert b'Area created successfully' in resp.data
 
+    def test_creates_area_with_sort_order(self, staff_client, staff_user):
+        """POST with sort_order persists the value."""
+        resp = staff_client.post('/admin/areas/new', data={
+            'name': 'X',
+            'slack_channel': '#x',
+            'sort_order': '7',
+        })
+        assert resp.status_code == 302
+        area = _db.session.execute(
+            _db.select(Area).filter_by(name='X')
+        ).scalar_one_or_none()
+        assert area is not None
+        assert area.sort_order == 7
+
+    def test_creates_area_with_empty_sort_order_defaults_to_zero(
+        self, staff_client, staff_user,
+    ):
+        """POST with empty sort_order resolves to 0 (covers AC 10)."""
+        resp = staff_client.post('/admin/areas/new', data={
+            'name': 'X',
+            'slack_channel': '#x',
+            'sort_order': '',
+        })
+        assert resp.status_code == 302
+        area = _db.session.execute(
+            _db.select(Area).filter_by(name='X')
+        ).scalar_one_or_none()
+        assert area is not None
+        assert area.sort_order == 0
+
+    def test_creates_area_rejects_negative_sort_order(
+        self, staff_client, staff_user,
+    ):
+        """POST with negative sort_order re-renders with validation error (AC 6)."""
+        resp = staff_client.post('/admin/areas/new', data={
+            'name': 'X',
+            'slack_channel': '#x',
+            'sort_order': '-3',
+        })
+        assert resp.status_code == 200
+        assert b'Sort order must be between 0 and 999999.' in resp.data
+        rows = _db.session.execute(_db.select(Area)).all()
+        assert rows == []
+
+    def test_creates_area_rejects_over_max_sort_order(
+        self, staff_client, staff_user,
+    ):
+        """POST with sort_order over max re-renders with validation error (AC 6)."""
+        resp = staff_client.post('/admin/areas/new', data={
+            'name': 'X',
+            'slack_channel': '#x',
+            'sort_order': '1000000',
+        })
+        assert resp.status_code == 200
+        assert b'Sort order must be between 0 and 999999.' in resp.data
+        rows = _db.session.execute(_db.select(Area)).all()
+        assert rows == []
+
+    def test_creates_area_rejects_non_integer_sort_order(
+        self, staff_client, staff_user,
+    ):
+        """POST with non-integer sort_order re-renders with both validation errors (AC 6)."""
+        resp = staff_client.post('/admin/areas/new', data={
+            'name': 'X',
+            'slack_channel': '#x',
+            'sort_order': 'abc',
+        })
+        assert resp.status_code == 200
+        assert b'Not a valid integer value.' in resp.data
+        assert b'Sort order must be between 0 and 999999.' in resp.data
+        rows = _db.session.execute(_db.select(Area)).all()
+        assert rows == []
+
 
 class TestEditArea:
     """Tests for GET/POST /admin/areas/<id>/edit."""
@@ -667,6 +768,22 @@ class TestEditArea:
         assert b'Edit Area' in resp.data
         assert b'Woodshop' in resp.data
         assert b'#woodshop' in resp.data
+        assert b'Sort Order' in resp.data
+        match = re.search(rb'<input [^>]*name="sort_order"[^>]*>', resp.data)
+        assert match is not None
+        assert b'value="0"' in match.group(0)
+
+    def test_updates_sort_order(self, staff_client, staff_user, make_area):
+        """POST edit with new sort_order persists the value."""
+        area = make_area('Area', '#area', sort_order=0)
+        resp = staff_client.post(f'/admin/areas/{area.id}/edit', data={
+            'name': 'Area',
+            'slack_channel': '#area',
+            'sort_order': '12',
+        })
+        assert resp.status_code == 302
+        updated = _db.session.get(Area, area.id)
+        assert updated.sort_order == 12
 
     def test_updates_area_with_valid_data(self, staff_client, staff_user, make_area):
         """Valid edit submission updates area and redirects."""
@@ -759,6 +876,15 @@ class TestArchiveArea:
         resp = client.post('/admin/areas/1/archive')
         assert resp.status_code == 302
         assert '/auth/login' in resp.headers['Location']
+
+    def test_archive_preserves_sort_order(self, staff_client, staff_user, make_area):
+        """Archiving an area does not clear its sort_order value."""
+        area = make_area('Woodshop', '#woodshop', sort_order=5)
+        resp = staff_client.post(f'/admin/areas/{area.id}/archive')
+        assert resp.status_code == 302
+        found = _db.session.get(Area, area.id)
+        assert found.is_archived is True
+        assert found.sort_order == 5
 
 
 class TestAppConfig:
@@ -971,3 +1097,40 @@ class TestAreaMutationLogging:
         assert entry['event'] == 'area.archived'
         assert entry['user'] == 'staffuser'
         assert entry['data']['name'] == 'Woodshop'
+
+    def test_sort_order_change_logged(self, staff_client, staff_user, capture, make_area):
+        """Editing sort_order logs the change in the area.updated payload."""
+        area = make_area('Area', '#area', sort_order=0)
+        capture.records.clear()
+        staff_client.post(f'/admin/areas/{area.id}/edit', data={
+            'name': 'Area',
+            'slack_channel': '#area',
+            'sort_order': '4',
+        })
+        updated_entries = [
+            json.loads(r.message) for r in capture.records
+            if 'area.updated' in r.message
+        ]
+        assert len(updated_entries) == 1
+        assert updated_entries[0]['data']['changes']['sort_order'] == [0, 4]
+
+    def test_no_log_when_sort_order_unchanged(
+        self, staff_client, staff_user, capture, make_area,
+    ):
+        """Re-saving the same sort_order emits no area.updated entry."""
+        # Cover both the non-zero->non-zero and zero->zero cases.
+        for initial in (5, 0):
+            area = make_area(
+                f'Area {initial}', f'#area-{initial}', sort_order=initial,
+            )
+            capture.records.clear()
+            staff_client.post(f'/admin/areas/{area.id}/edit', data={
+                'name': f'Area {initial}',
+                'slack_channel': f'#area-{initial}',
+                'sort_order': str(initial),
+            })
+            updated_entries = [
+                json.loads(r.message) for r in capture.records
+                if 'area.updated' in r.message
+            ]
+            assert updated_entries == [], (initial, updated_entries)

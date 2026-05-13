@@ -552,6 +552,26 @@ class TestGenerate:
         i_b_issue = html.find('b-issue')
         assert -1 < i_a < i_a_issue < i_b < i_b_issue
 
+    def test_generate_orders_areas_by_sort_order_then_name(
+        self, app, make_area, make_equipment,
+    ):
+        """Static export renders area sections by (sort_order, name)."""
+        area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
+        area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
+        area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
+        make_equipment(name='Tool A', area=area_a)
+        make_equipment(name='Tool B', area=area_b)
+        make_equipment(name='Tool C', area=area_c)
+
+        html = static_page_service.generate()
+        pos_b = html.find('Area B')
+        pos_c = html.find('Area C')
+        pos_a = html.find('Area A')
+        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, (
+            'area names missing from rendered HTML'
+        )
+        assert pos_b < pos_c < pos_a
+
 
 class TestPushLocal:
     """Tests for push() with method='local'."""

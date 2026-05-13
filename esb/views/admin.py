@@ -175,11 +175,13 @@ def create_area():
     """Area creation form and handler."""
     form = AreaCreateForm()
     if form.validate_on_submit():
+        sort_order_value = form.sort_order.data if form.sort_order.data is not None else 0
         try:
             equipment_service.create_area(
                 name=form.name.data,
                 slack_channel=form.slack_channel.data,
                 created_by=current_user.username,
+                sort_order=sort_order_value,
             )
         except ValidationError as e:
             flash(str(e), 'danger')
@@ -203,12 +205,14 @@ def edit_area(id):
 
     form = AreaEditForm(obj=area)
     if form.validate_on_submit():
+        sort_order_value = form.sort_order.data if form.sort_order.data is not None else 0
         try:
             equipment_service.update_area(
                 area_id=id,
                 name=form.name.data,
                 slack_channel=form.slack_channel.data,
                 updated_by=current_user.username,
+                sort_order=sort_order_value,
             )
         except ValidationError as e:
             flash(str(e), 'danger')

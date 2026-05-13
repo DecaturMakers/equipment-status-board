@@ -400,6 +400,29 @@ class TestStatusDashboardView:
         assert 'bg-warning' in html
         assert 'Making odd sounds' in html
 
+    def test_status_dashboard_renders_areas_in_sort_order_then_name(
+        self, client, make_area, make_equipment,
+    ):
+        """Status dashboard renders area sections by (sort_order, name).
+
+        Anchored to the ``<h2 class="h4 mb-3">…</h2>`` section headings so
+        the assertion isn't satisfied by the Kiosk View dropdown (which
+        also lists area names earlier on the page).
+        """
+        area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
+        area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
+        area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
+        make_equipment(name='Tool A', area=area_a)
+        make_equipment(name='Tool B', area=area_b)
+        make_equipment(name='Tool C', area=area_c)
+
+        resp = client.get('/public/')
+        section_headings = re.findall(
+            r'<h2 class="h4 mb-3">([^<]+)</h2>',
+            resp.data.decode(),
+        )
+        assert section_headings == ['Area B', 'Area C', 'Area A']
+
 
 class TestKioskView:
     """Tests for the kiosk display route."""
@@ -696,6 +719,29 @@ class TestKioskView:
         assert response.status_code == 200
         html = response.data.decode()
         assert 'js/app.js' in html
+
+    def test_kiosk_renders_areas_in_sort_order_then_name(
+        self, client, make_area, make_equipment,
+    ):
+        """Kiosk renders area sections by (sort_order, name).
+
+        Anchored to the ``<h2 class="kiosk-area-heading ...">…</h2>`` per-area
+        section headings so the assertion measures section order, not raw
+        substring position.
+        """
+        area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
+        area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
+        area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
+        make_equipment(name='Tool A', area=area_a)
+        make_equipment(name='Tool B', area=area_b)
+        make_equipment(name='Tool C', area=area_c)
+
+        resp = client.get('/public/kiosk')
+        section_headings = re.findall(
+            r'<h2 class="kiosk-area-heading[^"]*">([^<]+)</h2>',
+            resp.data.decode(),
+        )
+        assert section_headings == ['Area B', 'Area C', 'Area A']
 
 
 class TestPerAreaKioskView:

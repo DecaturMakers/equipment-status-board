@@ -213,7 +213,7 @@ def get_area_status_dashboard() -> list[dict]:
         db.session.execute(
             db.select(Area)
             .filter(Area.is_archived.is_(False))
-            .order_by(Area.name)
+            .order_by(Area.sort_order, Area.name)
         )
         .scalars()
         .all()

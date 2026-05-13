@@ -734,6 +734,19 @@ class TestRepairQueue:
         sortable_ths = re.findall(rb'<th[^>]*\bdata-sort=', resp.data)
         assert len(sortable_ths) == 6
 
+    def test_area_filter_dropdown_in_sort_order_then_name(
+        self, tech_client, make_area,
+    ):
+        """The /repairs/queue area filter follows (sort_order, name)."""
+        make_area(name='Area A', slack_channel='#a', sort_order=10)
+        make_area(name='Area B', slack_channel='#b', sort_order=5)
+        make_area(name='Area C', slack_channel='#c', sort_order=5)
+
+        resp = tech_client.get('/repairs/queue')
+        options = re.findall(r'<option[^>]*>([^<]+)</option>', resp.data.decode())
+        area_options = [o for o in options if o.startswith('Area ')]
+        assert area_options == ['Area B', 'Area C', 'Area A']
+
 
 class TestKanbanBoard:
     """Tests for GET /repairs/kanban and Kanban-related behavior."""
