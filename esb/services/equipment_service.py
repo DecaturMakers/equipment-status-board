@@ -82,7 +82,6 @@ def create_area(name: str, slack_channel: str, created_by: str, sort_order: int 
             raise ValidationError(f'An archived area with name {name!r} already exists')
         raise ValidationError(f'An area with name {name!r} already exists')
 
-    sort_order = int(sort_order)
     area = Area(name=name, slack_channel=slack_channel, sort_order=sort_order)
     db.session.add(area)
     db.session.commit()
@@ -133,7 +132,6 @@ def update_area(
         changes['slack_channel'] = [area.slack_channel, slack_channel]
         area.slack_channel = slack_channel
     if sort_order is not None:
-        sort_order = int(sort_order)
         if area.sort_order != sort_order:
             changes['sort_order'] = [area.sort_order, sort_order]
             area.sort_order = sort_order
