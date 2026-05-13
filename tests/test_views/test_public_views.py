@@ -403,7 +403,12 @@ class TestStatusDashboardView:
     def test_status_dashboard_renders_areas_in_sort_order_then_name(
         self, client, make_area, make_equipment,
     ):
-        """Status dashboard renders area sections by (sort_order, name)."""
+        """Status dashboard renders area sections by (sort_order, name).
+
+        Anchored to the ``<h2 class="h4 mb-3">…</h2>`` section headings so
+        the assertion isn't satisfied by the Kiosk View dropdown (which
+        also lists area names earlier on the page).
+        """
         area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
         area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
         area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
@@ -412,13 +417,11 @@ class TestStatusDashboardView:
         make_equipment(name='Tool C', area=area_c)
 
         resp = client.get('/public/')
-        pos_b = resp.data.find(b'Area B')
-        pos_c = resp.data.find(b'Area C')
-        pos_a = resp.data.find(b'Area A')
-        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, (
-            'one or more area names missing from response'
+        section_headings = re.findall(
+            r'<h2 class="h4 mb-3">([^<]+)</h2>',
+            resp.data.decode(),
         )
-        assert pos_b < pos_c < pos_a
+        assert section_headings == ['Area B', 'Area C', 'Area A']
 
 
 class TestKioskView:
@@ -720,7 +723,12 @@ class TestKioskView:
     def test_kiosk_renders_areas_in_sort_order_then_name(
         self, client, make_area, make_equipment,
     ):
-        """Kiosk renders area sections by (sort_order, name)."""
+        """Kiosk renders area sections by (sort_order, name).
+
+        Anchored to the ``<h2 class="kiosk-area-heading ...">…</h2>`` per-area
+        section headings so the assertion measures section order, not raw
+        substring position.
+        """
         area_a = make_area(name='Area A', slack_channel='#a', sort_order=10)
         area_b = make_area(name='Area B', slack_channel='#b', sort_order=5)
         area_c = make_area(name='Area C', slack_channel='#c', sort_order=5)
@@ -729,13 +737,11 @@ class TestKioskView:
         make_equipment(name='Tool C', area=area_c)
 
         resp = client.get('/public/kiosk')
-        pos_b = resp.data.find(b'Area B')
-        pos_c = resp.data.find(b'Area C')
-        pos_a = resp.data.find(b'Area A')
-        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, (
-            'one or more area names missing from response'
+        section_headings = re.findall(
+            r'<h2 class="kiosk-area-heading[^"]*">([^<]+)</h2>',
+            resp.data.decode(),
         )
-        assert pos_b < pos_c < pos_a
+        assert section_headings == ['Area B', 'Area C', 'Area A']
 
 
 class TestPerAreaKioskView:
