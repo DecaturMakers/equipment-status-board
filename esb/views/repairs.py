@@ -305,15 +305,34 @@ def edit(id):
         (u.id, u.username) for u in users
     ]
 
+    candidates = repair_service.list_duplicate_candidates(id)
+
+    def _candidate_label(c):
+        prefix = f'#{c.id} [{c.status}] '
+        budget = 75 - len(prefix)
+        if len(c.description) <= budget:
+            return prefix + c.description
+        return prefix + c.description[: max(0, budget - 1)].rstrip() + '…'
+
+    form.duplicated_repair_id.choices = [(0, '-- Select duplicate of --')] + [
+        (c.id, _candidate_label(c)) for c in candidates
+    ]
+
     if request.method == 'GET':
         form.status.data = record.status
         form.severity.data = record.severity or ''
         form.assignee_id.data = record.assignee_id or 0
         form.eta.data = record.eta
         form.specialist_description.data = record.specialist_description or ''
+        form.duplicated_repair_id.data = record.duplicated_repair_id or 0
         form.note.data = ''
 
     if form.validate_on_submit():
+        had_dup_link = (
+            record.status == 'Closed - Duplicate'
+            and record.duplicated_repair_id is not None
+        )
+        target_status = form.status.data
         try:
             repair_service.update_repair_record(
                 repair_record_id=id,
@@ -324,12 +343,26 @@ def edit(id):
                 assignee_id=form.assignee_id.data if form.assignee_id.data != 0 else None,
                 eta=form.eta.data,
                 specialist_description=form.specialist_description.data or None,
+                duplicated_repair_id=(
+                    # Force None when status is not Closed - Duplicate so the
+                    # service receives an explicit clear. The JS only toggles
+                    # the dropdown's display -- it does not reset the value --
+                    # so a browser will otherwise POST the stale dup_id.
+                    (form.duplicated_repair_id.data if form.duplicated_repair_id.data != 0 else None)
+                    if form.status.data == 'Closed - Duplicate'
+                    else None
+                ),
                 note=form.note.data or None,
             )
         except ValidationError as e:
             flash(str(e), 'danger')
             return render_template('repairs/edit.html', form=form, record=record)
 
+        if had_dup_link and target_status != 'Closed - Duplicate':
+            flash(
+                'Duplicate link cleared because status changed away from "Closed - Duplicate".',
+                'info',
+            )
         flash('Repair record updated successfully.', 'success')
         return redirect(url_for('repairs.detail', id=id))
 

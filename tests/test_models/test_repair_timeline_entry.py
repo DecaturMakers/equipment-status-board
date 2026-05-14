@@ -115,4 +115,5 @@ class TestTimelineEntryConstants:
         assert 'creation' in TIMELINE_ENTRY_TYPES
         assert 'note' in TIMELINE_ENTRY_TYPES
         assert 'status_change' in TIMELINE_ENTRY_TYPES
-        assert len(TIMELINE_ENTRY_TYPES) == 6
+        assert 'duplicated_repair_id_change' in TIMELINE_ENTRY_TYPES
+        assert len(TIMELINE_ENTRY_TYPES) == 7

@@ -406,7 +406,7 @@ def build_repair_create_modal(equipment_options, user_options, preselected_equip
             },
             'options': [
                 {'text': {'type': 'plain_text', 'text': s}, 'value': s}
-                for s in REPAIR_STATUSES
+                for s in REPAIR_STATUSES if s != 'Closed - Duplicate'
             ],
         },
         'label': {'type': 'plain_text', 'text': 'Status'},
@@ -637,10 +637,22 @@ def build_repair_action_modal(repair_record):
     Returns:
         Block Kit modal view dict; ``private_metadata`` carries the id.
     """
+    from esb.services import repair_service  # local: avoid module-level cycle
+
+    candidates = repair_service.list_duplicate_candidates(repair_record.id)
+
     equipment = repair_record.equipment
     area_name = equipment.area.name if equipment and equipment.area else 'No Area'
     equipment_name = equipment.name if equipment else 'Unknown'
     severity_label = repair_record.severity or '\u2014'
+
+    status_options = [
+        ('In Progress', 'In Progress'),
+        ('Closed - Duplicate', 'Closed - Duplicate'),
+        ('Closed - No Issue Found', 'Closed - No Issue Found'),
+    ]
+    if not candidates:
+        status_options = [opt for opt in status_options if opt[0] != 'Closed - Duplicate']
 
     blocks = [
         {
@@ -696,9 +708,8 @@ def build_repair_action_modal(repair_record):
             'action_id': 'status',
             'placeholder': {'type': 'plain_text', 'text': 'Select a status'},
             'options': [
-                {'text': {'type': 'plain_text', 'text': 'In Progress'}, 'value': 'In Progress'},
-                {'text': {'type': 'plain_text', 'text': 'Closed - Duplicate'}, 'value': 'Closed - Duplicate'},
-                {'text': {'type': 'plain_text', 'text': 'Closed - No Issue Found'}, 'value': 'Closed - No Issue Found'},
+                {'text': {'type': 'plain_text', 'text': label}, 'value': value}
+                for value, label in status_options
             ],
         },
         'label': {'type': 'plain_text', 'text': "New Status (used when 'Set Status' chosen)"},
@@ -716,6 +727,34 @@ def build_repair_action_modal(repair_record):
         },
         'label': {'type': 'plain_text', 'text': 'Note (required when resolving)'},
     })
+
+    if candidates:
+        def _label(r):
+            prefix = f'#{r.id} [{r.status}] '
+            return prefix + _truncate(r.description, 75 - len(prefix))
+
+        dup_options = [
+            {
+                'text': {'type': 'plain_text', 'text': _label(r)},
+                'value': str(r.id),
+            }
+            for r in candidates
+        ]
+        blocks.append({
+            'type': 'input',
+            'block_id': 'duplicate_block',
+            'optional': True,
+            'element': {
+                'type': 'static_select',
+                'action_id': 'duplicated_repair_id',
+                'placeholder': {'type': 'plain_text', 'text': 'Select duplicated repair'},
+                'options': dup_options,
+            },
+            'label': {
+                'type': 'plain_text',
+                'text': "Duplicate of (used when 'Set Status → Closed - Duplicate' chosen)",
+            },
+        })
 
     return {
         'type': 'modal',

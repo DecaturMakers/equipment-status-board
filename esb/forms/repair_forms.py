@@ -41,6 +41,9 @@ class RepairRecordUpdateForm(FlaskForm):
         'Specialist Description',
         validators=[Optional(), Length(max=5000)],
     )
+    duplicated_repair_id = SelectField(
+        'Duplicate of', coerce=int, validators=[Optional()],
+    )
     note = TextAreaField('Add Note', validators=[Optional(), Length(max=5000)])
     submit = SubmitField('Save Changes')
 

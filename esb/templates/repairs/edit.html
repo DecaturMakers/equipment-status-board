@@ -25,6 +25,12 @@
                 {% endfor %}
             </div>
 
+            <div id="duplicate-block" class="mb-3">
+                <label for="duplicated_repair_id" class="form-label">Duplicate of *</label>
+                {{ form.duplicated_repair_id(class="form-select") }}
+                <div class="form-text">Required when status is "Closed - Duplicate".</div>
+            </div>
+
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label for="severity" class="form-label">Severity</label>
@@ -73,6 +79,20 @@
                 <a href="{{ url_for('repairs.detail', id=record.id) }}" class="btn btn-outline-secondary">Cancel</a>
             </div>
         </form>
+        <script>
+        (function () {
+            const statusSelect = document.querySelector('select[name="status"]');
+            const dupBlock = document.getElementById('duplicate-block');
+            if (!statusSelect || !dupBlock) return;
+            const sync = () => {
+                dupBlock.style.display = statusSelect.value === 'Closed - Duplicate' ? '' : 'none';
+            };
+            // Run on load so JS users see the block hidden when not Closed - Duplicate.
+            // No-JS users see the block always (degraded but functional).
+            sync();
+            statusSelect.addEventListener('change', sync);
+        })();
+        </script>
     </div>
 </div>
 {% endblock %}

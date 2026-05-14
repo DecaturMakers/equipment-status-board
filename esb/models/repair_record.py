@@ -39,6 +39,12 @@ class RepairRecord(db.Model):
     )
     eta = db.Column(db.Date, nullable=True)
     specialist_description = db.Column(db.Text, nullable=True)
+    duplicated_repair_id = db.Column(
+        db.Integer,
+        db.ForeignKey('repair_records.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
     has_safety_risk = db.Column(db.Boolean, nullable=False, default=False)
     is_consumable = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
@@ -54,6 +60,7 @@ class RepairRecord(db.Model):
     # Relationships
     equipment = db.relationship('Equipment', backref=db.backref('repair_records', lazy='dynamic'))
     assignee = db.relationship('User', backref=db.backref('assigned_repairs', lazy='dynamic'))
+    duplicated_repair = db.relationship('RepairRecord', remote_side=[id])
 
     def __repr__(self):
         return f'<RepairRecord {self.id} [{self.status}]>'

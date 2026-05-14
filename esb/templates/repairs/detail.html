@@ -57,6 +57,10 @@
             </dd>
             <dt class="col-sm-3">Status</dt>
             <dd class="col-sm-9"><span class="badge bg-info text-dark">{{ record.status }}</span></dd>
+            {% if record.duplicated_repair_id %}
+            <dt class="col-sm-3">Marked as duplicate of</dt>
+            <dd class="col-sm-9"><a href="{{ url_for('repairs.detail', id=record.duplicated_repair_id) }}">Repair #{{ record.duplicated_repair_id }}</a></dd>
+            {% endif %}
             <dt class="col-sm-3">Severity</dt>
             <dd class="col-sm-9">{{ record.severity or 'Not set' }}</dd>
             <dt class="col-sm-3">Assignee</dt>

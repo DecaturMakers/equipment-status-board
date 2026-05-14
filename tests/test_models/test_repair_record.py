@@ -102,6 +102,57 @@ class TestRepairRecordCreation:
         assert repr(record) == f'<RepairRecord {record.id} [New]>'
 
 
+class TestDuplicatedRepair:
+    """Tests for the duplicated_repair_id column and self-relationship."""
+
+    def test_duplicated_repair_id_nullable(self, app, make_equipment):
+        eq = make_equipment()
+        record = RepairRecord(equipment_id=eq.id, description='Broken')
+        _db.session.add(record)
+        _db.session.commit()
+        assert record.duplicated_repair_id is None
+        assert record.duplicated_repair is None
+
+    def test_duplicated_repair_relationship(self, app, make_equipment):
+        eq = make_equipment()
+        original = RepairRecord(equipment_id=eq.id, description='Original')
+        _db.session.add(original)
+        _db.session.commit()
+        dup = RepairRecord(
+            equipment_id=eq.id,
+            description='Same thing again',
+            duplicated_repair_id=original.id,
+        )
+        _db.session.add(dup)
+        _db.session.commit()
+        _db.session.expire_all()
+        fetched = _db.session.get(RepairRecord, dup.id)
+        assert fetched.duplicated_repair_id == original.id
+        assert fetched.duplicated_repair.id == original.id
+        assert fetched.duplicated_repair.description == 'Original'
+
+    def test_on_delete_set_null(self, app, make_equipment):
+        """Deleting the target nulls the child's duplicated_repair_id (ON DELETE SET NULL)."""
+        eq = make_equipment()
+        target = RepairRecord(equipment_id=eq.id, description='Target')
+        _db.session.add(target)
+        _db.session.commit()
+        child = RepairRecord(
+            equipment_id=eq.id,
+            description='Child',
+            duplicated_repair_id=target.id,
+        )
+        _db.session.add(child)
+        _db.session.commit()
+        child_id = child.id
+        _db.session.delete(target)
+        _db.session.commit()
+        _db.session.expire_all()
+        refetched = _db.session.get(RepairRecord, child_id)
+        assert refetched is not None
+        assert refetched.duplicated_repair_id is None
+
+
 class TestRepairRecordConstants:
     """Tests for module-level constants."""
 

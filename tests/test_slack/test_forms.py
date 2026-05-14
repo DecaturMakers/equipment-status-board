@@ -242,7 +242,10 @@ class TestBuildRepairCreateModal:
 
         status_block = [b for b in modal['blocks'] if b['block_id'] == 'status_block'][0]
         status_values = [o['value'] for o in status_block['element']['options']]
-        assert status_values == REPAIR_STATUSES
+        # Closed - Duplicate is filtered out of the create modal: a repair
+        # cannot be created already-duplicate (the dup-target dropdown lives on
+        # the action modal). See tech-spec Technical Decisions §10.
+        assert status_values == [s for s in REPAIR_STATUSES if s != 'Closed - Duplicate']
 
     def test_no_assignee_block_when_no_users(self):
         """L2: Assignee block is excluded when no users available."""
@@ -779,6 +782,9 @@ class TestBuildRepairActionModal:
         area = make_area('Shop', '#shop')
         eq = make_equipment('Tool', 'X', 'M', area=area)
         rec = make_repair_record(equipment=eq, status='New', severity='Down', description='broken')
+        # Need a sibling so duplicate-candidates is non-empty -- otherwise the
+        # builder filters Closed - Duplicate out of the status options.
+        make_repair_record(equipment=eq, status='New', severity='Down', description='sibling')
 
         modal = build_repair_action_modal(rec)
         status_block = next(b for b in modal['blocks'] if b.get('block_id') == 'status_block')
@@ -799,6 +805,77 @@ class TestBuildRepairActionModal:
         modal = build_repair_action_modal(rec)
         eta_block = next(b for b in modal['blocks'] if b.get('block_id') == 'eta_block')
         assert eta_block['element']['initial_date'] == '2026-07-04'
+
+    def test_duplicate_block_when_candidates_exist(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        """AC-19: duplicate_block present with each sibling repair as an option."""
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec1 = make_repair_record(equipment=eq, status='New', severity='Down', description='r1')
+        rec2 = make_repair_record(equipment=eq, status='In Progress', severity='Down', description='r2')
+
+        modal = build_repair_action_modal(rec1)
+        dup_block = next(
+            (b for b in modal['blocks'] if b.get('block_id') == 'duplicate_block'),
+            None,
+        )
+        assert dup_block is not None
+        values = [o['value'] for o in dup_block['element']['options']]
+        assert str(rec2.id) in values
+        # First option text starts with #ID [Status]
+        first_opt = dup_block['element']['options'][0]
+        assert first_opt['text']['text'].startswith(f'#{rec2.id} [In Progress]')
+
+    def test_no_duplicate_block_and_no_closed_duplicate_option_when_no_candidates(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        """AC-20: lone repair has no duplicate_block AND status options exclude Closed - Duplicate."""
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec = make_repair_record(equipment=eq, status='New', severity='Down', description='r1')
+
+        modal = build_repair_action_modal(rec)
+        assert all(b.get('block_id') != 'duplicate_block' for b in modal['blocks'])
+        status_block = next(b for b in modal['blocks'] if b.get('block_id') == 'status_block')
+        values = [o['value'] for o in status_block['element']['options']]
+        assert 'Closed - Duplicate' not in values
+
+    def test_duplicate_option_label_budget(
+        self, app, make_area, make_equipment, make_repair_record,
+    ):
+        """No duplicate-option's text.text exceeds Slack's 75-char limit."""
+        from esb.slack.forms import build_repair_action_modal
+
+        area = make_area('Shop', '#shop')
+        eq = make_equipment('Tool', 'X', 'M', area=area)
+        rec1 = make_repair_record(equipment=eq, status='New', severity='Down', description='target')
+        # Very long description to force truncation
+        make_repair_record(
+            equipment=eq, status='In Progress', severity='Down',
+            description='X' * 500,
+        )
+
+        modal = build_repair_action_modal(rec1)
+        dup_block = next(b for b in modal['blocks'] if b.get('block_id') == 'duplicate_block')
+        for opt in dup_block['element']['options']:
+            assert len(opt['text']['text']) <= 75
+
+
+class TestRepairCreateModalStatusFilter:
+    """AC-21: Closed - Duplicate filtered out of create-modal status options."""
+
+    def test_closed_duplicate_excluded_from_create_modal_status(self, app):
+        from esb.slack.forms import build_repair_create_modal
+
+        modal = build_repair_create_modal([], [])
+        status_block = next(b for b in modal['blocks'] if b.get('block_id') == 'status_block')
+        values = [o['value'] for o in status_block['element']['options']]
+        assert 'Closed - Duplicate' not in values
 
 
 class TestFormatEquipmentStatusDetail:

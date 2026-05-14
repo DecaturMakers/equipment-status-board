@@ -11,6 +11,7 @@ TIMELINE_ENTRY_TYPES = [
     'assignee_change',
     'eta_update',
     'photo',
+    'duplicated_repair_id_change',
 ]
 
 

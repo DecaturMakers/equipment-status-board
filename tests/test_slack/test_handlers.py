@@ -392,6 +392,68 @@ class TestEsbUpdateCommand:
         assert modal['callback_id'] == 'repair_update_submission'
         assert modal['private_metadata'] == str(self.record.id)
 
+    def test_modal_status_options_include_closed_duplicate_when_record_is_already(self):
+        """If the record's current status is already Closed - Duplicate, the
+        option must remain so Slack does not reject the modal (initial_option
+        must exist in options).
+        """
+        # Need a second repair to satisfy the service-layer validation for the
+        # existing Closed - Duplicate record. Then create one with that status.
+        target = _create_repair_record(
+            equipment=self.equipment, status='In Progress', description='target',
+        )
+        from esb.models.repair_record import RepairRecord
+        dup_record = RepairRecord(
+            equipment_id=self.equipment.id,
+            description='already closed as dup',
+            status='Closed - Duplicate',
+            duplicated_repair_id=target.id,
+        )
+        self.db.session.add(dup_record)
+        self.db.session.commit()
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.staff_user.email}},
+        }
+        body = {
+            'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123',
+            'text': str(dup_record.id),
+        }
+
+        self.handlers['command:/esb-update'](ack=ack, body=body, client=client)
+
+        modal = client.views_open.call_args.kwargs['view']
+        status_block = next(b for b in modal['blocks'] if b.get('block_id') == 'status_block')
+        values = [o['value'] for o in status_block['element']['options']]
+        assert 'Closed - Duplicate' in values
+        # initial_option set to the record's current status -- must also be in options.
+        assert status_block['element']['initial_option']['value'] == 'Closed - Duplicate'
+
+    def test_modal_status_options_exclude_closed_duplicate(self):
+        """Closed - Duplicate filtered from /esb-update modal: the update flow
+        does not collect a dup target, so setting that status here would always
+        trip the service-layer validation."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.staff_user.email}},
+        }
+        body = {
+            'trigger_id': 'T123',
+            'user_id': 'U123',
+            'channel_id': 'C123',
+            'text': str(self.record.id),
+        }
+
+        self.handlers['command:/esb-update'](ack=ack, body=body, client=client)
+
+        modal = client.views_open.call_args.kwargs['view']
+        status_block = next(b for b in modal['blocks'] if b.get('block_id') == 'status_block')
+        values = [o['value'] for o in status_block['element']['options']]
+        assert 'Closed - Duplicate' not in values
+
     def test_without_id_returns_error(self):
         """5.8: /esb-update without ID returns error message."""
         ack = MagicMock()
@@ -1095,20 +1157,36 @@ class TestRepairActionSubmission:
         self.tech_user = _create_user('technician', username='techie')
         self.handlers = _register_and_capture(app)
 
-    def _build_view(self, repair_id, action=None, eta=None, status=None, note=None):
+    def _build_view(
+        self, repair_id, action=None, eta=None, status=None, note=None,
+        duplicate_id=None, include_duplicate_block=None,
+    ):
         action_block = {'action': {'selected_option': {'value': action}}} if action else {'action': {'selected_option': None}}
         eta_block = {'eta': {'selected_date': eta}}
         status_block = {'status': {'selected_option': {'value': status}}} if status else {'status': {'selected_option': None}}
         note_block = {'note': {'value': note}}
+        values = {
+            'action_block': action_block,
+            'eta_block': eta_block,
+            'status_block': status_block,
+            'note_block': note_block,
+        }
+        # Include duplicate_block when explicitly opted in, or when a duplicate_id is provided.
+        if include_duplicate_block or duplicate_id is not None:
+            if duplicate_id is not None:
+                values['duplicate_block'] = {
+                    'duplicated_repair_id': {
+                        'selected_option': {'value': str(duplicate_id)},
+                    },
+                }
+            else:
+                values['duplicate_block'] = {
+                    'duplicated_repair_id': {'selected_option': None},
+                }
         return {
             'private_metadata': str(repair_id),
             'state': {
-                'values': {
-                    'action_block': action_block,
-                    'eta_block': eta_block,
-                    'status_block': status_block,
-                    'note_block': note_block,
-                },
+                'values': values,
             },
         }
 
@@ -1449,11 +1527,11 @@ class TestRepairActionSubmission:
         client4 = self._client(self.tech_user.email)
         self.handlers['view:repair_action_submission'](
             ack=MagicMock(), body=self._body(self.tech_user.email), client=client4,
-            view=self._build_view(rec4.id, action='set_status', status='Closed - Duplicate'),
+            view=self._build_view(rec4.id, action='set_status', status='Closed - No Issue Found'),
         )
         text4 = client4.chat_postEphemeral.call_args.kwargs['text']
         assert ':white_check_mark:' in text4
-        assert 'closed: Closed - Duplicate' in text4
+        assert 'closed: Closed - No Issue Found' in text4
 
         # resolve_with_note → :white_check_mark:
         rec5 = _create_repair_record(equipment=self.equipment, status='In Progress', severity='Down', description='x')
@@ -1464,6 +1542,101 @@ class TestRepairActionSubmission:
         )
         assert ':white_check_mark:' in client5.chat_postEphemeral.call_args.kwargs['text']
 
+    def test_set_status_closed_duplicate_with_target_succeeds(self):
+        """AC-22: set_status to Closed - Duplicate with a valid target updates record + acks."""
+        target = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='target',
+        )
+        record = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='dup',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(
+            record.id, action='set_status', status='Closed - Duplicate',
+            duplicate_id=target.id,
+        )
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+        ack.assert_called_once_with()
+
+        from esb.models.repair_record import RepairRecord
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.status == 'Closed - Duplicate'
+        assert rec.duplicated_repair_id == target.id
+        client.chat_postEphemeral.assert_called_once()
+        text = client.chat_postEphemeral.call_args.kwargs['text']
+        assert f'Repair #{record.id}' in text
+        assert 'Closed - Duplicate' in text
+
+    def test_set_status_closed_duplicate_without_target_returns_inline_error(self):
+        """AC-23: missing duplicate selection → ack errors and no update."""
+        target = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='target',
+        )
+        record = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='dup',
+        )
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        # include_duplicate_block True but no duplicate_id => selected_option None
+        view = self._build_view(
+            record.id, action='set_status', status='Closed - Duplicate',
+            include_duplicate_block=True,
+        )
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+        ack.assert_called_once()
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'duplicate_block' in kwargs.get('errors', {})
+
+        from esb.models.repair_record import RepairRecord
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.status == 'In Progress'  # unchanged
+        # target untouched too
+        assert self.db.session.get(RepairRecord, target.id).status == 'In Progress'
+
+    def test_set_status_closed_duplicate_stale_target_surfaces_validation_error(self):
+        """AC-24: target deleted between modal build and submit → ValidationError surfaces on action_block."""
+        target = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='target',
+        )
+        record = _create_repair_record(
+            equipment=self.equipment, status='In Progress', severity='Down', description='dup',
+        )
+        target_id = target.id
+
+        # Simulate target deletion between modal-build and submit.
+        self.db.session.delete(target)
+        self.db.session.commit()
+
+        ack = MagicMock()
+        client = self._client(self.tech_user.email)
+        view = self._build_view(
+            record.id, action='set_status', status='Closed - Duplicate',
+            duplicate_id=target_id,
+        )
+        self.handlers['view:repair_action_submission'](
+            ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
+        )
+        ack.assert_called_once()
+        kwargs = ack.call_args.kwargs
+        assert kwargs.get('response_action') == 'errors'
+        assert 'action_block' in kwargs.get('errors', {})
+        assert f'Duplicated repair {target_id} not found' in kwargs['errors']['action_block']
+
+        from esb.models.repair_record import RepairRecord
+        self.db.session.expire_all()
+        rec = self.db.session.get(RepairRecord, record.id)
+        assert rec.status == 'In Progress'  # unchanged
+        assert rec.duplicated_repair_id is None
+        # No ephemeral message was posted
+        client.chat_postEphemeral.assert_not_called()
 
 class TestEsbReportRegression:
     """AC 30 / F13: /esb-report stays distinct from /esb-repair after the dispatcher refactor."""

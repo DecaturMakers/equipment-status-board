@@ -369,9 +369,16 @@ def register_handlers(bolt_app, app):
             from esb.models.repair_record import REPAIR_SEVERITIES, REPAIR_STATUSES
             from esb.slack.forms import build_repair_update_modal, build_user_options
 
+            # Exclude Closed - Duplicate so users cannot *newly* select it via
+            # this modal (no dup-target selector here, service would reject).
+            # BUT if the record's current status is already Closed - Duplicate
+            # we must keep the option, otherwise Slack rejects the modal -- the
+            # builder sets initial_option to record.status, which must exist in
+            # the options list.
             status_options = [
                 {'text': {'type': 'plain_text', 'text': s}, 'value': s}
                 for s in REPAIR_STATUSES
+                if s != 'Closed - Duplicate' or record.status == 'Closed - Duplicate'
             ]
             severity_options = [
                 {'text': {'type': 'plain_text', 'text': s}, 'value': s}
@@ -603,6 +610,24 @@ def register_handlers(bolt_app, app):
                     })
                     return
                 changes['status'] = status_opt['value']
+                if changes['status'] == 'Closed - Duplicate':
+                    dup_opt = (
+                        values.get('duplicate_block', {})
+                        .get('duplicated_repair_id', {})
+                        .get('selected_option')
+                    )
+                    if not dup_opt:
+                        ack(response_action='errors', errors={
+                            'duplicate_block': 'Selecting which repair this duplicates is required.',
+                        })
+                        return
+                    try:
+                        changes['duplicated_repair_id'] = int(dup_opt['value'])
+                    except (KeyError, TypeError, ValueError):
+                        ack(response_action='errors', errors={
+                            'duplicate_block': 'Invalid duplicate selection.',
+                        })
+                        return
             elif action == 'resolve_with_note':
                 note_val = values.get('note_block', {}).get('note', {}).get('value')
                 if not note_val or not note_val.strip():

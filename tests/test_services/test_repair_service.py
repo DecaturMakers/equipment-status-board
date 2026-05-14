@@ -655,12 +655,14 @@ class TestUpdateRepairRecordSlackNotification:
 
         area = make_area(name='Woodshop', slack_channel='#woodshop')
         equip = make_equipment(name='SawStop', area=area)
+        target = RepairRecord(equipment_id=equip.id, description='Original', status='In Progress')
         record = RepairRecord(equipment_id=equip.id, description='Test', status='In Progress')
-        _db.session.add(record)
+        _db.session.add_all([target, record])
         _db.session.commit()
 
         repair_service.update_repair_record(
-            record.id, 'staffuser', author_id=staff_user.id, status='Closed - Duplicate',
+            record.id, 'staffuser', author_id=staff_user.id,
+            status='Closed - Duplicate', duplicated_repair_id=target.id,
         )
 
         notifications = _db.session.execute(
@@ -1997,3 +1999,243 @@ class TestGetRepairQueue:
         results = repair_service.get_repair_queue(area_id=area1.id, assignee_id=tech.id)
         descriptions = [r.description for r in results]
         assert descriptions == ['area1-tech']
+
+
+class TestListDuplicateCandidates:
+    """Tests for list_duplicate_candidates()."""
+
+    def test_returns_same_equipment_excludes_self_newest_first(
+        self, app, make_area, make_equipment,
+    ):
+        area = make_area()
+        eq = make_equipment('Saw', area=area)
+        other_eq = make_equipment('Drill', area=area)
+        now = datetime.now(UTC).replace(tzinfo=None)
+        r2 = RepairRecord(
+            equipment_id=eq.id, description='r2 (oldest)',
+            created_at=now - timedelta(days=3),
+        )
+        r3 = RepairRecord(
+            equipment_id=eq.id, description='r3 (mid)',
+            created_at=now - timedelta(days=2),
+        )
+        r1 = RepairRecord(
+            equipment_id=eq.id, description='r1 (target self)',
+            created_at=now - timedelta(days=1),
+        )
+        r_other = RepairRecord(
+            equipment_id=other_eq.id, description='other equipment',
+            created_at=now - timedelta(hours=1),
+        )
+        _db.session.add_all([r2, r3, r1, r_other])
+        _db.session.commit()
+
+        results = repair_service.list_duplicate_candidates(r1.id)
+        result_descriptions = [r.description for r in results]
+        # Newest first; r1 (self) excluded; r_other (different eq) excluded.
+        assert result_descriptions == ['r3 (mid)', 'r2 (oldest)']
+
+    def test_empty_when_single_repair(self, app, make_equipment):
+        eq = make_equipment()
+        only = RepairRecord(equipment_id=eq.id, description='only one')
+        _db.session.add(only)
+        _db.session.commit()
+        assert repair_service.list_duplicate_candidates(only.id) == []
+
+    def test_raises_for_missing_record(self, app):
+        with pytest.raises(ValidationError, match='Repair record with id 99999 not found'):
+            repair_service.list_duplicate_candidates(99999)
+
+
+class TestDuplicatedRepairId:
+    """Tests for the duplicated_repair_id field in update_repair_record."""
+
+    def _two_repairs(self, make_equipment, status_r1='In Progress'):
+        eq = make_equipment()
+        r1 = RepairRecord(equipment_id=eq.id, description='r1 desc', status=status_r1)
+        r2 = RepairRecord(equipment_id=eq.id, description='r2 desc', status='In Progress')
+        _db.session.add_all([r1, r2])
+        _db.session.commit()
+        return r1, r2
+
+    def test_transition_to_closed_duplicate_succeeds(
+        self, app, make_equipment, staff_user, capture,
+    ):
+        """AC-4: transition to Closed - Duplicate with valid target succeeds, emits timeline + audit."""
+        r1, r2 = self._two_repairs(make_equipment)
+        repair_service.update_repair_record(
+            r1.id, 'staffuser', author_id=staff_user.id,
+            status='Closed - Duplicate', duplicated_repair_id=r2.id,
+        )
+        _db.session.expire_all()
+        refetched = _db.session.get(RepairRecord, r1.id)
+        assert refetched.status == 'Closed - Duplicate'
+        assert refetched.duplicated_repair_id == r2.id
+        # Timeline entry for the duplicate-link change
+        dup_entries = _db.session.execute(
+            _db.select(RepairTimelineEntry).filter_by(
+                repair_record_id=r1.id,
+                entry_type='duplicated_repair_id_change',
+            )
+        ).scalars().all()
+        assert len(dup_entries) == 1
+        assert dup_entries[0].old_value is None
+        assert dup_entries[0].new_value == str(r2.id)
+        # Mutation log includes the field
+        updated_logs = [
+            r for r in capture.records if 'repair_record.updated' in r.message
+        ]
+        log_data = json.loads(updated_logs[0].message)
+        assert log_data['data']['changes']['duplicated_repair_id'] == [None, str(r2.id)]
+
+    def test_transition_without_target_raises(self, app, make_equipment, staff_user):
+        """AC-5: ValidationError when transitioning to Closed - Duplicate with no target."""
+        r1, _r2 = self._two_repairs(make_equipment)
+        with pytest.raises(ValidationError, match='Closed - Duplicate'):
+            repair_service.update_repair_record(
+                r1.id, 'staffuser', author_id=staff_user.id,
+                status='Closed - Duplicate',
+            )
+        _db.session.expire_all()
+        assert _db.session.get(RepairRecord, r1.id).status == 'In Progress'
+
+    def test_self_reference_raises(self, app, make_equipment, staff_user):
+        """AC-6: ValidationError for duplicate-of-self."""
+        r1, _r2 = self._two_repairs(make_equipment)
+        with pytest.raises(ValidationError, match='cannot be a duplicate of itself'):
+            repair_service.update_repair_record(
+                r1.id, 'staffuser', author_id=staff_user.id,
+                status='Closed - Duplicate', duplicated_repair_id=r1.id,
+            )
+
+    def test_cross_equipment_raises(self, app, make_area, make_equipment, staff_user):
+        """AC-7: ValidationError when target is on different equipment."""
+        area = make_area()
+        eq1 = make_equipment('eq1', area=area)
+        eq2 = make_equipment('eq2', area=area)
+        r1 = RepairRecord(equipment_id=eq1.id, description='r1', status='In Progress')
+        r2 = RepairRecord(equipment_id=eq2.id, description='r2', status='In Progress')
+        _db.session.add_all([r1, r2])
+        _db.session.commit()
+        with pytest.raises(ValidationError, match='must be on the same equipment'):
+            repair_service.update_repair_record(
+                r1.id, 'staffuser', author_id=staff_user.id,
+                status='Closed - Duplicate', duplicated_repair_id=r2.id,
+            )
+
+    def test_nonexistent_target_raises(self, app, make_equipment, staff_user):
+        """AC-8: ValidationError when target id does not exist."""
+        r1, _r2 = self._two_repairs(make_equipment)
+        with pytest.raises(ValidationError, match='Duplicated repair 99999 not found'):
+            repair_service.update_repair_record(
+                r1.id, 'staffuser', author_id=staff_user.id,
+                status='Closed - Duplicate', duplicated_repair_id=99999,
+            )
+
+    def test_setting_dup_without_correct_status_raises(
+        self, app, make_equipment, staff_user,
+    ):
+        """AC-9: ValidationError when setting duplicated_repair_id without status=Closed - Duplicate."""
+        r1, r2 = self._two_repairs(make_equipment, status_r1='Resolved')
+        with pytest.raises(
+            ValidationError, match="may only be set when status is 'Closed - Duplicate'",
+        ):
+            repair_service.update_repair_record(
+                r1.id, 'staffuser', author_id=staff_user.id,
+                duplicated_repair_id=r2.id,
+            )
+
+    def test_transition_away_clears_duplicate_link(
+        self, app, make_equipment, staff_user, capture,
+    ):
+        """AC-10: transition away from Closed - Duplicate auto-clears duplicated_repair_id."""
+        eq_helper_record = make_equipment()
+        r2 = RepairRecord(equipment_id=eq_helper_record.id, description='r2', status='In Progress')
+        _db.session.add(r2)
+        _db.session.commit()
+        r1 = RepairRecord(
+            equipment_id=eq_helper_record.id,
+            description='r1',
+            status='Closed - Duplicate',
+            duplicated_repair_id=r2.id,
+        )
+        _db.session.add(r1)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            r1.id, 'staffuser', author_id=staff_user.id, status='In Progress',
+        )
+        _db.session.expire_all()
+        refetched = _db.session.get(RepairRecord, r1.id)
+        assert refetched.duplicated_repair_id is None
+
+        # Timeline entry for the duplicate-link clear
+        dup_entries = _db.session.execute(
+            _db.select(RepairTimelineEntry).filter_by(
+                repair_record_id=r1.id,
+                entry_type='duplicated_repair_id_change',
+            )
+        ).scalars().all()
+        assert len(dup_entries) == 1
+        assert dup_entries[0].old_value == str(r2.id)
+        assert dup_entries[0].new_value is None
+
+        # Audit log captures the clear
+        audit = _db.session.execute(
+            _db.select(AuditLog).filter_by(
+                entity_type='repair_record', entity_id=r1.id, action='updated',
+            )
+        ).scalar_one()
+        assert audit.changes['duplicated_repair_id'] == [str(r2.id), None]
+
+    def test_clearing_dup_id_while_status_remains_closed_duplicate_raises(
+        self, app, make_equipment, staff_user,
+    ):
+        """Bug fix: cannot clear dup_id to None while status stays Closed - Duplicate."""
+        eq = make_equipment()
+        target = RepairRecord(equipment_id=eq.id, description='Target', status='In Progress')
+        _db.session.add(target)
+        _db.session.commit()
+        record = RepairRecord(
+            equipment_id=eq.id,
+            description='Existing dup',
+            status='Closed - Duplicate',
+            duplicated_repair_id=target.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        with pytest.raises(ValidationError, match='Closed - Duplicate'):
+            repair_service.update_repair_record(
+                record.id, 'staffuser', author_id=staff_user.id,
+                status='Closed - Duplicate', duplicated_repair_id=None,
+            )
+        _db.session.expire_all()
+        unchanged = _db.session.get(RepairRecord, record.id)
+        assert unchanged.duplicated_repair_id == target.id
+
+    def test_legacy_record_unaffected_for_unrelated_edit(
+        self, app, make_equipment, staff_user,
+    ):
+        """AC-11: legacy Closed - Duplicate record with NULL dup_id can edit unrelated fields."""
+        eq = make_equipment()
+        legacy = RepairRecord(
+            equipment_id=eq.id,
+            description='legacy',
+            status='Closed - Duplicate',
+            duplicated_repair_id=None,
+        )
+        _db.session.add(legacy)
+        _db.session.commit()
+
+        # The web form would re-assert the existing status when editing
+        # an unrelated field. Should be a no-op transition.
+        repair_service.update_repair_record(
+            legacy.id, 'staffuser', author_id=staff_user.id,
+            status='Closed - Duplicate', specialist_description='x',
+        )
+        _db.session.expire_all()
+        refetched = _db.session.get(RepairRecord, legacy.id)
+        assert refetched.specialist_description == 'x'
+        assert refetched.status == 'Closed - Duplicate'
+        assert refetched.duplicated_repair_id is None
