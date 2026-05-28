@@ -1836,3 +1836,25 @@ class TestEquipmentQR:
         assert resp.status_code == 200
         assert resp.content_type.startswith('image/png')
         assert 'attachment' in resp.headers.get('Content-Disposition', '')
+
+    def test_qr_download_clamps_stale_wifi_info(self, staff_client, make_equipment, configured_base_url):
+        from esb.services import config_service
+        config_service.set_config('wifi_ssid', 'MyNet', 'test')
+        config_service.set_config('wifi_password', 'secret', 'test')
+        eq = make_equipment('X', 'Y', 'Z')
+        config_service.set_config('wifi_password', '', 'test')
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'wifi_info': 'password', 'submit': 'Download QR Code'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 200
+        assert resp.content_type.startswith('image/png')
+
+    def test_qr_preview_rejects_invalid_wifi_info(self, staff_client, make_equipment, configured_base_url):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp_bogus = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_2&wifi_info=bogus')
+        resp_none = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_2&wifi_info=none')
+        assert resp_bogus.status_code == 200
+        assert resp_none.status_code == 200
+        assert resp_bogus.data == resp_none.data, 'bogus wifi_info should render identically to none'

@@ -284,6 +284,9 @@ def qr(id):
 
     if request.method == 'GET':
         form.wifi_info.data = wifi_default
+    elif request.method == 'POST':
+        _ALL_WIFI_VALUES = [('none', ''), ('header', ''), ('ssid', ''), ('password', '')]
+        form.wifi_info.choices = _ALL_WIFI_VALUES
 
     if form.validate_on_submit():
         choices, wifi_config = _build_wifi_choices()
@@ -344,6 +347,8 @@ def qr_preview(id):
     include_url = request.args.get('include_url') in ('1', 'true', 'on')
 
     wifi_info = request.args.get('wifi_info', 'none')
+    if wifi_info not in ('none', 'header', 'ssid', 'password'):
+        wifi_info = 'none'
     wifi_ssid = config_service.get_config('wifi_ssid', '')
     wifi_password = config_service.get_config('wifi_password', '')
     if wifi_info == 'password' and not wifi_password:

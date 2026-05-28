@@ -1116,6 +1116,26 @@ class TestAppConfigWiFi:
         assert len(wifi_entries) == 1
         assert wifi_entries[0]['data']['new_value'] == 'NewNet'
 
+    def test_config_wifi_password_masked_in_log(self, staff_client, staff_user, capture):
+        capture.records.clear()
+        staff_client.post('/admin/config', data={
+            'wifi_password': 'supersecret',
+            'wifi_info_default': 'none',
+        })
+        entries = [
+            json.loads(r.message) for r in capture.records
+            if 'app_config.updated' in r.message
+        ]
+        pw_entries = [e for e in entries if e['data']['key'] == 'wifi_password']
+        assert len(pw_entries) == 1
+        assert pw_entries[0]['data']['new_value'] == '***'
+        assert 'supersecret' not in str(pw_entries[0])
+
+    def test_config_wifi_password_field_is_masked(self, staff_client, staff_user):
+        resp = staff_client.get('/admin/config')
+        assert resp.status_code == 200
+        assert b'type="password"' in resp.data
+
 
 class TestAreaMutationLogging:
     """Tests for mutation logging in area admin views."""

@@ -426,6 +426,34 @@ class TestRenderQRPngWifi:
         )
         img = Image.open(io.BytesIO(result))
         assert img.format == 'PNG'
+        decoded = decode(img)
+        assert len(decoded) >= 1
+
+    def test_wifi_rows_respect_55_percent_budget(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_1'],
+            base_url=BASE_URL, wifi_info='password',
+            wifi_ssid='Net', wifi_password='pass',
+            include_name=True, include_url=True,
+        )
+        img = Image.open(io.BytesIO(result))
+        canvas_h = img.height
+        max_text_px = int(canvas_h * 0.55)
+        reserved_top = int(canvas_h * 0.15)
+        reserved_bottom = int(canvas_h * 0.15)
+        wifi_region_h = 0
+        for y in range(canvas_h):
+            row = img.crop((0, y, img.width, y + 1)).convert('RGB')
+            colors = {c for _, c in row.getcolors(maxcolors=img.width) or []}
+            if any(c != (255, 255, 255) for c in colors):
+                wifi_region_h = y + 1
+            else:
+                break
+        total_text = wifi_region_h + reserved_top + reserved_bottom
+        assert total_text <= max_text_px + reserved_top + reserved_bottom, (
+            f'total text reservation {total_text} exceeds budget'
+        )
 
 
 class TestNoFormImport:

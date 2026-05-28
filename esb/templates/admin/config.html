@@ -41,7 +41,7 @@
             </div>
             <div class="mb-3">
                 <label for="{{ form.wifi_password.id }}" class="form-label">{{ form.wifi_password.label.text }}</label>
-                {{ form.wifi_password(class="form-control") }}
+                {{ form.wifi_password(class="form-control", type="password", autocomplete="off") }}
                 <div class="form-text">WiFi password shown <strong>in plaintext</strong> on printed QR labels. Anyone who can see the label can read the password. Leave blank to hide password option.</div>
             </div>
             <div class="mb-3">

@@ -295,7 +295,14 @@ def app_config():
         for key, default in string_config_keys:
             new_value = (getattr(form, key).data or default).strip()
             if config_service.get_config(key, default) != new_value:
-                config_service.set_config(key, new_value, changed_by=current_user.username)
+                if key == 'wifi_password':
+                    log_value = '***' if new_value else ''
+                    config_service.set_config(
+                        key, new_value, changed_by=current_user.username,
+                        log_value_override=log_value,
+                    )
+                else:
+                    config_service.set_config(key, new_value, changed_by=current_user.username)
         flash('Configuration updated successfully.', 'success')
         return redirect(url_for('admin.app_config'))
 

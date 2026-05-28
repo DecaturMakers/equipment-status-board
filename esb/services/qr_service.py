@@ -81,23 +81,21 @@ def render_qr_png(
     if num_wifi_rows > 0:
         min_row_px = _pt_to_px(_MIN_FONT_PT) + 4
         wifi_budget = int(canvas_h_px * 0.30)
-        wifi_row_height = max(wifi_budget // num_wifi_rows, min_row_px)
+        max_text_px = int(canvas_h_px * 0.55)
         effective_wifi_rows = num_wifi_rows
 
-        while (reserved_top + reserved_bottom + effective_wifi_rows * wifi_row_height
-               > int(canvas_h_px * 0.55)):
-            effective_wifi_rows -= 1
-            if effective_wifi_rows <= 0:
+        while effective_wifi_rows > 0:
+            wifi_row_height = max(wifi_budget // effective_wifi_rows, min_row_px)
+            if reserved_top + reserved_bottom + effective_wifi_rows * wifi_row_height <= max_text_px:
                 break
             current_app.logger.warning(
                 'QR WiFi: dropping row %d for preset %s (insufficient space)',
-                effective_wifi_rows + 1, preset.key,
+                effective_wifi_rows, preset.key,
             )
+            effective_wifi_rows -= 1
 
         if effective_wifi_rows > 0:
             wifi_rows = wifi_rows[:effective_wifi_rows]
-            wifi_row_height = wifi_budget // effective_wifi_rows
-            wifi_row_height = max(wifi_row_height, min_row_px)
             reserved_wifi = effective_wifi_rows * wifi_row_height
         else:
             wifi_rows = []
@@ -228,6 +226,10 @@ def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
     text_w = t_right - t_left
     text_h = t_bottom - t_top
 
+    if emoji_w + gap >= max_width_px:
+        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
+        return
+
     total_w = emoji_w + gap + text_w
     if total_w > max_width_px:
         text_font, rendered = _fit_text(
@@ -235,15 +237,12 @@ def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
             max_height_px=row_height, font_path=text_font_path,
         )
         if rendered == '':
+            _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
             return
         t_left, t_top, t_right, t_bottom = draw.textbbox((0, 0), rendered, font=text_font)
         text_w = t_right - t_left
         text_h = t_bottom - t_top
         total_w = emoji_w + gap + text_w
-
-    if emoji_w > max_width_px:
-        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
-        return
 
     group_x = (canvas.width - total_w) // 2
     emoji_y = row_top + (row_height - emoji_h) // 2 - e_top
@@ -305,8 +304,6 @@ def _fit_text(text, *, max_width_px, max_height_px, font_path):
         return font, text
     if width_at('…', font) > max_width_px:
         return font, ''
-    if width_at(text + '…', font) <= max_width_px:
-        return font, text + '…'
 
     # Binary search: find the largest prefix length whose candidate fits.
     lo, hi = 0, len(text)
