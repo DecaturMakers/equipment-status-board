@@ -271,7 +271,6 @@ def app_config():
             config_service.get_config('notify_eta_updated', 'true') == 'true'
         )
         form.wifi_ssid.data = config_service.get_config('wifi_ssid', '')
-        form.wifi_password.data = config_service.get_config('wifi_password', '')
         form.wifi_info_default.data = config_service.get_config('wifi_info_default', 'none')
 
     if form.validate_on_submit():
@@ -289,20 +288,28 @@ def app_config():
                 config_service.set_config(key, new_value, changed_by=current_user.username)
         string_config_keys = [
             ('wifi_ssid', ''),
-            ('wifi_password', ''),
             ('wifi_info_default', 'none'),
         ]
         for key, default in string_config_keys:
             new_value = (getattr(form, key).data or default).strip()
             if config_service.get_config(key, default) != new_value:
-                if key == 'wifi_password':
-                    log_value = '***' if new_value else ''
-                    config_service.set_config(
-                        key, new_value, changed_by=current_user.username,
-                        log_value_override=log_value,
-                    )
-                else:
-                    config_service.set_config(key, new_value, changed_by=current_user.username)
+                config_service.set_config(key, new_value, changed_by=current_user.username)
+
+        # wifi_password: blank submission = unchanged; checkbox = explicit clear; non-blank = set.
+        submitted_pw = (form.wifi_password.data or '').strip()
+        clear_pw = form.wifi_password_clear.data
+        current_pw = config_service.get_config('wifi_password', '')
+        if clear_pw and current_pw:
+            config_service.set_config(
+                'wifi_password', '', changed_by=current_user.username,
+                log_old_override='***', log_new_override='',
+            )
+        elif submitted_pw and submitted_pw != current_pw:
+            config_service.set_config(
+                'wifi_password', submitted_pw, changed_by=current_user.username,
+                log_old_override=('***' if current_pw else ''),
+                log_new_override='***',
+            )
         flash('Configuration updated successfully.', 'success')
         return redirect(url_for('admin.app_config'))
 

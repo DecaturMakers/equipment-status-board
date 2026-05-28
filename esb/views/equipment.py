@@ -256,11 +256,16 @@ _WIFI_CLAMP_ORDER = ['password', 'ssid', 'header']
 
 
 def _clamp_wifi_info(wifi_info, choices):
-    """Clamp wifi_info to the best available choice (graceful degradation)."""
+    """Clamp wifi_info to the best available choice (graceful degradation).
+
+    Unknown values degrade to 'none' (safe default).
+    """
     choice_values = {c[0] for c in choices}
     if wifi_info in choice_values:
         return wifi_info
-    idx = _WIFI_CLAMP_ORDER.index(wifi_info) if wifi_info in _WIFI_CLAMP_ORDER else 0
+    if wifi_info not in _WIFI_CLAMP_ORDER:
+        return 'none'
+    idx = _WIFI_CLAMP_ORDER.index(wifi_info)
     for fallback in _WIFI_CLAMP_ORDER[idx + 1:]:
         if fallback in choice_values:
             return fallback
@@ -280,16 +285,24 @@ def qr(id):
 
     choices, wifi_config = _build_wifi_choices()
     wifi_default = _get_wifi_default(choices)
-    form = QRGenerateForm(wifi_choices=choices)
 
-    if request.method == 'GET':
+    # On POST, accept any of the four known wifi_info values for validation so
+    # the TOCTOU clamp logic below (rather than WTForms) handles stale selections.
+    if request.method == 'POST':
+        validation_choices = [('none', 'None'), ('header', 'Header'),
+                              ('ssid', 'SSID'), ('password', 'Password')]
+        form = QRGenerateForm(wifi_choices=validation_choices)
+    else:
+        form = QRGenerateForm(wifi_choices=choices)
         form.wifi_info.data = wifi_default
-    elif request.method == 'POST':
-        _ALL_WIFI_VALUES = [('none', ''), ('header', ''), ('ssid', ''), ('password', '')]
-        form.wifi_info.choices = _ALL_WIFI_VALUES
+
+    def _render_form_with_real_choices():
+        form.wifi_info.choices = choices
+        if form.wifi_info.data not in {v for v, _ in choices}:
+            form.wifi_info.data = _clamp_wifi_info(form.wifi_info.data, choices)
+        return render_template('equipment/qr.html', equipment=eq, form=form)
 
     if form.validate_on_submit():
-        choices, wifi_config = _build_wifi_choices()
         wifi_info = _clamp_wifi_info(form.wifi_info.data, choices)
         if wifi_info != form.wifi_info.data:
             flash(
@@ -309,11 +322,11 @@ def qr(id):
             )
         except ValueError as exc:
             flash(str(exc), 'danger')
-            return render_template('equipment/qr.html', equipment=eq, form=form)
+            return _render_form_with_real_choices()
         except (OSError, RuntimeError) as exc:
             current_app.logger.error('QR render failed: %s', exc)
             flash('QR code generation failed — contact an administrator.', 'danger')
-            return render_template('equipment/qr.html', equipment=eq, form=form)
+            return _render_form_with_real_choices()
         current_app.logger.info(
             'QR downloaded: user=%s equipment_id=%s preset=%s include_name=%s include_url=%s wifi_info=%s',
             current_user.username, eq.id, preset.key,
@@ -326,7 +339,7 @@ def qr(id):
             as_attachment=True,
             download_name=filename,
         )
-    return render_template('equipment/qr.html', equipment=eq, form=form)
+    return _render_form_with_real_choices()
 
 
 @equipment_bp.route('/<int:id>/qr/preview')
@@ -351,7 +364,7 @@ def qr_preview(id):
         wifi_info = 'none'
     wifi_ssid = config_service.get_config('wifi_ssid', '')
     wifi_password = config_service.get_config('wifi_password', '')
-    if wifi_info == 'password' and not wifi_password:
+    if wifi_info == 'password' and (not wifi_password or not wifi_ssid):
         wifi_info = 'ssid'
     if wifi_info == 'ssid' and not wifi_ssid:
         wifi_info = 'header'

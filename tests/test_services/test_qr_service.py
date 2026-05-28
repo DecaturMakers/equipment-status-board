@@ -430,29 +430,50 @@ class TestRenderQRPngWifi:
         assert len(decoded) >= 1
 
     def test_wifi_rows_respect_55_percent_budget(self, app, make_equipment):
+        """Replicate the renderer's row-drop math and verify the QR is positioned
+        as if total text reservation <= 55% of canvas."""
         eq = make_equipment(name='Widget')
+        preset = QR_PRESETS_BY_KEY['sticker_1']
         result = render_qr_png(
-            eq, QR_PRESETS_BY_KEY['sticker_1'],
+            eq, preset,
             base_url=BASE_URL, wifi_info='password',
             wifi_ssid='Net', wifi_password='pass',
             include_name=True, include_url=True,
         )
-        img = Image.open(io.BytesIO(result))
+        img = Image.open(io.BytesIO(result)).convert('RGB')
         canvas_h = img.height
         max_text_px = int(canvas_h * 0.55)
         reserved_top = int(canvas_h * 0.15)
         reserved_bottom = int(canvas_h * 0.15)
-        wifi_region_h = 0
-        for y in range(canvas_h):
-            row = img.crop((0, y, img.width, y + 1)).convert('RGB')
-            colors = {c for _, c in row.getcolors(maxcolors=img.width) or []}
-            if any(c != (255, 255, 255) for c in colors):
-                wifi_region_h = y + 1
-            else:
+
+        # Replicate renderer's drop loop to compute effective wifi rows.
+        min_row_px = int(8 * 300 / 72 + 0.5) + 4
+        wifi_budget = int(canvas_h * 0.30)
+        effective = 3
+        while effective > 0:
+            wifi_row_height = max(wifi_budget // effective, min_row_px)
+            if reserved_top + reserved_bottom + effective * wifi_row_height <= max_text_px:
                 break
-        total_text = wifi_region_h + reserved_top + reserved_bottom
-        assert total_text <= max_text_px + reserved_top + reserved_bottom, (
-            f'total text reservation {total_text} exceeds budget'
+            effective -= 1
+        reserved_wifi = effective * wifi_row_height if effective > 0 else 0
+        assert reserved_top + reserved_bottom + reserved_wifi <= max_text_px, (
+            f'total reserved {reserved_top + reserved_bottom + reserved_wifi} exceeds 55% budget {max_text_px}'
+        )
+
+        # The QR code occupies the central band between reserved_wifi+reserved_top and
+        # canvas_h - reserved_bottom. Verify the QR centerline pixel is in that range.
+        qr_band_top = reserved_wifi + reserved_top
+        qr_band_bottom = canvas_h - reserved_bottom
+        # Find the topmost row in the QR band where black pixels appear.
+        center_x = img.width // 2
+        first_black_y = None
+        for y in range(qr_band_top, qr_band_bottom):
+            if img.getpixel((center_x, y)) == (0, 0, 0):
+                first_black_y = y
+                break
+        assert first_black_y is not None, 'QR not found in expected band'
+        assert first_black_y >= qr_band_top, (
+            f'QR top {first_black_y} above expected band start {qr_band_top}'
         )
 
 

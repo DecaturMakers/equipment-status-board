@@ -41,8 +41,12 @@
             </div>
             <div class="mb-3">
                 <label for="{{ form.wifi_password.id }}" class="form-label">{{ form.wifi_password.label.text }}</label>
-                {{ form.wifi_password(class="form-control", type="password", autocomplete="off") }}
-                <div class="form-text">WiFi password shown <strong>in plaintext</strong> on printed QR labels. Anyone who can see the label can read the password. Leave blank to hide password option.</div>
+                {{ form.wifi_password(class="form-control", autocomplete="off", placeholder="(leave blank to keep current value)") }}
+                <div class="form-text">WiFi password shown <strong>in plaintext</strong> on printed QR labels. Anyone who can see the label can read the password. Leave blank to keep the current stored value.</div>
+                <div class="form-check mt-2">
+                    {{ form.wifi_password_clear(class="form-check-input") }}
+                    <label class="form-check-label" for="{{ form.wifi_password_clear.id }}">{{ form.wifi_password_clear.label.text }}</label>
+                </div>
             </div>
             <div class="mb-3">
                 <label for="{{ form.wifi_info_default.id }}" class="form-label">{{ form.wifi_info_default.label.text }}</label>

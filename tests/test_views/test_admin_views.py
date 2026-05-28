@@ -1131,6 +1131,44 @@ class TestAppConfigWiFi:
         assert pw_entries[0]['data']['new_value'] == '***'
         assert 'supersecret' not in str(pw_entries[0])
 
+    def test_config_wifi_password_clear_logs_distinguishable(self, staff_client, staff_user, capture):
+        """Clearing a password produces a distinguishable audit entry (old='***', new='')."""
+        from esb.services import config_service
+        config_service.set_config('wifi_password', 'existingpw', 'test')
+        capture.records.clear()
+        staff_client.post('/admin/config', data={
+            'wifi_password_clear': 'y',
+            'wifi_info_default': 'none',
+        })
+        entries = [
+            json.loads(r.message) for r in capture.records
+            if 'app_config.updated' in r.message
+        ]
+        pw_entries = [e for e in entries if e['data']['key'] == 'wifi_password']
+        assert len(pw_entries) == 1
+        assert pw_entries[0]['data']['old_value'] == '***'
+        assert pw_entries[0]['data']['new_value'] == ''
+        assert 'existingpw' not in str(pw_entries[0])
+        assert config_service.get_config('wifi_password') == ''
+
+    def test_config_wifi_password_blank_means_unchanged(self, staff_client, staff_user):
+        """Submitting blank password without the clear checkbox preserves existing value."""
+        from esb.services import config_service
+        config_service.set_config('wifi_password', 'keepme', 'test')
+        staff_client.post('/admin/config', data={
+            'wifi_password': '',
+            'wifi_info_default': 'none',
+        })
+        assert config_service.get_config('wifi_password') == 'keepme'
+
+    def test_config_wifi_password_not_prefilled_in_html(self, staff_client, staff_user):
+        """Stored password value must not be reflected in the HTML value attribute."""
+        from esb.services import config_service
+        config_service.set_config('wifi_password', 'secret-no-leak', 'test')
+        resp = staff_client.get('/admin/config')
+        assert resp.status_code == 200
+        assert b'secret-no-leak' not in resp.data
+
     def test_config_wifi_password_field_is_masked(self, staff_client, staff_user):
         resp = staff_client.get('/admin/config')
         assert resp.status_code == 200

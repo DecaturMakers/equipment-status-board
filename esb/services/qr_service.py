@@ -146,8 +146,9 @@ def render_qr_png(
     )
     canvas.paste(qr_img, (paste_x, paste_y))
 
-    max_text_width = int(qr_px * 1.2)
-    wifi_max_text_width = max(int(qr_px * 1.2), int(canvas_w_px * 0.90))
+    drawable_w = canvas_w_px - 2 * margin
+    max_text_width = min(int(qr_px * 1.2), drawable_w)
+    wifi_max_text_width = min(max(int(qr_px * 1.2), int(canvas_w_px * 0.90)), drawable_w)
 
     for i, row_info in enumerate(wifi_rows):
         row_top = i * wifi_row_height
@@ -182,13 +183,17 @@ def render_qr_png(
 
 
 def _wifi_row_texts(wifi_info, wifi_ssid, wifi_password):
-    """Return list of row dicts for the WiFi info section."""
+    """Return list of row dicts for the WiFi info section.
+
+    Defensive: requires non-empty SSID for 'ssid'/'password' and non-empty
+    password for 'password'. Degrades silently if requirements unmet.
+    """
     if wifi_info == 'none':
         return []
     rows = [{'type': 'header'}]
-    if wifi_info in ('ssid', 'password'):
+    if wifi_info in ('ssid', 'password') and wifi_ssid:
         rows.append({'type': 'text', 'text': f'Network: {wifi_ssid}'})
-    if wifi_info == 'password':
+    if wifi_info == 'password' and wifi_ssid and wifi_password:
         rows.append({'type': 'text', 'text': f'Password: {wifi_password}'})
     return rows
 
@@ -197,13 +202,14 @@ def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
     """Draw the WiFi emoji + 'Must be on WiFi' text centered in a row."""
     text_font_path = os.path.join(current_app.static_folder, 'fonts', 'DejaVuSans-Bold.ttf')  # noqa: PTH118
     emoji_font_path = os.path.join(current_app.static_folder, 'fonts', 'NotoEmoji-Bold.ttf')  # noqa: PTH118
-    if not os.path.isfile(emoji_font_path):
-        raise RuntimeError(
-            f'QR WiFi emoji font missing at {emoji_font_path}. '
-            'Ensure NotoEmoji-Bold.ttf is vendored in esb/static/fonts/.'
-        )
-
     label = 'Must be on WiFi'
+    if not os.path.isfile(emoji_font_path):
+        current_app.logger.warning(
+            'QR WiFi emoji font missing at %s — falling back to text-only header.',
+            emoji_font_path,
+        )
+        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
+        return
     gap = max(4, row_height // 10)
 
     text_font, rendered = _fit_text(

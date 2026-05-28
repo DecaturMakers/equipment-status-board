@@ -1,7 +1,7 @@
 """Admin forms for user management."""
 
 from flask_wtf import FlaskForm
-from wtforms import BooleanField, HiddenField, SelectField, StringField, SubmitField
+from wtforms import BooleanField, HiddenField, PasswordField, SelectField, StringField, SubmitField
 from wtforms.validators import DataRequired, Email, Length, Optional
 
 
@@ -40,7 +40,8 @@ class AppConfigForm(FlaskForm):
     notify_status_changed = BooleanField('Repair status changed (open transitions)')
     notify_eta_updated = BooleanField('ETA set or updated')
     wifi_ssid = StringField('WiFi Network Name (SSID)', validators=[Optional(), Length(max=100)])
-    wifi_password = StringField('WiFi Password', validators=[Optional(), Length(max=100)])
+    wifi_password = PasswordField('WiFi Password', validators=[Optional(), Length(max=100)])
+    wifi_password_clear = BooleanField('Clear stored WiFi password')
     wifi_info_default = SelectField(
         'Default WiFi Info on QR Labels',
         choices=[
