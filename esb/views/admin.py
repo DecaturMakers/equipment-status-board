@@ -270,6 +270,9 @@ def app_config():
         form.notify_eta_updated.data = (
             config_service.get_config('notify_eta_updated', 'true') == 'true'
         )
+        form.wifi_ssid.data = config_service.get_config('wifi_ssid', '')
+        form.wifi_password.data = config_service.get_config('wifi_password', '')
+        form.wifi_info_default.data = config_service.get_config('wifi_info_default', 'none')
 
     if form.validate_on_submit():
         config_keys = [
@@ -282,6 +285,15 @@ def app_config():
         ]
         for key, default in config_keys:
             new_value = 'true' if getattr(form, key).data else 'false'
+            if config_service.get_config(key, default) != new_value:
+                config_service.set_config(key, new_value, changed_by=current_user.username)
+        string_config_keys = [
+            ('wifi_ssid', ''),
+            ('wifi_password', ''),
+            ('wifi_info_default', 'none'),
+        ]
+        for key, default in string_config_keys:
+            new_value = (getattr(form, key).data or default).strip()
             if config_service.get_config(key, default) != new_value:
                 config_service.set_config(key, new_value, changed_by=current_user.username)
         flash('Configuration updated successfully.', 'success')

@@ -26,7 +26,7 @@ from esb.forms.equipment_forms import (
     PhotoUploadForm,
     QRGenerateForm,
 )
-from esb.services import equipment_service, qr_service, repair_service, upload_service
+from esb.services import config_service, equipment_service, qr_service, repair_service, upload_service
 from esb.utils.decorators import role_required
 from esb.utils.exceptions import ValidationError
 from esb.utils.text import get_normalized_base_url, slugify_filename
@@ -230,6 +230,43 @@ def _get_active_equipment_or_404(id):
     return eq
 
 
+def _build_wifi_choices():
+    """Build WiFi dropdown choices based on current config."""
+    wifi_ssid = config_service.get_config('wifi_ssid', '')
+    wifi_password = config_service.get_config('wifi_password', '')
+    choices = [
+        ('none', 'None'),
+        ('header', '\U0001f6dc Must be on WiFi'),
+    ]
+    if wifi_ssid:
+        choices.append(('ssid', '\U0001f6dc WiFi + SSID'))
+    if wifi_ssid and wifi_password:
+        choices.append(('password', '\U0001f6dc WiFi + SSID + Password'))
+    return choices, {'wifi_ssid': wifi_ssid, 'wifi_password': wifi_password}
+
+
+def _get_wifi_default(choices):
+    """Get the configured default WiFi selection, validated against available choices."""
+    default = config_service.get_config('wifi_info_default', 'none')
+    choice_values = {c[0] for c in choices}
+    return default if default in choice_values else 'none'
+
+
+_WIFI_CLAMP_ORDER = ['password', 'ssid', 'header']
+
+
+def _clamp_wifi_info(wifi_info, choices):
+    """Clamp wifi_info to the best available choice (graceful degradation)."""
+    choice_values = {c[0] for c in choices}
+    if wifi_info in choice_values:
+        return wifi_info
+    idx = _WIFI_CLAMP_ORDER.index(wifi_info) if wifi_info in _WIFI_CLAMP_ORDER else 0
+    for fallback in _WIFI_CLAMP_ORDER[idx + 1:]:
+        if fallback in choice_values:
+            return fallback
+    return 'none'
+
+
 @equipment_bp.route('/<int:id>/qr', methods=['GET', 'POST'])
 @login_required
 def qr(id):
@@ -241,8 +278,21 @@ def qr(id):
         flash(str(exc), 'danger')
         return redirect(url_for('equipment.detail', id=id))
 
-    form = QRGenerateForm()
+    choices, wifi_config = _build_wifi_choices()
+    wifi_default = _get_wifi_default(choices)
+    form = QRGenerateForm(wifi_choices=choices)
+
+    if request.method == 'GET':
+        form.wifi_info.data = wifi_default
+
     if form.validate_on_submit():
+        choices, wifi_config = _build_wifi_choices()
+        wifi_info = _clamp_wifi_info(form.wifi_info.data, choices)
+        if wifi_info != form.wifi_info.data:
+            flash(
+                f"WiFi settings changed since you loaded this page — your download was adjusted to '{wifi_info}'.",
+                'info',
+            )
         preset = qr_service.QR_PRESETS_BY_KEY[form.size.data]
         try:
             png_bytes = qr_service.render_qr_png(
@@ -250,6 +300,9 @@ def qr(id):
                 include_name=form.include_name.data,
                 include_url=form.include_url.data,
                 base_url=base_url,
+                wifi_info=wifi_info,
+                wifi_ssid=wifi_config['wifi_ssid'],
+                wifi_password=wifi_config['wifi_password'],
             )
         except ValueError as exc:
             flash(str(exc), 'danger')
@@ -259,9 +312,9 @@ def qr(id):
             flash('QR code generation failed — contact an administrator.', 'danger')
             return render_template('equipment/qr.html', equipment=eq, form=form)
         current_app.logger.info(
-            'QR downloaded: user=%s equipment_id=%s preset=%s include_name=%s include_url=%s',
+            'QR downloaded: user=%s equipment_id=%s preset=%s include_name=%s include_url=%s wifi_info=%s',
             current_user.username, eq.id, preset.key,
-            form.include_name.data, form.include_url.data,
+            form.include_name.data, form.include_url.data, wifi_info,
         )
         filename = f'qr-{eq.id}-{slugify_filename(eq.name)}.png'
         return send_file(
@@ -276,7 +329,7 @@ def qr(id):
 @equipment_bp.route('/<int:id>/qr/preview')
 @login_required
 def qr_preview(id):
-    """Inline PNG preview. Query params: size, include_name, include_url."""
+    """Inline PNG preview. Query params: size, include_name, include_url, wifi_info."""
     eq = _get_active_equipment_or_404(id)
     try:
         base_url = get_normalized_base_url(current_app.config.get('ESB_BASE_URL', ''))
@@ -290,12 +343,23 @@ def qr_preview(id):
     include_name = request.args.get('include_name') in ('1', 'true', 'on')
     include_url = request.args.get('include_url') in ('1', 'true', 'on')
 
+    wifi_info = request.args.get('wifi_info', 'none')
+    wifi_ssid = config_service.get_config('wifi_ssid', '')
+    wifi_password = config_service.get_config('wifi_password', '')
+    if wifi_info == 'password' and not wifi_password:
+        wifi_info = 'ssid'
+    if wifi_info == 'ssid' and not wifi_ssid:
+        wifi_info = 'header'
+
     try:
         png_bytes = qr_service.render_qr_png(
             eq, preset,
             include_name=include_name,
             include_url=include_url,
             base_url=base_url,
+            wifi_info=wifi_info,
+            wifi_ssid=wifi_ssid,
+            wifi_password=wifi_password,
         )
     except ValueError:
         abort(400)
@@ -315,7 +379,6 @@ def _can_edit_docs() -> bool:
     if current_user.role == 'staff':
         return True
     if current_user.role == 'technician':
-        from esb.services import config_service
         return config_service.get_config('tech_doc_edit_enabled', 'false').lower() == 'true'
     return False
 

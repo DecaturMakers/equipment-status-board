@@ -136,6 +136,11 @@ class QRGenerateForm(FlaskForm):
         validators=[DataRequired()],
         default='sticker_2',
     )
+    wifi_info = SelectField('WiFi Info')
     include_name = BooleanField('Include equipment name above QR', default=False)
     include_url = BooleanField('Include URL below QR', default=False)
     submit = SubmitField('Download QR Code')
+
+    def __init__(self, *args, wifi_choices=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.wifi_info.choices = wifi_choices or [('none', 'None')]

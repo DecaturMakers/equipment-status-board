@@ -23,6 +23,10 @@
                 <label for="{{ form.size.id }}" class="form-label">{{ form.size.label.text }}</label>
                 {{ form.size(class="form-select") }}
             </div>
+            <div class="mb-3">
+                <label for="{{ form.wifi_info.id }}" class="form-label">{{ form.wifi_info.label.text }}</label>
+                {{ form.wifi_info(class="form-select") }}
+            </div>
             <div class="form-check mb-2">
                 {{ form.include_name(class="form-check-input") }}
                 <label class="form-check-label" for="{{ form.include_name.id }}">{{ form.include_name.label.text }}</label>
@@ -39,7 +43,7 @@
         <h5>Preview</h5>
         <img id="qr-preview"
              alt="QR preview"
-             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', include_name=form.include_name.data, include_url=form.include_url.data) }}"
+             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', include_name=form.include_name.data, include_url=form.include_url.data, wifi_info=form.wifi_info.data or 'none') }}"
              class="img-fluid border"
              style="max-width: 400px;">
         <p class="text-muted small mt-2">Preview is scaled to fit; downloaded PNG is at 300 DPI.</p>

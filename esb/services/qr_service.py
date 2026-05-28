@@ -60,6 +60,9 @@ def render_qr_png(
     include_name: bool = False,
     include_url: bool = False,
     base_url: str,
+    wifi_info: str = 'none',
+    wifi_ssid: str = '',
+    wifi_password: str = '',
 ) -> bytes:
     """Render a QR code PNG for an equipment item and return the bytes.
 
@@ -68,10 +71,44 @@ def render_qr_png(
     """
     canvas_w_px = _px(preset.width_in)
     canvas_h_px = _px(preset.height_in)
+
+    wifi_rows = _wifi_row_texts(wifi_info, wifi_ssid, wifi_password)
+    num_wifi_rows = len(wifi_rows)
+
     reserved_top = int(canvas_h_px * 0.15) if include_name else 0
     reserved_bottom = int(canvas_h_px * 0.15) if include_url else 0
+
+    if num_wifi_rows > 0:
+        min_row_px = _pt_to_px(_MIN_FONT_PT) + 4
+        wifi_budget = int(canvas_h_px * 0.30)
+        wifi_row_height = max(wifi_budget // num_wifi_rows, min_row_px)
+        effective_wifi_rows = num_wifi_rows
+
+        while (reserved_top + reserved_bottom + effective_wifi_rows * wifi_row_height
+               > int(canvas_h_px * 0.55)):
+            effective_wifi_rows -= 1
+            if effective_wifi_rows <= 0:
+                break
+            current_app.logger.warning(
+                'QR WiFi: dropping row %d for preset %s (insufficient space)',
+                effective_wifi_rows + 1, preset.key,
+            )
+
+        if effective_wifi_rows > 0:
+            wifi_rows = wifi_rows[:effective_wifi_rows]
+            wifi_row_height = wifi_budget // effective_wifi_rows
+            wifi_row_height = max(wifi_row_height, min_row_px)
+            reserved_wifi = effective_wifi_rows * wifi_row_height
+        else:
+            wifi_rows = []
+            wifi_row_height = 0
+            reserved_wifi = 0
+    else:
+        reserved_wifi = 0
+        wifi_row_height = 0
+
     margin = max(4, int(canvas_w_px * 0.02))
-    avail = min(canvas_w_px, canvas_h_px - reserved_top - reserved_bottom) - margin
+    avail = min(canvas_w_px, canvas_h_px - reserved_wifi - reserved_top - reserved_bottom) - margin
 
     qr_url = f'{base_url}/public/equipment/{equipment.id}'
     qr = qrcode.QRCode(
@@ -81,8 +118,6 @@ def render_qr_png(
     )
     qr.add_data(qr_url)
     qr.make(fit=True)
-    # qr.get_matrix() already includes the border on each side, so this
-    # equals modules_count + 2 * border — do NOT add border again.
     native = len(qr.get_matrix())
     if avail < native:
         raise ValueError(
@@ -107,14 +142,33 @@ def render_qr_png(
 
     canvas = Image.new('RGB', (canvas_w_px, canvas_h_px), 'white')
     paste_x = (canvas_w_px - qr_px) // 2
-    paste_y = reserved_top + ((canvas_h_px - reserved_top - reserved_bottom) - qr_px) // 2
+    paste_y = (
+        reserved_wifi + reserved_top
+        + ((canvas_h_px - reserved_wifi - reserved_top - reserved_bottom) - qr_px) // 2
+    )
     canvas.paste(qr_img, (paste_x, paste_y))
 
     max_text_width = int(qr_px * 1.2)
+    wifi_max_text_width = max(int(qr_px * 1.2), int(canvas_w_px * 0.90))
+
+    for i, row_info in enumerate(wifi_rows):
+        row_top = i * wifi_row_height
+        if row_info['type'] == 'header':
+            _draw_wifi_header_row(
+                canvas, row_top=row_top, row_height=wifi_row_height,
+                max_width_px=wifi_max_text_width,
+            )
+        else:
+            _draw_text_row(
+                canvas, row_info['text'],
+                row_top=row_top, row_height=wifi_row_height,
+                max_width_px=wifi_max_text_width,
+            )
+
     if include_name:
         _draw_text_row(
             canvas, equipment.name,
-            row_top=0, row_height=reserved_top, max_width_px=max_text_width,
+            row_top=reserved_wifi, row_height=reserved_top, max_width_px=max_text_width,
         )
     if include_url:
         _draw_text_row(
@@ -127,6 +181,76 @@ def render_qr_png(
     buf = io.BytesIO()
     canvas.save(buf, format='PNG')
     return buf.getvalue()
+
+
+def _wifi_row_texts(wifi_info, wifi_ssid, wifi_password):
+    """Return list of row dicts for the WiFi info section."""
+    if wifi_info == 'none':
+        return []
+    rows = [{'type': 'header'}]
+    if wifi_info in ('ssid', 'password'):
+        rows.append({'type': 'text', 'text': f'Network: {wifi_ssid}'})
+    if wifi_info == 'password':
+        rows.append({'type': 'text', 'text': f'Password: {wifi_password}'})
+    return rows
+
+
+def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
+    """Draw the WiFi emoji + 'Must be on WiFi' text centered in a row."""
+    text_font_path = os.path.join(current_app.static_folder, 'fonts', 'DejaVuSans-Bold.ttf')  # noqa: PTH118
+    emoji_font_path = os.path.join(current_app.static_folder, 'fonts', 'NotoEmoji-Bold.ttf')  # noqa: PTH118
+    if not os.path.isfile(emoji_font_path):
+        raise RuntimeError(
+            f'QR WiFi emoji font missing at {emoji_font_path}. '
+            'Ensure NotoEmoji-Bold.ttf is vendored in esb/static/fonts/.'
+        )
+
+    label = 'Must be on WiFi'
+    gap = max(4, row_height // 10)
+
+    text_font, rendered = _fit_text(
+        label, max_width_px=int(max_width_px * 0.75),
+        max_height_px=row_height, font_path=text_font_path,
+    )
+    if rendered == '':
+        return
+
+    emoji_size_px = text_font.size
+    emoji_font = _load_font(emoji_font_path, emoji_size_px)
+    draw = ImageDraw.Draw(canvas)
+
+    emoji_char = '\U0001f6dc'
+    e_left, e_top, e_right, e_bottom = draw.textbbox((0, 0), emoji_char, font=emoji_font)
+    emoji_w = e_right - e_left
+    emoji_h = e_bottom - e_top
+
+    t_left, t_top, t_right, t_bottom = draw.textbbox((0, 0), rendered, font=text_font)
+    text_w = t_right - t_left
+    text_h = t_bottom - t_top
+
+    total_w = emoji_w + gap + text_w
+    if total_w > max_width_px:
+        text_font, rendered = _fit_text(
+            label, max_width_px=max_width_px - emoji_w - gap,
+            max_height_px=row_height, font_path=text_font_path,
+        )
+        if rendered == '':
+            return
+        t_left, t_top, t_right, t_bottom = draw.textbbox((0, 0), rendered, font=text_font)
+        text_w = t_right - t_left
+        text_h = t_bottom - t_top
+        total_w = emoji_w + gap + text_w
+
+    if emoji_w > max_width_px:
+        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
+        return
+
+    group_x = (canvas.width - total_w) // 2
+    emoji_y = row_top + (row_height - emoji_h) // 2 - e_top
+    text_y = row_top + (row_height - text_h) // 2 - t_top
+
+    draw.text((group_x - e_left, emoji_y), emoji_char, fill='black', font=emoji_font)
+    draw.text((group_x + emoji_w + gap - t_left, text_y), rendered, fill='black', font=text_font)
 
 
 def _draw_text_row(canvas, text, *, row_top, row_height, max_width_px):
@@ -177,6 +301,8 @@ def _fit_text(text, *, max_width_px, max_height_px, font_path):
         size_px -= step
 
     font = _load_font(font_path, min_px)
+    if width_at(text, font) <= max_width_px:
+        return font, text
     if width_at('…', font) > max_width_px:
         return font, ''
     if width_at(text + '…', font) <= max_width_px:

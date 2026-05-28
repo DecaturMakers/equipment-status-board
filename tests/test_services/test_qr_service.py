@@ -299,6 +299,135 @@ class TestFitText:
         assert rendered == ''
 
 
+class TestRenderQRPngWifi:
+    """Tests for WiFi header rendering in QR PNGs."""
+
+    def test_wifi_header_renders_pixels_at_top(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='header',
+        )
+        img = Image.open(io.BytesIO(result)).convert('RGB')
+        canvas_h = img.height
+        wifi_budget = int(canvas_h * 0.30)
+        wifi_row_height = wifi_budget
+        top = img.crop((0, 0, img.width, wifi_row_height))
+        pixels = top.load()
+        min_x, max_x = img.width, -1
+        for y in range(top.height):
+            for x in range(top.width):
+                if pixels[x, y] != (255, 255, 255):
+                    min_x = min(min_x, x)
+                    max_x = max(max_x, x)
+        assert max_x >= 0, 'no non-white pixels in WiFi header region'
+        content_width = max_x - min_x + 1
+        assert content_width >= 2 * wifi_row_height, (
+            f'content width {content_width} should span at least 2x row height {wifi_row_height}'
+        )
+
+    def test_wifi_none_renders_no_wifi_pixels(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result_none = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='none',
+        )
+        result_default = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL,
+        )
+        img_none = Image.open(io.BytesIO(result_none)).convert('RGB')
+        img_default = Image.open(io.BytesIO(result_default)).convert('RGB')
+        assert list(img_none.get_flattened_data()) == list(img_default.get_flattened_data())
+
+    def test_wifi_ssid_renders_two_rows(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='ssid', wifi_ssid='TestNet',
+        )
+        img = Image.open(io.BytesIO(result)).convert('RGB')
+        canvas_h = img.height
+        wifi_budget = int(canvas_h * 0.30)
+        row_h = wifi_budget // 2
+        for i in range(2):
+            row = img.crop((0, i * row_h, img.width, (i + 1) * row_h))
+            colors = {c for _, c in row.getcolors(maxcolors=256 * 256) or []}
+            assert any(c != (255, 255, 255) for c in colors), f'WiFi row {i} is all white'
+
+    def test_wifi_password_renders_three_rows(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='password',
+            wifi_ssid='TestNet', wifi_password='secret123',
+        )
+        img = Image.open(io.BytesIO(result)).convert('RGB')
+        canvas_h = img.height
+        wifi_budget = int(canvas_h * 0.30)
+        row_h = wifi_budget // 3
+        for i in range(3):
+            row = img.crop((0, i * row_h, img.width, (i + 1) * row_h))
+            colors = {c for _, c in row.getcolors(maxcolors=256 * 256) or []}
+            assert any(c != (255, 255, 255) for c in colors), f'WiFi row {i} is all white'
+
+    def test_wifi_header_qr_still_decodes(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        eq.id = 42
+        result = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='header',
+        )
+        decoded = decode(Image.open(io.BytesIO(result)))
+        assert len(decoded) >= 1
+        assert decoded[0].data.decode('utf-8') == f'{BASE_URL}/public/equipment/42'
+
+    def test_wifi_info_none_backward_compatible(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result_none = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='none',
+        )
+        result_default = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL,
+        )
+        img_none = Image.open(io.BytesIO(result_none)).convert('RGB')
+        img_default = Image.open(io.BytesIO(result_default)).convert('RGB')
+        assert list(img_none.get_flattened_data()) == list(img_default.get_flattened_data())
+
+        result_with_name = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='none', include_name=True,
+        )
+        img_name = Image.open(io.BytesIO(result_with_name)).convert('RGB')
+        top_row_height = int(img_name.height * 0.15)
+        top = img_name.crop((0, 0, img_name.width, top_row_height))
+        colors = {c for _, c in top.getcolors(maxcolors=256 * 256) or []}
+        assert any(c != (255, 255, 255) for c in colors), 'name row should start at y=0'
+
+    def test_wifi_header_small_preset(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_1'],
+            base_url=BASE_URL, wifi_info='header',
+        )
+        img = Image.open(io.BytesIO(result))
+        assert img.format == 'PNG'
+        decoded = decode(img)
+        assert len(decoded) >= 1
+
+    def test_wifi_all_rows_small_preset(self, app, make_equipment):
+        eq = make_equipment(name='Widget')
+        result = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['avery_5160'],
+            base_url=BASE_URL, wifi_info='password',
+            wifi_ssid='Net', wifi_password='pass',
+        )
+        img = Image.open(io.BytesIO(result))
+        assert img.format == 'PNG'
+
+
 class TestNoFormImport:
     def test_qr_service_does_not_import_forms(self):
         import esb.services.qr_service as svc

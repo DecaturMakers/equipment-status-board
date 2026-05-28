@@ -1604,7 +1604,7 @@ class TestEquipmentQR:
         eq = make_equipment('Table Saw #1!', 'SawStop', 'PCS')
         resp = staff_client.post(
             f'/equipment/{eq.id}/qr',
-            data={'size': 'sticker_2', 'submit': 'Download QR Code'},
+            data={'size': 'sticker_2', 'wifi_info': 'none', 'submit': 'Download QR Code'},
         )
         assert resp.status_code == 200
         assert resp.content_type.startswith('image/png')
@@ -1640,7 +1640,7 @@ class TestEquipmentQR:
         monkeypatch.setattr(qr_service, 'render_qr_png', raiser)
         resp = staff_client.post(
             f'/equipment/{eq.id}/qr',
-            data={'size': 'sticker_2', 'submit': 'Download QR Code'},
+            data={'size': 'sticker_2', 'wifi_info': 'none', 'submit': 'Download QR Code'},
         )
         assert resp.status_code == 200
         assert b'choose a larger preset' in resp.data
@@ -1735,3 +1735,104 @@ class TestEquipmentQR:
         # qr-preview img points at the preview URL.
         assert b'id="qr-preview"' in resp.data
         assert f'/equipment/{eq.id}/qr/preview'.encode() in resp.data
+
+    # --- WiFi dropdown tests ---
+
+    def test_qr_form_shows_wifi_dropdown(self, staff_client, make_equipment, configured_base_url):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert resp.status_code == 200
+        assert b'name="wifi_info"' in resp.data
+
+    def test_qr_form_wifi_choices_no_config(self, staff_client, make_equipment, configured_base_url):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        html = resp.data.decode()
+        assert 'value="none"' in html
+        assert 'value="header"' in html
+        assert 'value="ssid"' not in html
+        assert 'value="password"' not in html
+
+    def test_qr_form_wifi_choices_ssid_only(self, staff_client, make_equipment, configured_base_url):
+        from esb.services import config_service
+        config_service.set_config('wifi_ssid', 'MyNet', 'test')
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        html = resp.data.decode()
+        assert 'value="ssid"' in html
+        assert 'value="password"' not in html
+
+    def test_qr_form_wifi_choices_ssid_and_password(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        from esb.services import config_service
+        config_service.set_config('wifi_ssid', 'MyNet', 'test')
+        config_service.set_config('wifi_password', 'secret', 'test')
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        html = resp.data.decode()
+        assert 'value="none"' in html
+        assert 'value="header"' in html
+        assert 'value="ssid"' in html
+        assert 'value="password"' in html
+
+    def test_qr_form_wifi_default_from_config(self, staff_client, make_equipment, configured_base_url):
+        from esb.services import config_service
+        config_service.set_config('wifi_info_default', 'header', 'test')
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        html = resp.data.decode()
+        assert 'selected' in html
+        idx_header = html.find('value="header"')
+        assert idx_header != -1
+        tag_start = html.rfind('<option', max(0, idx_header - 100), idx_header)
+        tag_end = html.find('>', idx_header)
+        option_tag = html[tag_start:tag_end + 1]
+        assert 'selected' in option_tag
+
+    def test_qr_form_wifi_default_fallback_no_password(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        from esb.services import config_service
+        config_service.set_config('wifi_info_default', 'password', 'test')
+        config_service.set_config('wifi_ssid', 'MyNet', 'test')
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        html = resp.data.decode()
+        idx_none = html.find('value="none"')
+        assert idx_none != -1
+        tag_start = html.rfind('<option', max(0, idx_none - 100), idx_none)
+        tag_end = html.find('>', idx_none)
+        option_tag = html[tag_start:tag_end + 1]
+        assert 'selected' in option_tag
+
+    def test_qr_form_wifi_default_fallback_no_ssid(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        from esb.services import config_service
+        config_service.set_config('wifi_info_default', 'ssid', 'test')
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        html = resp.data.decode()
+        idx_none = html.find('value="none"')
+        assert idx_none != -1
+        tag_start = html.rfind('<option', max(0, idx_none - 100), idx_none)
+        tag_end = html.find('>', idx_none)
+        option_tag = html[tag_start:tag_end + 1]
+        assert 'selected' in option_tag
+
+    def test_qr_preview_includes_wifi_param(self, staff_client, make_equipment, configured_base_url):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_2&wifi_info=header')
+        assert resp.status_code == 200
+        assert resp.content_type.startswith('image/png')
+
+    def test_qr_download_with_wifi_header(self, staff_client, make_equipment, configured_base_url):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'wifi_info': 'header', 'submit': 'Download QR Code'},
+        )
+        assert resp.status_code == 200
+        assert resp.content_type.startswith('image/png')
+        assert 'attachment' in resp.headers.get('Content-Disposition', '')

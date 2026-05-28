@@ -31,6 +31,29 @@
 
     <div class="card mb-4">
         <div class="card-header">
+            <h5 class="card-title mb-0">WiFi / QR Label Settings</h5>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="{{ form.wifi_ssid.id }}" class="form-label">{{ form.wifi_ssid.label.text }}</label>
+                {{ form.wifi_ssid(class="form-control") }}
+                <div class="form-text">Network name shown on QR labels. Leave blank to hide SSID-related options.</div>
+            </div>
+            <div class="mb-3">
+                <label for="{{ form.wifi_password.id }}" class="form-label">{{ form.wifi_password.label.text }}</label>
+                {{ form.wifi_password(class="form-control") }}
+                <div class="form-text">WiFi password shown <strong>in plaintext</strong> on printed QR labels. Anyone who can see the label can read the password. Leave blank to hide password option.</div>
+            </div>
+            <div class="mb-3">
+                <label for="{{ form.wifi_info_default.id }}" class="form-label">{{ form.wifi_info_default.label.text }}</label>
+                {{ form.wifi_info_default(class="form-select") }}
+                <div class="form-text">Default selection for the WiFi Info dropdown on the QR code generation form. If the selected default requires SSID or password that is not configured above, users will see "None" selected instead.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header">
             <h5 class="card-title mb-0">Notification Triggers</h5>
         </div>
         <div class="card-body">

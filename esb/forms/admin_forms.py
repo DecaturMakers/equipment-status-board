@@ -2,7 +2,7 @@
 
 from flask_wtf import FlaskForm
 from wtforms import BooleanField, HiddenField, SelectField, StringField, SubmitField
-from wtforms.validators import DataRequired, Email, Length
+from wtforms.validators import DataRequired, Email, Length, Optional
 
 
 class UserCreateForm(FlaskForm):
@@ -39,6 +39,17 @@ class AppConfigForm(FlaskForm):
     notify_severity_changed = BooleanField('Severity level changed')
     notify_status_changed = BooleanField('Repair status changed (open transitions)')
     notify_eta_updated = BooleanField('ETA set or updated')
+    wifi_ssid = StringField('WiFi Network Name (SSID)', validators=[Optional(), Length(max=100)])
+    wifi_password = StringField('WiFi Password', validators=[Optional(), Length(max=100)])
+    wifi_info_default = SelectField(
+        'Default WiFi Info on QR Labels',
+        choices=[
+            ('none', 'None'),
+            ('header', 'WiFi header only'),
+            ('ssid', 'WiFi header + SSID'),
+            ('password', 'WiFi header + SSID + Password'),
+        ],
+    )
     submit = SubmitField('Save Configuration')
 
 

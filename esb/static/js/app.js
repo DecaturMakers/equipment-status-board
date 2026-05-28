@@ -247,7 +247,9 @@ document.addEventListener('DOMContentLoaded', function () {
     var size = form.querySelector('[name="size"]').value;
     var incName = form.querySelector('[name="include_name"]').checked ? '1' : '';
     var incUrl = form.querySelector('[name="include_url"]').checked ? '1' : '';
+    var wifiInfo = form.querySelector('[name="wifi_info"]');
     var params = new URLSearchParams({ size: size });
+    if (wifiInfo) params.set('wifi_info', wifiInfo.value);
     if (incName) params.set('include_name', '1');
     if (incUrl) params.set('include_url', '1');
     img.src = base + '?' + params.toString();
