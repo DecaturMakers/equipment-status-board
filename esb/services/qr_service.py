@@ -185,10 +185,12 @@ def render_qr_png(
 def _wifi_row_texts(wifi_info, wifi_ssid, wifi_password):
     """Return list of row dicts for the WiFi info section.
 
-    Defensive: requires non-empty SSID for 'ssid'/'password' and non-empty
-    password for 'password'. Degrades silently if requirements unmet.
+    Defensive: only renders known wifi_info values ('header', 'ssid', 'password').
+    Any other value (including 'none', None, or garbage) renders nothing.
+    Also requires non-empty SSID for 'ssid'/'password' and non-empty password
+    for 'password'; degrades silently if requirements unmet.
     """
-    if wifi_info == 'none':
+    if wifi_info not in ('header', 'ssid', 'password'):
         return []
     rows = [{'type': 'header'}]
     if wifi_info in ('ssid', 'password') and wifi_ssid:

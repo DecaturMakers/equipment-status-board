@@ -417,6 +417,22 @@ class TestRenderQRPngWifi:
         decoded = decode(img)
         assert len(decoded) >= 1
 
+    def test_wifi_unknown_value_renders_no_wifi(self, app, make_equipment):
+        """Service-layer defense: unknown wifi_info values produce no WiFi rows,
+        identical to wifi_info='none'."""
+        eq = make_equipment(name='Widget')
+        result_bogus = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='bogus',
+        )
+        result_none = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_4'],
+            base_url=BASE_URL, wifi_info='none',
+        )
+        img_bogus = Image.open(io.BytesIO(result_bogus)).convert('RGB')
+        img_none = Image.open(io.BytesIO(result_none)).convert('RGB')
+        assert img_bogus.tobytes() == img_none.tobytes()
+
     def test_wifi_all_rows_small_preset(self, app, make_equipment):
         eq = make_equipment(name='Widget')
         result = render_qr_png(
