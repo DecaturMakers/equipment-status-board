@@ -291,12 +291,18 @@ def app_config():
             ('wifi_info_default', 'none'),
         ]
         for key, default in string_config_keys:
-            new_value = (getattr(form, key).data or default).strip()
+            # Persist user input verbatim: SSIDs may legitimately contain leading/
+            # trailing spaces, and wifi_info_default is a SelectField with fixed
+            # whitespace-free choices.
+            new_value = getattr(form, key).data
+            if new_value is None:
+                new_value = default
             if config_service.get_config(key, default) != new_value:
                 config_service.set_config(key, new_value, changed_by=current_user.username)
 
         # wifi_password: blank submission = unchanged; checkbox = explicit clear; non-blank = set.
-        submitted_pw = (form.wifi_password.data or '').strip()
+        # Preserve the password verbatim — spaces are valid password characters.
+        submitted_pw = form.wifi_password.data or ''
         clear_pw = form.wifi_password_clear.data
         current_pw = config_service.get_config('wifi_password', '')
         if clear_pw and current_pw:

@@ -1174,6 +1174,26 @@ class TestAppConfigWiFi:
         assert resp.status_code == 200
         assert b'type="password"' in resp.data
 
+    def test_config_wifi_ssid_preserves_whitespace(self, staff_client, staff_user):
+        """SSIDs with leading/trailing spaces are valid — store verbatim."""
+        resp = staff_client.post('/admin/config', data={
+            'wifi_ssid': '  MyNet  ',
+            'wifi_info_default': 'none',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        from esb.services import config_service
+        assert config_service.get_config('wifi_ssid') == '  MyNet  '
+
+    def test_config_wifi_password_preserves_whitespace(self, staff_client, staff_user):
+        """Passwords can legitimately contain spaces — store verbatim."""
+        resp = staff_client.post('/admin/config', data={
+            'wifi_password': '  pass word  ',
+            'wifi_info_default': 'none',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        from esb.services import config_service
+        assert config_service.get_config('wifi_password') == '  pass word  '
+
     def test_config_post_without_wifi_info_default_succeeds(self, staff_client, staff_user):
         """POST without wifi_info_default field should succeed (treated as 'none').
 
