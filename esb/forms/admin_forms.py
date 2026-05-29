@@ -50,8 +50,17 @@ class AppConfigForm(FlaskForm):
             ('ssid', 'WiFi header + SSID'),
             ('password', 'WiFi header + SSID + Password'),
         ],
+        default='none',
     )
     submit = SubmitField('Save Configuration')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Robustness: a missing wifi_info_default in POST data should be treated
+        # as 'none', not None (which would fail SelectField validation and block
+        # *all* config updates in that submission).
+        if self.wifi_info_default.data is None:
+            self.wifi_info_default.data = 'none'
 
 
 class EditSlackHandleForm(FlaskForm):

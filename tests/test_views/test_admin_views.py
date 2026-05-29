@@ -1174,6 +1174,21 @@ class TestAppConfigWiFi:
         assert resp.status_code == 200
         assert b'type="password"' in resp.data
 
+    def test_config_post_without_wifi_info_default_succeeds(self, staff_client, staff_user):
+        """POST without wifi_info_default field should succeed (treated as 'none').
+
+        Regression test: scripted clients or older tests that omit the field
+        previously caused SelectField pre-validation to fail with 'Not a valid
+        choice', blocking ALL config updates in the submission.
+        """
+        resp = staff_client.post('/admin/config', data={
+            'tech_doc_edit_enabled': 'y',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'Configuration updated successfully' in resp.data
+        from esb.services import config_service
+        assert config_service.get_config('tech_doc_edit_enabled') == 'true'
+
 
 class TestAreaMutationLogging:
     """Tests for mutation logging in area admin views."""
