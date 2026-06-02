@@ -310,18 +310,22 @@ Eleven scenarios for manual verification of the Equipment Status Board's core us
 3. Verify the "Generate QR Code" button is enabled (not greyed out).
 4. Click the button to open `/equipment/<id>/qr`.
 5. Select each size preset in turn (1"–4" stickers, Avery 5160, Avery 5163, US Letter) and verify the live preview updates to match.
-6. Toggle the "Include equipment name" and "Include target URL" checkboxes and verify the preview updates accordingly.
-7. Download the label at the 2" sticker preset; open the PNG and verify it is 300 DPI.
-8. Print (or view at actual size) the downloaded label and scan it with a phone camera.
-9. Download the US Letter preset and verify the PNG is 2550×3300 px.
-10. Stop the server, unset `ESB_BASE_URL`, restart, and reload the equipment detail page.
-11. On an archived equipment item, confirm the QR button does not render and that `GET /equipment/<id>/qr` returns 404.
+6. Select each **Printer / device** preset in turn (Laser/Inkjet 300/600/1200 dpi, Thermal Label 203 dpi, Brother P-Touch 180 dpi) and verify the live preview updates.
+7. Toggle the "Include equipment name" and "Include target URL" checkboxes and verify the preview updates accordingly.
+8. For each device preset, download a label and confirm the PNG's pixel dimensions equal `int(size_inches × device_dpi + 0.5)` — e.g. a 4" sticker at Thermal Label (203 dpi) → 812×812 px; at Laser/Inkjet (1200 dpi) → 4800×4800 px.
+9. Confirm the PNG embeds matching DPI metadata. With ImageMagick: `identify -verbose file.png | grep Resolution`. Dependency-free: `python -c "from PIL import Image; print(Image.open('file.png').info['dpi'])"`. Note that a 203 dpi label reports approximately `(202.9968, 202.9968)` — this is expected rational rounding, not a bug.
+10. Confirm a 4" label at **Thermal Label (203 dpi)** prints full-size (no clipping) on a 203-dpi thermal printer, and that selecting **US Letter** at **Laser/Inkjet (1200 dpi)** shows a friendly "too large to render" error instead of downloading.
+11. Print (or view at actual size) a downloaded label and scan it with a phone camera.
+12. At the default Laser/Inkjet (300 dpi) device, download the US Letter preset and verify the PNG is 2550×3300 px.
+13. Stop the server, unset `ESB_BASE_URL`, restart, and reload the equipment detail page.
+14. On an archived equipment item, confirm the QR button does not render and that `GET /equipment/<id>/qr` returns 404.
 
 **Expected Results:**
 
-- The live preview on `/equipment/<id>/qr` reflects size and label-content options in real time.
+- The live preview on `/equipment/<id>/qr` reflects size, device, and label-content options in real time.
 - Scanning the downloaded/printed QR code resolves to `${ESB_BASE_URL}/public/equipment/<id>`.
-- Rendered PNG dimensions match the selected preset (e.g., letter → 2550×3300 px at 300 DPI).
+- Rendered PNG dimensions match the selected size × device DPI (e.g., at the default Laser/Inkjet 300 dpi device, US Letter → 2550×3300 px), and the PNG carries embedded DPI metadata matching the selected device.
+- US Letter at Laser/Inkjet (1200 dpi) is rejected with a friendly "too large" danger message rather than rendering.
 - When `ESB_BASE_URL` is unset, the "Generate QR Code" button renders as disabled with tooltip "ESB_BASE_URL not configured"; hitting the route directly redirects to the equipment detail page with a danger flash describing the validation failure.
 - Invalid `ESB_BASE_URL` values (non-http(s) schemes, embedded credentials, whitespace, paths/queries/fragments) are rejected with a specific flashed error instead of being rendered into the QR payload.
 - Archived equipment hides the QR button and the QR route returns 404.

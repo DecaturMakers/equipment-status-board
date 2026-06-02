@@ -142,14 +142,16 @@ Any logged-in user (Staff or Technician) can generate QR codes from the equipmen
 1. Open the equipment detail page for the item you want to label.
 2. Click **Generate QR Code**.
 3. Pick a size from the dropdown. Choices include square stickers (1", 1.5", 2", 3", 4"), Avery label sizes (5160 and 5163), and a US Letter full-page option.
-4. Optionally enable **Include equipment name above QR** to print the equipment's name at the top of the label.
-5. Optionally enable **Include URL below QR** to print the scan target URL at the bottom of the label.
-6. Watch the live preview update as you change options.
-7. Click **Download QR Code** to download a PNG file ready to print.
+4. Pick a **Printer / device** matching the printer you will print on: **Thermal Label (203 dpi)** for direct-thermal label printers, **Brother P-Touch (180 dpi)** for P-Touch label makers, or **Laser/Inkjet** at **300**, **600**, or **1200 dpi** for office printers. This setting makes the printed label come out at the correct physical size for the chosen printer. **Laser/Inkjet (300 dpi)** is the safe default for most office printers. (Very large sizes at very high resolution — e.g. US Letter at 1200 dpi — are rejected with a "too large" message; pick a lower resolution or smaller size.)
+5. Optionally choose a **WiFi Info** option to print a network reminder above the QR code: **None**, **Header** (a "Must be on WiFi" banner), **SSID** (banner + network name), or **Password** (banner + network name + password). Options only appear when an administrator has configured the corresponding WiFi settings.
+6. Optionally enable **Include equipment name above QR** to print the equipment's name at the top of the label.
+7. Optionally enable **Include URL below QR** to print the scan target URL at the bottom of the label.
+8. Watch the live preview update as you change options.
+9. Click **Download QR Code** to download a PNG file ready to print.
 
-All output is rendered at 300 DPI so labels print sharply at any of the listed sizes.
+Output is rendered at the selected device's resolution, with that DPI embedded in the PNG, so printing "actual size" reproduces the intended physical dimensions on that printer.
 
-> **Tip:** URL text below the QR is most useful at label/page sizes (Avery 5163, US Letter). On small stickers (≤ 2") the URL is usually truncated and adds little value — the live preview shows the result; uncheck **Include URL below QR** if it isn't legible.
+> **Tip:** URL text below the QR is most useful at label/page sizes (Avery 5163, US Letter). On small stickers (≤ 2") the URL is usually truncated and adds little value — the live preview shows the result; uncheck **Include URL below QR** if it isn't legible. On **low-resolution devices (180/203 dpi)**, the QR modules on tiny stickers (≤ 1") may be too small to scan reliably — prefer a larger sticker or a higher-resolution printer for tiny labels.
 
 ![QR Code Generation](images/qr-generation.png)
 

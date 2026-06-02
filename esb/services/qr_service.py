@@ -13,7 +13,6 @@ import qrcode
 from flask import current_app
 from PIL import Image, ImageDraw, ImageFont
 
-_DPI = 300
 _MIN_FONT_PT = 8
 
 
@@ -45,18 +44,41 @@ QR_SIZE_PRESETS: tuple[QRSizePreset, ...] = (
 QR_PRESETS_BY_KEY: dict[str, QRSizePreset] = {p.key: p for p in QR_SIZE_PRESETS}
 
 
-def _px(inches: float) -> int:
-    return int(inches * _DPI + 0.5)
+@dataclass(frozen=True)
+class QRDevicePreset:
+    key: str
+    label: str
+    dpi: int
 
 
-def _pt_to_px(pt: int) -> int:
-    return int(pt * _DPI / 72 + 0.5)
+QR_DEVICE_PRESETS: tuple[QRDevicePreset, ...] = (
+    QRDevicePreset('laser_300', 'Laser/Inkjet (300 dpi)', 300),
+    QRDevicePreset('laser_600', 'Laser/Inkjet (600 dpi)', 600),
+    QRDevicePreset('laser_1200', 'Laser/Inkjet (1200 dpi)', 1200),
+    QRDevicePreset('thermal_203', 'Thermal Label (203 dpi)', 203),
+    QRDevicePreset('ptouch_180', 'Brother P-Touch (180 dpi)', 180),
+)
+QR_DEVICES_BY_KEY: dict[str, QRDevicePreset] = {p.key: p for p in QR_DEVICE_PRESETS}
+DEFAULT_DEVICE_KEY = 'laser_300'
+
+# High DPI × large physical size can produce enormous canvases (US Letter @ 1200 dpi
+# ≈ 134 MP). Cap total pixels to avoid OOM; this is a deliberate, adjustable default.
+MAX_CANVAS_PX = 50_000_000
+
+
+def _px(inches: float, dpi: int) -> int:
+    return int(inches * dpi + 0.5)
+
+
+def _pt_to_px(pt: int, dpi: int) -> int:
+    return int(pt * dpi / 72 + 0.5)
 
 
 def render_qr_png(
     equipment,
     preset: QRSizePreset,
     *,
+    dpi: int = 300,
     include_name: bool = False,
     include_url: bool = False,
     base_url: str,
@@ -69,8 +91,16 @@ def render_qr_png(
     The service trusts `base_url` — it must be validated upstream via
     `esb.utils.text.get_normalized_base_url`.
     """
-    canvas_w_px = _px(preset.width_in)
-    canvas_h_px = _px(preset.height_in)
+    if dpi <= 0:
+        raise ValueError(f'dpi must be positive, got {dpi}.')
+    canvas_w_px = _px(preset.width_in, dpi)
+    canvas_h_px = _px(preset.height_in, dpi)
+
+    if canvas_w_px * canvas_h_px > MAX_CANVAS_PX:
+        raise ValueError(
+            f'{preset.label} at {dpi} dpi is too large to render — '
+            'choose a lower-resolution printer or a smaller size.'
+        )
 
     wifi_rows = _wifi_row_texts(wifi_info, wifi_ssid, wifi_password)
     num_wifi_rows = len(wifi_rows)
@@ -79,7 +109,7 @@ def render_qr_png(
     reserved_bottom = int(canvas_h_px * 0.15) if include_url else 0
 
     if num_wifi_rows > 0:
-        min_row_px = _pt_to_px(_MIN_FONT_PT) + 4
+        min_row_px = _pt_to_px(_MIN_FONT_PT, dpi) + 4
         wifi_budget = int(canvas_h_px * 0.30)
         max_text_px = int(canvas_h_px * 0.55)
         effective_wifi_rows = num_wifi_rows
@@ -155,30 +185,30 @@ def render_qr_png(
         if row_info['type'] == 'header':
             _draw_wifi_header_row(
                 canvas, row_top=row_top, row_height=wifi_row_height,
-                max_width_px=wifi_max_text_width,
+                max_width_px=wifi_max_text_width, dpi=dpi,
             )
         else:
             _draw_text_row(
                 canvas, row_info['text'],
                 row_top=row_top, row_height=wifi_row_height,
-                max_width_px=wifi_max_text_width,
+                max_width_px=wifi_max_text_width, dpi=dpi,
             )
 
     if include_name:
         _draw_text_row(
             canvas, equipment.name,
-            row_top=reserved_wifi, row_height=reserved_top, max_width_px=max_text_width,
+            row_top=reserved_wifi, row_height=reserved_top, max_width_px=max_text_width, dpi=dpi,
         )
     if include_url:
         _draw_text_row(
             canvas, qr_url,
             row_top=canvas_h_px - reserved_bottom,
             row_height=reserved_bottom,
-            max_width_px=max_text_width,
+            max_width_px=max_text_width, dpi=dpi,
         )
 
     buf = io.BytesIO()
-    canvas.save(buf, format='PNG')
+    canvas.save(buf, format='PNG', dpi=(dpi, dpi))
     return buf.getvalue()
 
 
@@ -200,7 +230,7 @@ def _wifi_row_texts(wifi_info, wifi_ssid, wifi_password):
     return rows
 
 
-def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
+def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px, dpi: int = 300):
     """Draw the WiFi emoji + 'Must be on WiFi' text centered in a row."""
     text_font_path = os.path.join(current_app.static_folder, 'fonts', 'DejaVuSans-Bold.ttf')  # noqa: PTH118
     emoji_font_path = os.path.join(current_app.static_folder, 'fonts', 'NotoEmoji-Bold.ttf')  # noqa: PTH118
@@ -210,13 +240,13 @@ def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
             'QR WiFi emoji font missing at %s — falling back to text-only header.',
             emoji_font_path,
         )
-        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
+        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px, dpi=dpi)
         return
     gap = max(4, row_height // 10)
 
     text_font, rendered = _fit_text(
         label, max_width_px=int(max_width_px * 0.75),
-        max_height_px=row_height, font_path=text_font_path,
+        max_height_px=row_height, font_path=text_font_path, dpi=dpi,
     )
     if rendered == '':
         return
@@ -235,17 +265,17 @@ def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
     text_h = t_bottom - t_top
 
     if emoji_w + gap >= max_width_px:
-        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
+        _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px, dpi=dpi)
         return
 
     total_w = emoji_w + gap + text_w
     if total_w > max_width_px:
         text_font, rendered = _fit_text(
             label, max_width_px=max_width_px - emoji_w - gap,
-            max_height_px=row_height, font_path=text_font_path,
+            max_height_px=row_height, font_path=text_font_path, dpi=dpi,
         )
         if rendered == '':
-            _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px)
+            _draw_text_row(canvas, label, row_top=row_top, row_height=row_height, max_width_px=max_width_px, dpi=dpi)
             return
         t_left, t_top, t_right, t_bottom = draw.textbbox((0, 0), rendered, font=text_font)
         text_w = t_right - t_left
@@ -260,7 +290,7 @@ def _draw_wifi_header_row(canvas, *, row_top, row_height, max_width_px):
     draw.text((group_x + emoji_w + gap - t_left, text_y), rendered, fill='black', font=text_font)
 
 
-def _draw_text_row(canvas, text, *, row_top, row_height, max_width_px):
+def _draw_text_row(canvas, text, *, row_top, row_height, max_width_px, dpi: int = 300):
     """Draw centered text in a horizontal row region of the canvas."""
     font_path = os.path.join(current_app.static_folder, 'fonts', 'DejaVuSans-Bold.ttf')  # noqa: PTH118
     if not os.path.isfile(font_path):
@@ -273,6 +303,7 @@ def _draw_text_row(canvas, text, *, row_top, row_height, max_width_px):
         max_width_px=max_width_px,
         max_height_px=row_height,
         font_path=font_path,
+        dpi=dpi,
     )
     if rendered == '':
         return
@@ -285,14 +316,14 @@ def _draw_text_row(canvas, text, *, row_top, row_height, max_width_px):
     draw.text((x, y), rendered, fill='black', font=font)
 
 
-def _fit_text(text, *, max_width_px, max_height_px, font_path):
+def _fit_text(text, *, max_width_px, max_height_px, font_path, dpi: int = 300):
     """Return (font, rendered_text) fitting within max_width_px at ≤ max_height_px.
 
     Shrinks font toward the 8 pt floor; if still too wide at the floor,
     truncates with an ellipsis (binary-search); if even ellipsis alone
     doesn't fit, returns the min-size font and an empty string.
     """
-    min_px = _pt_to_px(_MIN_FONT_PT)
+    min_px = _pt_to_px(_MIN_FONT_PT, dpi)
     size_px = max_height_px
     step = max(1, int(max_height_px * 0.05))
     scratch = ImageDraw.Draw(Image.new('RGB', (1, 1)))

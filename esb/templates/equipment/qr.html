@@ -24,6 +24,10 @@
                 {{ form.size(class="form-select") }}
             </div>
             <div class="mb-3">
+                <label for="{{ form.device.id }}" class="form-label">{{ form.device.label.text }}</label>
+                {{ form.device(class="form-select") }}
+            </div>
+            <div class="mb-3">
                 <label for="{{ form.wifi_info.id }}" class="form-label">{{ form.wifi_info.label.text }}</label>
                 {{ form.wifi_info(class="form-select") }}
             </div>
@@ -43,10 +47,11 @@
         <h5>Preview</h5>
         <img id="qr-preview"
              alt="QR preview"
-             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', include_name=form.include_name.data, include_url=form.include_url.data, wifi_info=form.wifi_info.data or 'none') }}"
+             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', device=form.device.data or 'laser_300', include_name=form.include_name.data, include_url=form.include_url.data, wifi_info=form.wifi_info.data or 'none') }}"
              class="img-fluid border"
              style="max-width: 400px;">
-        <p class="text-muted small mt-2">Preview is scaled to fit; downloaded PNG is at 300 DPI.</p>
+        <span id="qr-preview-error" class="text-danger small d-none">Preview unavailable for this combination — the label may be too large to render at this resolution, or the URL too long for this size. Try a lower resolution or a larger size.</span>
+        <p class="text-muted small mt-2">Preview is scaled to fit. The downloaded PNG is sized to your selected printer resolution and physical size.</p>
     </div>
 </div>
 {% endblock %}

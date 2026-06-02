@@ -1610,8 +1610,9 @@ class TestEquipmentQR:
         assert resp.content_type.startswith('image/png')
         cd = resp.headers.get('Content-Disposition', '')
         assert 'attachment' in cd
-        assert f'filename="qr-{eq.id}-Table-Saw-1.png"' in cd or \
-            f"filename=qr-{eq.id}-Table-Saw-1.png" in cd
+        # No device posted → defaults to laser_300, which is encoded in the filename.
+        assert f'filename="qr-{eq.id}-Table-Saw-1-laser_300.png"' in cd or \
+            f"filename=qr-{eq.id}-Table-Saw-1-laser_300.png" in cd
 
     def test_post_qr_download_unknown_size_rejected(
         self, staff_client, make_equipment, configured_base_url,
@@ -1735,6 +1736,105 @@ class TestEquipmentQR:
         # qr-preview img points at the preview URL.
         assert b'id="qr-preview"' in resp.data
         assert f'/equipment/{eq.id}/qr/preview'.encode() in resp.data
+
+    # --- Device / DPI dropdown tests ---
+
+    def test_qr_form_shows_device_dropdown(self, staff_client, make_equipment, configured_base_url):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert resp.status_code == 200
+        assert b'name="device"' in resp.data
+        html = resp.data.decode()
+        for label in (
+            'Laser/Inkjet (300 dpi)', 'Laser/Inkjet (600 dpi)', 'Laser/Inkjet (1200 dpi)',
+            'Thermal Label (203 dpi)', 'Brother P-Touch (180 dpi)',
+        ):
+            assert label in html
+
+    def test_post_qr_download_honors_device_dpi(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        from PIL import Image
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_4', 'device': 'thermal_203', 'wifi_info': 'none',
+                  'submit': 'Download QR Code'},
+        )
+        assert resp.status_code == 200
+        assert resp.content_type.startswith('image/png')
+        img = Image.open(io.BytesIO(resp.data))
+        assert img.size == (812, 812)  # int(4*203+0.5)
+        assert tuple(round(v) for v in img.info['dpi']) == (203, 203)
+        # Device key is encoded in the filename so per-device labels don't collide.
+        assert 'thermal_203.png' in resp.headers.get('Content-Disposition', '')
+
+    def test_post_qr_download_unknown_device_rejected(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        eq = make_equipment('X', 'Y', 'Z')
+        # Complete payload, only `device` invalid → re-render attributable to device validation.
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'device': 'bogus', 'wifi_info': 'none',
+                  'submit': 'Download QR Code'},
+        )
+        assert resp.status_code == 200
+        assert b'name="device"' in resp.data
+        assert not resp.content_type.startswith('image/png')
+        # The clamp branch reset the bogus device to the default so the re-rendered
+        # preview src points at a valid device (not the broken `device=bogus`).
+        assert b'device=laser_300' in resp.data
+        assert b'device=bogus' not in resp.data
+
+    def test_qr_preview_includes_device_param(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert resp.status_code == 200
+        assert b'device=' in resp.data
+
+    def test_get_qr_preview_invalid_device_400(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_2&device=bogus')
+        assert resp.status_code == 400
+
+    def test_get_qr_preview_default_device_when_missing(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        from PIL import Image
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_4')
+        assert resp.status_code == 200
+        img = Image.open(io.BytesIO(resp.data))
+        assert img.size == (1200, 1200)  # defaults to 300 dpi
+        assert tuple(round(v) for v in img.info['dpi']) == (300, 300)
+
+    def test_post_qr_download_oversized_flashes_danger(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        eq = make_equipment('X', 'Y', 'Z')
+        # Real render exercising the guard end-to-end (no monkeypatch). Letter @ 1200 dpi.
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'letter', 'device': 'laser_1200', 'wifi_info': 'none',
+                  'submit': 'Download QR Code'},
+        )
+        assert resp.status_code == 200
+        assert not resp.content_type.startswith('image/png')
+        assert b'too large to render' in resp.data
+
+    def test_get_qr_preview_oversized_400(
+        self, staff_client, make_equipment, configured_base_url,
+    ):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(
+            f'/equipment/{eq.id}/qr/preview?size=letter&device=laser_1200'
+        )
+        assert resp.status_code == 400
 
     # --- WiFi dropdown tests ---
 

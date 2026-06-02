@@ -9,6 +9,9 @@ from PIL import Image, ImageDraw
 from pyzbar.pyzbar import decode
 
 from esb.services.qr_service import (
+    DEFAULT_DEVICE_KEY,
+    QR_DEVICE_PRESETS,
+    QR_DEVICES_BY_KEY,
     QR_PRESETS_BY_KEY,
     QR_SIZE_PRESETS,
     QRSizePreset,
@@ -38,6 +41,27 @@ class TestQRSizePresets:
             assert p.height_in > 0
 
 
+class TestQRDevicePresets:
+    def test_has_five_entries(self):
+        assert len(QR_DEVICE_PRESETS) == 5
+
+    def test_keys_unique(self):
+        keys = [p.key for p in QR_DEVICE_PRESETS]
+        assert len(keys) == len(set(keys))
+
+    def test_default_present_and_300_dpi(self):
+        assert DEFAULT_DEVICE_KEY == 'laser_300'
+        assert QR_DEVICES_BY_KEY['laser_300'].dpi == 300
+
+    def test_by_key_roundtrip(self):
+        for p in QR_DEVICE_PRESETS:
+            assert QR_DEVICES_BY_KEY[p.key].key == p.key
+
+    def test_dpi_values_positive(self):
+        for p in QR_DEVICE_PRESETS:
+            assert p.dpi > 0
+
+
 class TestRenderQRPng:
     def test_returns_png_bytes(self, app, make_equipment):
         eq = make_equipment(name='TestEq')
@@ -52,6 +76,48 @@ class TestRenderQRPng:
         img = Image.open(io.BytesIO(result))
         expected = (int(preset.width_in * 300 + 0.5), int(preset.height_in * 300 + 0.5))
         assert img.size == expected
+
+    @pytest.mark.parametrize('dpi', [180, 203, 600, 1200])
+    @pytest.mark.parametrize(
+        'preset',
+        [QR_PRESETS_BY_KEY['sticker_1_5'], QR_PRESETS_BY_KEY['avery_5160']],
+        ids=['sticker_1_5', 'avery_5160'],
+    )
+    def test_dimensions_match_preset_at_dpi(self, app, make_equipment, preset, dpi):
+        eq = make_equipment(name='TestEq')
+        result = render_qr_png(eq, preset, dpi=dpi, base_url=BASE_URL)
+        img = Image.open(io.BytesIO(result))
+        # MUST use the same round-half-up the code uses, NOT Python's banker's round().
+        expected = (int(preset.width_in * dpi + 0.5), int(preset.height_in * dpi + 0.5))
+        assert img.size == expected
+
+    @pytest.mark.parametrize('dpi', [180, 203, 300, 600, 1200])
+    def test_png_embeds_dpi_metadata(self, app, make_equipment, dpi):
+        eq = make_equipment(name='TestEq')
+        result = render_qr_png(eq, QR_PRESETS_BY_KEY['sticker_2'], dpi=dpi, base_url=BASE_URL)
+        img = Image.open(io.BytesIO(result))
+        # Pillow round-trips DPI through a rational, so it returns floats like
+        # (202.9968, 202.9968) — assert with integer-rounded tolerance, not exact equality.
+        embedded = img.info['dpi']
+        assert tuple(round(v) for v in embedded) == (dpi, dpi)
+
+    def test_oversized_canvas_raises(self, app, make_equipment):
+        eq = make_equipment(name='TestEq')
+        # US Letter @ 1200 dpi = 10200×13200 ≈ 134.6 MP > 50 MP cap.
+        with pytest.raises(ValueError, match='too large to render'):
+            render_qr_png(eq, QR_PRESETS_BY_KEY['letter'], dpi=1200, base_url=BASE_URL)
+
+    def test_large_but_allowed_ok(self, app, make_equipment):
+        eq = make_equipment(name='TestEq')
+        # 4″ sticker @ 1200 dpi = 4800×4800 = 23.04 MP, under the cap.
+        result = render_qr_png(eq, QR_PRESETS_BY_KEY['sticker_4'], dpi=1200, base_url=BASE_URL)
+        assert Image.open(io.BytesIO(result)).size == (4800, 4800)
+
+    def test_letter_at_600_dpi_under_cap_ok(self, app, make_equipment):
+        eq = make_equipment(name='TestEq')
+        # US Letter @ 600 dpi = 5100×6600 = 33.66 MP, under the 50 MP cap.
+        result = render_qr_png(eq, QR_PRESETS_BY_KEY['letter'], dpi=600, base_url=BASE_URL)
+        assert Image.open(io.BytesIO(result)).size == (5100, 6600)
 
     def test_payload_decodes_to_expected_url(self, app, make_equipment):
         eq = make_equipment(name='TestEq')
@@ -297,6 +363,17 @@ class TestFitText:
             font_path=self._font_path(app),
         )
         assert rendered == ''
+
+    def test_low_dpi_lowers_font_floor(self, app):
+        # A string too wide at any size down to the floor must shrink to the floor.
+        # At 203 dpi the 8 pt floor is int(8*203/72+0.5)=23 px, lower than the 300 dpi
+        # floor of 33 px — locks in the dpi fan-out fix.
+        font, rendered = _fit_text(
+            'X' * 60, max_width_px=40, max_height_px=400,
+            font_path=self._font_path(app), dpi=203,
+        )
+        # Truncated to ellipsis at the lowered floor; font.size honors the 203 dpi floor.
+        assert font.size == int(8 * 203 / 72 + 0.5)
 
 
 class TestRenderQRPngWifi:

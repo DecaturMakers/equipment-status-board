@@ -2,7 +2,7 @@
 title: 'Resolution-Aware QR Label Printing'
 slug: 'resolution-aware-qr-printing'
 created: '2026-06-02'
-status: 'ready-for-dev'
+status: 'completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['Python 3.14', 'Flask', 'Flask-WTF (WTForms SelectField)', 'qrcode[pil]', 'Pillow (PIL)', 'pytest', 'vanilla JS (esb/static/js/app.js)']
 files_to_modify: ['esb/services/qr_service.py', 'esb/forms/equipment_forms.py', 'esb/views/equipment.py', 'esb/templates/equipment/qr.html', 'esb/static/js/app.js', 'tests/test_services/test_qr_service.py', 'tests/test_views/test_equipment_views.py', 'docs/staff.md', 'docs/manual_testing.md', 'docs/images/qr-generation.png']
@@ -107,7 +107,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
 
 > Ordered lowest-level-first. Each task is independently completable; later tasks depend on earlier ones.
 
-- [ ] **Task 1: Add the device/DPI preset model to the service.**
+- [x] **Task 1: Add the device/DPI preset model to the service.**
   - File: `esb/services/qr_service.py`
   - Action: After `QR_PRESETS_BY_KEY` (line 45), add a frozen dataclass and tuple/dict mirroring the size-preset pattern:
     ```python
@@ -129,7 +129,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
     ```
   - Notes: Keep `laser_300` first so it is the natural default. `thermal_203` label is intentionally generic (covers the Sato M-84Pro-2), not Sato-branded.
 
-- [ ] **Task 2: Parameterize the service by DPI (replace the `_DPI` global).**
+- [x] **Task 2: Parameterize the service by DPI (replace the `_DPI` global).**
   - File: `esb/services/qr_service.py`
   - Action:
     1. Delete the module global `_DPI = 300` (line 16).
@@ -143,7 +143,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
        - **From inside `_draw_wifi_header_row` (easy to miss — the WiFi-header fallback branches):** its two internal `_fit_text(...)` calls at lines **217** and **243**, and its three internal `_draw_text_row(...)` calls at lines **213**, **238**, and **248**. With the `= 300` default these won't raise `TypeError` if missed, but they will **silently keep a 300-dpi font floor** at other DPIs — so all five MUST forward `dpi` for correct text sizing on thermal/low-DPI labels.
   - Notes: Default `dpi=300` on `render_qr_png` and on these helpers keeps the legacy path and all current `*300` test assertions valid. The 8 pt font floor is physical, so scaling it by DPI is correct.
 
-- [ ] **Task 3: Embed DPI metadata in the PNG + add the oversized-canvas guard.**
+- [x] **Task 3: Embed DPI metadata in the PNG + add the oversized-canvas guard.**
   - File: `esb/services/qr_service.py`
   - Action:
     1. Change the save call (line 181) to `canvas.save(buf, format='PNG', dpi=(dpi, dpi))`.
@@ -158,7 +158,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
        ```
   - Notes: Module-level `MAX_CANVAS_PX` constant is fine too. Guard runs before the expensive QR/image work. Reuses the existing `ValueError` → flash-danger / abort-400 handling. **Be aware:** adding the `dpi=` save kwarg injects a `pHYs` chunk into the PNG even at 300 dpi, so the output bytes change vs. today (a tiny sample PNG grows ~20 bytes). **Pixel dimensions are unchanged**, but do NOT write any test asserting byte-identical output against pre-change fixtures.
 
-- [ ] **Task 4: Add the `device` field to the generation form.**
+- [x] **Task 4: Add the `device` field to the generation form.**
   - File: `esb/forms/equipment_forms.py`
   - Action: In `QRGenerateForm` (lines 130-142), import `QR_DEVICE_PRESETS` from `esb.services.qr_service` (alongside the existing `QR_SIZE_PRESETS` import) and add, after `size`:
     ```python
@@ -171,7 +171,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
     ```
   - Notes: `DataRequired` + `SelectField` auto-rejects unknown keys, matching the `size` field's behavior.
 
-- [ ] **Task 5: Thread the selected device → DPI through both views.**
+- [x] **Task 5: Thread the selected device → DPI through both views.**
   - File: `esb/views/equipment.py`
   - Action:
     1. In `qr()` (after resolving `preset`, ~line 312): `device = qr_service.QR_DEVICES_BY_KEY[form.device.data]` and pass `dpi=device.dpi` to `render_qr_png(...)` (~line 314). Add `device=%s` to the existing "QR downloaded" log line (line 330-334) — add **both** the `device=%s` format token in the message string **and** a matching `device.key` argument in the args tuple (the current line already logs `preset=%s ... wifi_info=%s`; a token without its arg, or vice-versa, raises a `TypeError`/`%`-format error at log time).
@@ -179,7 +179,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
     3. **Clamp an invalid `device` on form re-render (purely a UI guard, NOT a TOCTOU fix).** On a failed POST, WTForms leaves `form.device.data` set to the submitted (possibly bogus) value, and the template feeds it straight into the preview `src` (Task 6.2) → a broken 400 preview image. In the `_render_form_with_real_choices()` helper (`equipment.py:299-303`, the shared re-render path), add: `if form.device.data not in qr_service.QR_DEVICES_BY_KEY: form.device.data = qr_service.DEFAULT_DEVICE_KEY` so the re-rendered preview always points at a valid device. **Distinction from the `wifi_info` clamp:** the existing `wifi_info` clamp in this helper exists because WiFi choices are *dynamic* and can legitimately go stale (config TOCTOU). `device` choices are *static*, so a bogus value can only arrive via a crafted/replayed POST that already failed validation — this clamp is solely to keep the re-rendered preview `src` valid, not to reconcile live choices. Structurally similar, different rationale.
   - Notes: POST builds the form with `validation_choices` only for `wifi_info`; `device` choices are static on the form, so the device value is validated by WTForms automatically — but validation failure does NOT sanitize `form.device.data`, hence the explicit clamp in step 3.
 
-- [ ] **Task 6: Wire the device selector into the template + live preview JS.**
+- [x] **Task 6: Wire the device selector into the template + live preview JS.**
   - File: `esb/templates/equipment/qr.html`
   - Action:
     1. Add a `<select>` block for `form.device` immediately after the `size` block (lines 22-25), same markup pattern.
@@ -191,7 +191,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
     1. In the QR preview IIFE (lines 246-255), read the device field and add it to `params`: `var device = form.querySelector('[name="device"]'); if (device) params.set('device', device.value);`.
     2. **Attach `img.onerror` / `img.onload` ONCE at IIFE init** (alongside the `var img = ...` lookup at `app.js:243`, *not* inside `update()`), so they persist across every debounced `img.src` reassignment: `onerror` reveals `#qr-preview-error` and hides the `<img>`; `onload` hides the error and re-shows the `<img>`. This degrades a 400 preview response to the readable message from Task 6.3 step 4 rather than a broken-image icon. (Handlers are pure state-setters, so they do not race the 150 ms debounce or the `change` listener.)
 
-- [ ] **Task 7: Update + extend service tests.**
+- [x] **Task 7: Update + extend service tests.**
   - File: `tests/test_services/test_qr_service.py`
   - Action:
     1. Keep `test_dimensions_match_preset_at_300_dpi` (lines 48-54) as-is (default dpi=300 still valid). Add a parametrized `test_dimensions_match_preset_at_dpi` over several DPIs (e.g. 180, 203, 600, 1200). **The expected size MUST use the same round-half-up the code uses — `int(v * dpi + 0.5)` — NOT Python's `round()`.** Python's `round()` is banker's rounding and diverges from `int(x+0.5)` for at least `sticker_1_5 @ 203 dpi` (code → 305, `round()` → 304) and `avery_5160 @ 180 dpi` (code → 473, `round()` → 472), which would make a `round()`-based test fail. Assert `img.size == (int(p.width_in*dpi+0.5), int(p.height_in*dpi+0.5))`.
@@ -201,7 +201,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
     5. Add `test_oversized_canvas_raises`: `render_qr_png(eq, letter_preset, dpi=1200, base_url=...)` raises `ValueError` (Letter @ 1200 = 10200×13200 ≈ 134.6 MP > 50 MP cap); and `test_large_but_allowed_ok`: 4″ sticker @ 1200 dpi succeeds with size `(4800, 4800)` (= 23.04 MP, under the cap). Also sanity-check Letter @ 600 dpi (5100×6600 = 33.66 MP) does NOT raise. **Cost note:** the 23 MP render allocates ~70 MB and runs a full QR encode/resize/PNG-encode — it is a deliberately heavy test. To keep `make test` fast, prefer asserting the *guard boundary* via the cheaper Letter@1200 raise, and keep the large *successful* render minimal (or mark it `@pytest.mark.slow` if the project adopts that marker) rather than rendering several multi-MP images.
     6. **The four existing `TestFitText` callers (`:264, 275, 283, 295`) must keep passing unchanged** thanks to the `dpi=300` default (Task 2 step 6). Optionally add one `_fit_text(..., dpi=203)` case asserting the returned font's pixel size honors the lower DPI floor, to lock in the fan-out fix from Task 2 step 7.
 
-- [ ] **Task 8: Update + extend view tests.**
+- [x] **Task 8: Update + extend view tests.**
   - File: `tests/test_views/test_equipment_views.py`
   - Action (within the QR test class, ~lines 1552-1864):
     1. `test_qr_form_shows_device_dropdown`: GET form contains a `name="device"` select with the 5 device labels.
@@ -211,7 +211,7 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
     5. `test_post_qr_download_oversized_flashes_danger`: POST a **complete valid payload except for the oversized combo** — `{'size': 'letter', 'device': 'laser_1200', 'wifi_info': 'none', 'submit': 'Download QR Code'}` — so the re-render is driven by the guard's `ValueError`, not by an unrelated WTForms validation miss (same isolation rationale as Task 8.3). Assert no attachment and that the response body contains the guard's danger text (e.g. `b'too large to render'`) — mirrors the existing URL-too-long flash assertion at `:1646`. **Note:** unlike the existing ValueError-path view tests (`:1628-1661`), which monkeypatch `render_qr_png` to raise, this test deliberately does a *real* render to exercise the guard end-to-end; this convention deviation is intentional. This is the AC5 coverage the original spec lacked.
     6. `test_get_qr_preview_oversized_400`: `GET .../qr/preview?size=letter&device=laser_1200` → **HTTP 400** (the oversized guard raises `ValueError` → `qr_preview` `abort(400)`). This is the automated coverage for AC5's preview-side clause, which the prior revision asserted but never tested.
 
-- [ ] **Task 9: Update user + manual-test documentation, including screenshot.**
+- [x] **Task 9: Update user + manual-test documentation, including screenshot.**
   - File: `docs/staff.md`
   - Action: *(The `:150`/`:152` absolute line numbers below refer to the file's current state; inserting the new device/WiFi steps in 9.1/9.4 will push them down. Edit this section top-to-bottom and locate `:150`/`:152` by their quoted text, not their pre-edit line numbers.)*
     1. In "QR Code Labels → Generating a QR code label" (the numbered procedure at `docs/staff.md:142-148`), add a step describing the **Printer / device** selector: choose the preset matching your printer's resolution (Thermal Label 203 dpi, Brother P-Touch 180 dpi, Laser/Inkjet 300/600/1200 dpi); explain that this makes the printed label come out at the correct physical size and that "Laser/Inkjet (300 dpi)" is the safe default for most office printers. Add a short note that very large sizes at very high resolution (e.g. US Letter at 1200 dpi) are rejected — pick a lower resolution.
@@ -227,16 +227,16 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
 
 ### Acceptance Criteria
 
-- [ ] **AC1 (Happy path — thermal):** Given a configured `ESB_BASE_URL` and equipment item, when a user selects size `4"×4" sticker` and device `Thermal Label (203 dpi)` and downloads, then the PNG is exactly **812×812 px** (`int(4×203+0.5)`) and its embedded DPI metadata **rounds to** `(203, 203)` (Pillow stores it as a rational, so `img.info['dpi']` ≈ `(202.9968, 202.9968)`; assert via `round()`/`pytest.approx`, not exact equality).
-- [ ] **AC2 (Happy path — high-res laser):** Given the same item, when the user selects `4"×4" sticker` and `Laser/Inkjet (1200 dpi)`, then the PNG is **4800×4800 px** with embedded DPI metadata that rounds to `(1200, 1200)`.
-- [ ] **AC3 (Backward compatibility):** Given a request that does not specify a device (legacy/default), when the label renders, then it uses **300 dpi** and produces the **same pixel dimensions** as before this change (e.g. 4″ → 1200×1200), and `render_qr_png(...)` called without `dpi=` defaults to 300. (Note: the raw PNG **bytes** are NOT identical to the pre-change output — the new `dpi=` save kwarg adds a `pHYs` chunk even at 300 dpi. Only dimensions and visual content are preserved.)
-- [ ] **AC4 (Correct physical print — manual/assumption, non-gating):** Given a downloaded PNG with embedded DPI metadata, when it is printed via the OS/CUPS dialog at "actual size", then it prints at its intended physical inches regardless of the printer's native resolution. *This depends on the external print stack honoring the `pHYs` chunk and cannot be verified in CI; it is validated only by the manual print step in `docs/manual_testing.md` §11 and is treated as a documented assumption, not an automated gating criterion.*
-- [ ] **AC5 (Oversized guard):** Given size `US Letter page (8.5"×11")` and device `Laser/Inkjet (1200 dpi)`, when the user attempts to download, then a `ValueError` is raised and the form re-renders with a flashed danger message advising a lower resolution or smaller size (and `qr_preview` returns HTTP 400) — no out-of-memory render occurs.
-- [ ] **AC6 (Unknown device — download):** Given a POST whose `device` value is not a known preset key, when the form is submitted, then WTForms validation fails and the form re-renders without producing a PNG attachment.
-- [ ] **AC7 (Unknown device — preview):** Given `GET /equipment/<id>/qr/preview?device=bogus`, when requested, then the response is HTTP 400; and given the `device` param is omitted, then the preview renders at the default 300 dpi.
-- [ ] **AC8a (Live preview — automated):** Given the rendered QR form, when the page loads, then the preview `<img>` initial `src` includes a `device=` query param, and `GET /equipment/<id>/qr/preview?...&device=<key>` renders at that device's DPI (verifiable with a Flask test client by asserting the returned PNG's dimensions/metadata for the given size+device).
-- [ ] **AC8b (Live preview JS reload — manual/e2e, non-gating):** Given the QR form in a browser, when the user changes the device dropdown, then `app.js` rebuilds the preview URL with the new `device` param and the `<img>` reloads. *This is client-side JS and is not exercisable by the Flask test client; it is covered by the manual `docs/manual_testing.md` §11 steps, not by an automated unit/view test.*
-- [ ] **AC9 (Docs):** Given the updated documentation, when a staff user reads `docs/staff.md`, then the printer/device selector and its purpose are described, the screenshot `docs/images/qr-generation.png` shows the dropdown, and `docs/manual_testing.md` section 11 includes device-resolution verification steps.
+- [x] **AC1 (Happy path — thermal):** Given a configured `ESB_BASE_URL` and equipment item, when a user selects size `4"×4" sticker` and device `Thermal Label (203 dpi)` and downloads, then the PNG is exactly **812×812 px** (`int(4×203+0.5)`) and its embedded DPI metadata **rounds to** `(203, 203)` (Pillow stores it as a rational, so `img.info['dpi']` ≈ `(202.9968, 202.9968)`; assert via `round()`/`pytest.approx`, not exact equality).
+- [x] **AC2 (Happy path — high-res laser):** Given the same item, when the user selects `4"×4" sticker` and `Laser/Inkjet (1200 dpi)`, then the PNG is **4800×4800 px** with embedded DPI metadata that rounds to `(1200, 1200)`.
+- [x] **AC3 (Backward compatibility):** Given a request that does not specify a device (legacy/default), when the label renders, then it uses **300 dpi** and produces the **same pixel dimensions** as before this change (e.g. 4″ → 1200×1200), and `render_qr_png(...)` called without `dpi=` defaults to 300. (Note: the raw PNG **bytes** are NOT identical to the pre-change output — the new `dpi=` save kwarg adds a `pHYs` chunk even at 300 dpi. Only dimensions and visual content are preserved.)
+- [x] **AC4 (Correct physical print — manual/assumption, non-gating):** Given a downloaded PNG with embedded DPI metadata, when it is printed via the OS/CUPS dialog at "actual size", then it prints at its intended physical inches regardless of the printer's native resolution. *This depends on the external print stack honoring the `pHYs` chunk and cannot be verified in CI; it is validated only by the manual print step in `docs/manual_testing.md` §11 and is treated as a documented assumption, not an automated gating criterion.*
+- [x] **AC5 (Oversized guard):** Given size `US Letter page (8.5"×11")` and device `Laser/Inkjet (1200 dpi)`, when the user attempts to download, then a `ValueError` is raised and the form re-renders with a flashed danger message advising a lower resolution or smaller size (and `qr_preview` returns HTTP 400) — no out-of-memory render occurs.
+- [x] **AC6 (Unknown device — download):** Given a POST whose `device` value is not a known preset key, when the form is submitted, then WTForms validation fails and the form re-renders without producing a PNG attachment.
+- [x] **AC7 (Unknown device — preview):** Given `GET /equipment/<id>/qr/preview?device=bogus`, when requested, then the response is HTTP 400; and given the `device` param is omitted, then the preview renders at the default 300 dpi.
+- [x] **AC8a (Live preview — automated):** Given the rendered QR form, when the page loads, then the preview `<img>` initial `src` includes a `device=` query param, and `GET /equipment/<id>/qr/preview?...&device=<key>` renders at that device's DPI (verifiable with a Flask test client by asserting the returned PNG's dimensions/metadata for the given size+device).
+- [x] **AC8b (Live preview JS reload — manual/e2e, non-gating):** Given the QR form in a browser, when the user changes the device dropdown, then `app.js` rebuilds the preview URL with the new `device` param and the `<img>` reloads. *This is client-side JS and is not exercisable by the Flask test client; it is covered by the manual `docs/manual_testing.md` §11 steps, not by an automated unit/view test.*
+- [x] **AC9 (Docs):** Given the updated documentation, when a staff user reads `docs/staff.md`, then the printer/device selector and its purpose are described, the screenshot `docs/images/qr-generation.png` shows the dropdown, and `docs/manual_testing.md` section 11 includes device-resolution verification steps.
 
 ## Additional Context
 
@@ -261,3 +261,20 @@ Decouple physical size from a fixed DPI. Introduce **named printer/device preset
   - *Preview cost* — high-DPI previews are larger to encode, but the preview is debounced (150 ms) and cached 5 min; acceptable. If it becomes a problem, a future optimization could render the preview at a capped DPI (deferred — would break preview/download fidelity at the `avail < native` boundary, so not done now).
 - **Known limitations:** still raster PNG only (no PDF/vector); ESB does not print directly — the user prints the downloaded PNG via their OS. Both are explicitly out of scope.
 - **Future considerations (out of scope):** optional PDF output for desktop printers; a free-form numeric DPI override for unlisted devices; per-equipment or org-wide default device preference; SVG output.
+
+## Review Notes
+
+- Adversarial review completed (general adversarial review task, isolated subagent).
+- Findings: 12 total (11 + 1 bonus), 5 fixed, 7 skipped.
+- Resolution approach: auto-fix the "real" findings.
+- **Fixed:**
+  - F8: Generic preview-failure message (was hardcoded "too large to render"; `img.onerror` fires for any failed load — 404/500/network — so the message is now non-specific).
+  - F7: Download filename now encodes the device key (`qr-<id>-<name>-<device>.png`) so per-device labels for the same item no longer collide.
+  - F11: Extended `test_png_embeds_dpi_metadata` parametrization to 180/600/1200 dpi (was 203/300 only).
+  - F9: `test_post_qr_download_unknown_device_rejected` now asserts the device-clamp branch ran (re-rendered preview `src` carries `device=laser_300`, not `device=bogus`).
+  - Bonus: `render_qr_png` now raises `ValueError` on `dpi <= 0` (defensive guard on the public service entry point).
+- **Skipped (spec-mandated decisions or DPI-invariant non-issues):**
+  - F1 (`MAX_CANVAS_PX` adjustable-constant), F5 (`module_px < 5` threshold), F6 (helper `dpi=300` defaults), F10 (WiFi-Info doc step) — all explicitly required by the tech-spec.
+  - F3/F4 (claimed high-DPI font overflow) — invalid: `min_px` and the reserved bands both scale linearly with DPI, so the ratio is identical to the pre-change 300-dpi behavior (DPI-invariant; not a regression).
+  - F2 (device-validation comment) — reviewer conceded the logic is correct.
+- Final: `make lint` clean; full suite 1546 passed.

@@ -300,6 +300,11 @@ def qr(id):
         form.wifi_info.choices = choices
         if form.wifi_info.data not in {v for v, _ in choices}:
             form.wifi_info.data = _clamp_wifi_info(form.wifi_info.data, choices)
+        # device choices are static, so a bogus value can only arrive via a crafted/
+        # replayed POST that already failed validation. Clamp purely so the re-rendered
+        # preview src points at a valid device (not a TOCTOU reconciliation).
+        if form.device.data not in qr_service.QR_DEVICES_BY_KEY:
+            form.device.data = qr_service.DEFAULT_DEVICE_KEY
         return render_template('equipment/qr.html', equipment=eq, form=form)
 
     if form.validate_on_submit():
@@ -310,9 +315,11 @@ def qr(id):
                 'info',
             )
         preset = qr_service.QR_PRESETS_BY_KEY[form.size.data]
+        device = qr_service.QR_DEVICES_BY_KEY[form.device.data]
         try:
             png_bytes = qr_service.render_qr_png(
                 eq, preset,
+                dpi=device.dpi,
                 include_name=form.include_name.data,
                 include_url=form.include_url.data,
                 base_url=base_url,
@@ -328,11 +335,12 @@ def qr(id):
             flash('QR code generation failed — contact an administrator.', 'danger')
             return _render_form_with_real_choices()
         current_app.logger.info(
-            'QR downloaded: user=%s equipment_id=%s preset=%s include_name=%s include_url=%s wifi_info=%s',
-            current_user.username, eq.id, preset.key,
+            'QR downloaded: user=%s equipment_id=%s preset=%s device=%s '
+            'include_name=%s include_url=%s wifi_info=%s',
+            current_user.username, eq.id, preset.key, device.key,
             form.include_name.data, form.include_url.data, wifi_info,
         )
-        filename = f'qr-{eq.id}-{slugify_filename(eq.name)}.png'
+        filename = f'qr-{eq.id}-{slugify_filename(eq.name)}-{device.key}.png'
         return send_file(
             io.BytesIO(png_bytes),
             mimetype='image/png',
@@ -356,6 +364,10 @@ def qr_preview(id):
     preset = qr_service.QR_PRESETS_BY_KEY.get(size_key)
     if preset is None:
         abort(400)
+    device_key = request.args.get('device', qr_service.DEFAULT_DEVICE_KEY)
+    device = qr_service.QR_DEVICES_BY_KEY.get(device_key)
+    if device is None:
+        abort(400)
     include_name = request.args.get('include_name') in ('1', 'true', 'on')
     include_url = request.args.get('include_url') in ('1', 'true', 'on')
 
@@ -372,6 +384,7 @@ def qr_preview(id):
     try:
         png_bytes = qr_service.render_qr_png(
             eq, preset,
+            dpi=device.dpi,
             include_name=include_name,
             include_url=include_url,
             base_url=base_url,

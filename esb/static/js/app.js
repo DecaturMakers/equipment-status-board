@@ -241,14 +241,27 @@ document.addEventListener('DOMContentLoaded', function () {
   var form = document.getElementById('qr-form');
   if (!form) return;
   var img = document.getElementById('qr-preview');
+  var errEl = document.getElementById('qr-preview-error');
   var base = form.getAttribute('data-preview-base');
   var timer = null;
+  // Attach once so they persist across every debounced img.src reassignment.
+  // A 400 (e.g. oversized canvas) degrades to a readable message, not a broken icon.
+  img.onerror = function () {
+    img.classList.add('d-none');
+    if (errEl) errEl.classList.remove('d-none');
+  };
+  img.onload = function () {
+    img.classList.remove('d-none');
+    if (errEl) errEl.classList.add('d-none');
+  };
   function update() {
     var size = form.querySelector('[name="size"]').value;
     var incName = form.querySelector('[name="include_name"]').checked ? '1' : '';
     var incUrl = form.querySelector('[name="include_url"]').checked ? '1' : '';
     var wifiInfo = form.querySelector('[name="wifi_info"]');
+    var device = form.querySelector('[name="device"]');
     var params = new URLSearchParams({ size: size });
+    if (device) params.set('device', device.value);
     if (wifiInfo) params.set('wifi_info', wifiInfo.value);
     if (incName) params.set('include_name', '1');
     if (incUrl) params.set('include_url', '1');
