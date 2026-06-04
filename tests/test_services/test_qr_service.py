@@ -10,12 +10,14 @@ from pyzbar.pyzbar import decode
 
 from esb.services.qr_service import (
     DEFAULT_DEVICE_KEY,
+    MAX_CANVAS_PX,
     QR_DEVICE_PRESETS,
     QR_DEVICES_BY_KEY,
     QR_PRESETS_BY_KEY,
     QR_SIZE_PRESETS,
     QRSizePreset,
     _fit_text,
+    _px,
     render_qr_png,
 )
 
@@ -109,15 +111,21 @@ class TestRenderQRPng:
 
     def test_large_but_allowed_ok(self, app, make_equipment):
         eq = make_equipment(name='TestEq')
-        # 4″ sticker @ 1200 dpi = 4800×4800 = 23.04 MP, under the cap.
+        # 4″ sticker @ 1200 dpi = 4800×4800 = 23.04 MP, under the cap. This is the one
+        # deliberately heavy render kept to prove a large canvas allocates and renders
+        # end-to-end (and to cover AC2's 4800×4800 dimensions); the lighter under-cap
+        # boundaries below are checked arithmetically to keep the suite CI-friendly.
         result = render_qr_png(eq, QR_PRESETS_BY_KEY['sticker_4'], dpi=1200, base_url=BASE_URL)
         assert Image.open(io.BytesIO(result)).size == (4800, 4800)
 
-    def test_letter_at_600_dpi_under_cap_ok(self, app, make_equipment):
-        eq = make_equipment(name='TestEq')
-        # US Letter @ 600 dpi = 5100×6600 = 33.66 MP, under the 50 MP cap.
-        result = render_qr_png(eq, QR_PRESETS_BY_KEY['letter'], dpi=600, base_url=BASE_URL)
-        assert Image.open(io.BytesIO(result)).size == (5100, 6600)
+    def test_letter_at_600_dpi_under_cap(self):
+        # US Letter @ 600 dpi = 5100×6600 = 33.66 MP, under the 50 MP cap, so it must NOT
+        # trip the oversized guard. Verify the guard's pixel-count condition arithmetically
+        # rather than allocating a ~101 MB canvas in CI.
+        letter = QR_PRESETS_BY_KEY['letter']
+        canvas_px = _px(letter.width_in, 600) * _px(letter.height_in, 600)
+        assert canvas_px == 5100 * 6600
+        assert canvas_px <= MAX_CANVAS_PX
 
     def test_payload_decodes_to_expected_url(self, app, make_equipment):
         eq = make_equipment(name='TestEq')

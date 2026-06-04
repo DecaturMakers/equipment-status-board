@@ -15,7 +15,7 @@ from wtforms import (
 from wtforms.validators import URL, DataRequired, Length, NumberRange, Optional
 
 from esb.models.document import DOCUMENT_CATEGORIES
-from esb.services.qr_service import QR_DEVICE_PRESETS, QR_SIZE_PRESETS
+from esb.services.qr_service import DEFAULT_DEVICE_KEY, QR_DEVICE_PRESETS, QR_SIZE_PRESETS
 
 FORM_DOCUMENT_CATEGORIES = [('', '-- Select Category --')] + DOCUMENT_CATEGORIES
 
@@ -140,7 +140,7 @@ class QRGenerateForm(FlaskForm):
         'Printer / device',
         choices=[(p.key, p.label) for p in QR_DEVICE_PRESETS],
         validators=[DataRequired()],
-        default='laser_300',
+        default=DEFAULT_DEVICE_KEY,
     )
     wifi_info = SelectField('WiFi Info', default='none')
     include_name = BooleanField('Include equipment name above QR', default=False)
