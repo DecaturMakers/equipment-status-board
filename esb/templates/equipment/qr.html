@@ -47,7 +47,7 @@
         <h5>Preview</h5>
         <img id="qr-preview"
              alt="QR preview"
-             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', device=form.device.data or 'laser_300', include_name=form.include_name.data, include_url=form.include_url.data, wifi_info=form.wifi_info.data or 'none') }}"
+             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', device=form.device.data or default_device_key, include_name=form.include_name.data, include_url=form.include_url.data, wifi_info=form.wifi_info.data or 'none') }}"
              class="img-fluid border"
              style="max-width: 400px;">
         <span id="qr-preview-error" role="alert" aria-live="assertive" class="text-danger small d-none">Preview unavailable for this combination — the label may be too large to render at this resolution, or the URL too long for this size. Try a lower resolution or a larger size.</span>

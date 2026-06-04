@@ -305,7 +305,10 @@ def qr(id):
         # preview src points at a valid device (not a TOCTOU reconciliation).
         if form.device.data not in qr_service.QR_DEVICES_BY_KEY:
             form.device.data = qr_service.DEFAULT_DEVICE_KEY
-        return render_template('equipment/qr.html', equipment=eq, form=form)
+        return render_template(
+            'equipment/qr.html', equipment=eq, form=form,
+            default_device_key=qr_service.DEFAULT_DEVICE_KEY,
+        )
 
     if form.validate_on_submit():
         wifi_info = _clamp_wifi_info(form.wifi_info.data, choices)
@@ -353,7 +356,7 @@ def qr(id):
 @equipment_bp.route('/<int:id>/qr/preview')
 @login_required
 def qr_preview(id):
-    """Inline PNG preview. Query params: size, include_name, include_url, wifi_info."""
+    """Inline PNG preview. Query params: size, device, include_name, include_url, wifi_info."""
     eq = _get_active_equipment_or_404(id)
     try:
         base_url = get_normalized_base_url(current_app.config.get('ESB_BASE_URL', ''))
