@@ -1,16 +1,34 @@
 """Shared test fixtures for ESB application."""
 
+import json
 import logging
+import os
 
 import pytest
 
 from esb import create_app
+from esb.config import TestingConfig
 from esb.extensions import db as _db
 from esb.models.area import Area
 from esb.models.equipment import Equipment
 from esb.models.repair_record import RepairRecord
 from esb.models.user import User
 from esb.utils.logging import mutation_logger
+
+
+@pytest.fixture(autouse=True)
+def _isolate_qr_template_config(monkeypatch):
+    """Shield tests from a host QR_TEMPLATE_CONFIG_PATH.
+
+    Config classes bind env vars at import time, and create_app() consumes
+    QR_TEMPLATE_CONFIG_PATH during startup — a host shell with this exported
+    would otherwise activate a template in every test app (or fail startup
+    outright). Autouse fixtures run before requested fixtures of the same
+    scope, so this lands before the app fixture's create_app(). Tests that
+    exercise the startup path monkeypatch this same attribute in their own
+    bodies, which applies later and unwinds first.
+    """
+    monkeypatch.setattr(TestingConfig, 'QR_TEMPLATE_CONFIG_PATH', '')
 
 
 class _CaptureHandler(logging.Handler):
@@ -160,6 +178,56 @@ def tech_client(client, tech_user):
         'password': 'testpass',
     })
     return client
+
+
+# The "safe drawable area" bboxes from GitHub Issue #57 for the example
+# template fixture (tests/qr_code_template.png, 1500×1800).
+QR_TEMPLATE_QR_BBOX = [509, 949, 1011, 1451]
+QR_TEMPLATE_NAME_BBOX = [240, 540, 1259, 925]
+QR_TEMPLATE_URL_BBOX = [140, 1490, 1359, 1675]
+
+
+@pytest.fixture
+def make_qr_template_config(app, tmp_path):
+    """Factory fixture: write a QR template config JSON, load it, install it.
+
+    Each call writes a distinct JSON file into tmp_path referencing the
+    committed tests/qr_code_template.png (+ Poppins-Bold.ttf when font=True),
+    loads it via qr_service.load_template_config(), installs the result on
+    app.config['QR_TEMPLATE'], and returns the QRTemplate. Teardown restores
+    the original config value.
+    """
+    from esb.services import qr_service
+
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    original = app.config.get('QR_TEMPLATE')
+    counter = {'n': 0}
+
+    def _make(url_bbox=True, font=True):
+        counter['n'] += 1
+        config = {
+            'image': os.path.relpath(os.path.join(tests_dir, 'qr_code_template.png'), tmp_path),
+            'qr_bbox': QR_TEMPLATE_QR_BBOX,
+            'name_bbox': QR_TEMPLATE_NAME_BBOX,
+        }
+        if font:
+            config['font'] = os.path.relpath(os.path.join(tests_dir, 'Poppins-Bold.ttf'), tmp_path)
+        if url_bbox:
+            config['url_bbox'] = QR_TEMPLATE_URL_BBOX
+        json_path = tmp_path / f'qr_template_config_{counter["n"]}.json'
+        json_path.write_text(json.dumps(config))
+        template = qr_service.load_template_config(str(json_path))
+        app.config['QR_TEMPLATE'] = template
+        return template
+
+    yield _make
+    app.config['QR_TEMPLATE'] = original
+
+
+@pytest.fixture
+def qr_template_config(make_qr_template_config):
+    """Convenience: the default full template config (font + url_bbox)."""
+    return make_qr_template_config()
 
 
 @pytest.fixture

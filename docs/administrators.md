@@ -76,6 +76,7 @@ Open `http://localhost:5000` in a browser (or the server's IP/hostname on port 5
 | `SECRET_KEY` | Flask secret key for session signing. Must be random in production. | Yes | `dev-secret-change-me` | `a1b2c3d4e5f6...` (use `python3 -c "import secrets; print(secrets.token_hex(32))"`) |
 | `DATABASE_URL` | SQLAlchemy database connection URL. In Docker, the hostname is `db`. | Yes | `mysql+pymysql://root:esb_dev_password@localhost/esb` | `mysql+pymysql://root:yourpassword@db/esb` |
 | `ESB_BASE_URL` | Externally-reachable base URL of this ESB instance. Used as the prefix for QR code target URLs (the URL members' phones open when they scan a printed QR label). Must be set to enable QR code generation; otherwise the "Generate QR Code" button on each equipment detail page is disabled. Inside a container the request host is unreliable, so this must be set explicitly. Trailing slashes are stripped; must be an `http(s)://host[:port]` URL with no path, query, fragment, or credentials. | Yes | _(empty)_ | `http://esb.example.com:8080` |
+| `QR_TEMPLATE_CONFIG_PATH` | Filesystem path to a JSON file describing a branded QR sticker template (see [QR Code Sticker Templates](#qr-code-sticker-templates)). When set, QR downloads/previews composite the QR code and machine name into the template artwork instead of the plain white layout. Leave empty to disable. The app **fails to start** if the path is set but the config is invalid. | No | _(empty)_ | `/app/qr-template/template.json` |
 | `MARIADB_ROOT_PASSWORD` | Root password for the MariaDB container. Must match the password in `DATABASE_URL`. | Yes | `esb_dev_password` | `strong-random-password` |
 | `UPLOAD_PATH` | Directory for uploaded files (photos, documents). Relative to app root or absolute path. | No | `uploads` | `/app/uploads` |
 | `UPLOAD_MAX_SIZE_MB` | Maximum upload file size in megabytes. | No | `500` | `100` |
@@ -100,6 +101,44 @@ Open `http://localhost:5000` in a browser (or the server's IP/hostname on port 5
 
 !!! warning
     Set `FLASK_DEBUG=0` in production. Debug mode exposes detailed error pages and enables the interactive debugger.
+
+## QR Code Sticker Templates
+
+By default, QR stickers are rendered as a QR code (plus optional text rows) on a plain white canvas. To produce branded stickers, set `QR_TEMPLATE_CONFIG_PATH` to a JSON file describing a template image and where the dynamic elements go:
+
+```json
+{
+  "image": "template.png",
+  "font": "Poppins-Bold.ttf",
+  "qr_bbox": [509, 949, 1011, 1451],
+  "name_bbox": [240, 540, 1259, 925],
+  "url_bbox": [140, 1490, 1359, 1675]
+}
+```
+
+- `image` (required) — the template image, at most 50 million pixels. PNG is recommended; any format Pillow can decode works, but note that **EXIF orientation is not applied** — bounding boxes are interpreted against the stored pixel grid, so a rotated phone-camera JPEG will not match what image viewers display. Paths are resolved **relative to the JSON file's directory** (absolute paths also work).
+- `qr_bbox` (required) — where the QR code is drawn.
+- `name_bbox` (required) — where the machine name is drawn.
+- `url_bbox` (optional) — where the equipment URL is drawn. When omitted, the "Include URL" checkbox is removed from the QR form.
+- `font` (optional) — a TrueType font used for the name and URL text. Defaults to the bundled DejaVu Sans Bold.
+
+Bounding boxes are `[x0, y0, x1, y1]` pixel coordinates in the **template image's native pixels** (origin top-left; `x1`/`y1` are exclusive, so a box may extend exactly to the image edge). Unknown JSON keys are ignored.
+
+Behavioral notes:
+
+- **Supply the template at the maximum resolution it will be printed at.** The template is scaled (aspect ratio preserved, centered on white) to the selected output size; upscaling softens the artwork, while the QR code itself is always drawn crisp at the final resolution.
+- **Enabled elements replace their bbox contents.** Before drawing, each enabled element's box is filled solid white — so templates designed as mock-ups with placeholder content (a sample name, a stand-in QR square, sample URL text) render correctly. A **disabled** toggle leaves that box's artwork untouched: unchecking "Include name" on a mock-up template prints its placeholder name.
+- The machine-name toggle **defaults to ON** when a template is active.
+- Name/URL text is **single line** — it shrinks to fit, then truncates with an ellipsis. Size the name box for one line of the longest expected machine name. If a box is so small that not even a truncated rendering fits, it is left **blank** (white-filled, no text) and a warning is logged.
+- Bounding boxes must not overlap each other — overlapping boxes would let one element's white-fill erase part of another (including the QR code), so the config is rejected at startup.
+- **WiFi info is disabled** when a template is active — bake it into the artwork instead. Caution: if the baked WiFi text sits inside `url_bbox`, enabling "Include URL" white-fills that box and replaces the WiFi text.
+- The URL renders only when `url_bbox` is present **and** the URL toggle is checked.
+- **Low-resolution devices (180/203 dpi) on small stickers** can produce marginal (1–2 px module) QR codes that may not scan; a warning is logged. Prefer 300+ dpi for small templated stickers.
+- Small-to-medium templated stickers commonly log the marginal-scannability warning **even at 300 dpi** (e.g. a 1500×1800 template at 2″/300 dpi yields 4 px modules, just under the 5 px warning threshold). This is expected steady-state behavior, not an error — verify scans physically when in doubt.
+- **The app fails to start** if `QR_TEMPLATE_CONFIG_PATH` is set but the config is invalid (missing/malformed JSON, missing image or font, malformed or out-of-bounds boxes), with a message naming the specific problem.
+
+!!! warning
+    In Docker deployments, `QR_TEMPLATE_CONFIG_PATH` affects **every** process that calls `create_app()` — the `app` container, the `worker` container, and CLI commands. Both `app` and `worker` load the same `.env`, so the template directory (JSON + image + font) must be volume-mounted into **both** containers at the same path. Mounting it only into `app` leaves the worker crash-looping at startup, and notifications stop being delivered.
 
 ## Docker Services
 

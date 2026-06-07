@@ -27,18 +27,24 @@
                 <label for="{{ form.device.id }}" class="form-label">{{ form.device.label.text }}</label>
                 {{ form.device(class="form-select") }}
             </div>
+            {% if not template_active %}
             <div class="mb-3">
                 <label for="{{ form.wifi_info.id }}" class="form-label">{{ form.wifi_info.label.text }}</label>
                 {{ form.wifi_info(class="form-select") }}
             </div>
+            {% endif %}
+            {# With a template, placement is set by the template's bboxes — the
+               default "above/below QR" label wording would be wrong. #}
             <div class="form-check mb-2">
                 {{ form.include_name(class="form-check-input") }}
-                <label class="form-check-label" for="{{ form.include_name.id }}">{{ form.include_name.label.text }}</label>
+                <label class="form-check-label" for="{{ form.include_name.id }}">{{ 'Include equipment name' if template_active else form.include_name.label.text }}</label>
             </div>
+            {% if not template_active or template_has_url_bbox %}
             <div class="form-check mb-3">
                 {{ form.include_url(class="form-check-input") }}
-                <label class="form-check-label" for="{{ form.include_url.id }}">{{ form.include_url.label.text }}</label>
+                <label class="form-check-label" for="{{ form.include_url.id }}">{{ 'Include URL' if template_active else form.include_url.label.text }}</label>
             </div>
+            {% endif %}
             {{ form.submit(class="btn btn-primary") }}
             <a href="{{ url_for('equipment.detail', id=equipment.id) }}" class="btn btn-link">Cancel</a>
         </form>
@@ -47,10 +53,11 @@
         <h5>Preview</h5>
         <img id="qr-preview"
              alt="QR preview"
-             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', device=form.device.data or default_device_key, include_name=form.include_name.data, include_url=form.include_url.data, wifi_info=form.wifi_info.data or 'none') }}"
+             {# Booleans must serialize as '1'/'' — the preview parser only accepts ('1', 'true', 'on'), and Python True stringifies to 'True'. #}
+             src="{{ url_for('equipment.qr_preview', id=equipment.id, size=form.size.data or 'sticker_2', device=form.device.data or default_device_key, include_name='1' if form.include_name.data else '', include_url='1' if form.include_url.data else '', wifi_info=form.wifi_info.data or 'none') }}"
              class="img-fluid border"
              style="max-width: 400px;">
-        <span id="qr-preview-error" role="alert" aria-live="assertive" class="text-danger small d-none">Preview unavailable for this combination — the label may be too large to render at this resolution, or the URL too long for this size. Try a lower resolution or a larger size.</span>
+        <span id="qr-preview-error" role="alert" aria-live="assertive" class="text-danger small d-none">Preview unavailable for this combination — the label may be too large to render at this resolution, or the URL too long for this size — or, with a template configured, the QR area may be too small at this size/resolution. Try a lower resolution or a larger size.</span>
         <p class="text-muted small mt-2">Preview is scaled to fit. The downloaded PNG is sized to your selected printer resolution and physical size.</p>
     </div>
 </div>

@@ -256,8 +256,13 @@ document.addEventListener('DOMContentLoaded', function () {
   };
   function update() {
     var size = form.querySelector('[name="size"]').value;
-    var incName = form.querySelector('[name="include_name"]').checked ? '1' : '';
-    var incUrl = form.querySelector('[name="include_url"]').checked ? '1' : '';
+    // Checkbox lookups are guarded: the include_url checkbox is absent when a
+    // template without url_bbox is active, and an unguarded .checked on a
+    // missing element would throw and kill the whole preview updater.
+    var incNameEl = form.querySelector('[name="include_name"]');
+    var incName = incNameEl && incNameEl.checked ? '1' : '';
+    var incUrlEl = form.querySelector('[name="include_url"]');
+    var incUrl = incUrlEl && incUrlEl.checked ? '1' : '';
     var wifiInfo = form.querySelector('[name="wifi_info"]');
     var device = form.querySelector('[name="device"]');
     var params = new URLSearchParams({ size: size });

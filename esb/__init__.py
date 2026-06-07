@@ -40,6 +40,15 @@ def create_app(config_name='default'):
     if not os.path.isabs(_upload_path):
         app.config['UPLOAD_PATH'] = os.path.abspath(_upload_path)
 
+    # Fail fast on an invalid QR template config — a misconfigured template
+    # should stop startup with a specific message, not surface per-request.
+    _qr_template_config_path = app.config.get('QR_TEMPLATE_CONFIG_PATH', '')
+    if _qr_template_config_path:
+        from esb.services import qr_service
+        app.config['QR_TEMPLATE'] = qr_service.load_template_config(_qr_template_config_path)
+    else:
+        app.config['QR_TEMPLATE'] = None
+
     # Initialize extensions
     db.init_app(app)
     login_manager.init_app(app)

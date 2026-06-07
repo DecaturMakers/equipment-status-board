@@ -1968,3 +1968,237 @@ class TestEquipmentQR:
         assert resp_bogus.status_code == 200
         assert resp_none.status_code == 200
         assert resp_bogus.data == resp_none.data, 'bogus wifi_info should render identically to none'
+
+
+class TestEquipmentQRTemplate:
+    """Tests for QR routes with a sticker template active (QR_TEMPLATE config)."""
+
+    @staticmethod
+    def _decoded_bytes(png_bytes):
+        from PIL import Image
+        return Image.open(io.BytesIO(png_bytes)).convert('RGB').tobytes()
+
+    @staticmethod
+    def _input_tag(html, name):
+        """Return the full <input ...> tag for the named field."""
+        idx = html.find(f'name="{name}"')
+        assert idx != -1, f'input {name!r} not found'
+        tag_start = html.rfind('<input', 0, idx)
+        tag_end = html.find('>', idx)
+        return html[tag_start:tag_end + 1]
+
+    # --- Form rendering ---
+
+    def test_get_form_hides_wifi_select(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert resp.status_code == 200
+        assert b'name="wifi_info"' not in resp.data
+
+    def test_get_form_include_name_checked_by_default(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert resp.status_code == 200
+        tag = self._input_tag(resp.data.decode(), 'include_name')
+        assert 'checked' in tag
+
+    def test_get_form_labels_omit_qr_placement_wording(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        """With a template, placement is bbox-defined — 'above/below QR' is wrong."""
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert b'above QR' not in resp.data
+        assert b'below QR' not in resp.data
+        assert b'Include equipment name' in resp.data
+        assert b'Include URL' in resp.data
+
+    def test_get_form_include_url_present_with_url_bbox(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert b'name="include_url"' in resp.data
+
+    def test_get_form_include_url_absent_without_url_bbox(
+        self, staff_client, make_equipment, configured_base_url, make_qr_template_config,
+    ):
+        make_qr_template_config(url_bbox=False)
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        assert resp.status_code == 200
+        assert b'name="include_url"' not in resp.data
+        assert b'name="include_name"' in resp.data
+
+    def test_get_form_initial_preview_src_serializes_booleans(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        """Locks in the '1'/'' serialization fix — 'True' parses as False upstream."""
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr')
+        html = resp.data.decode()
+        idx = html.find('id="qr-preview"')
+        tag_end = html.find('>', idx)
+        img_tag = html[html.rfind('<img', 0, idx):tag_end + 1]
+        assert 'include_name=1' in img_tag
+        assert 'include_name=True' not in img_tag
+
+    # --- Download (POST) ---
+
+    def test_post_download_returns_png_with_preset_dimensions(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        from PIL import Image
+        from pyzbar.pyzbar import decode
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'wifi_info': 'none', 'submit': 'Download QR Code'},
+        )
+        assert resp.status_code == 200
+        assert resp.content_type.startswith('image/png')
+        assert 'attachment' in resp.headers.get('Content-Disposition', '')
+        img = Image.open(io.BytesIO(resp.data))
+        assert img.size == (600, 600)
+        decoded = decode(img)
+        assert len(decoded) >= 1
+        assert decoded[0].data.decode('utf-8') == (
+            f'{configured_base_url}/public/equipment/{eq.id}'
+        )
+
+    def test_post_crafted_wifi_info_ignored(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp_crafted = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'wifi_info': 'password', 'submit': 'Download QR Code'},
+        )
+        resp_plain = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'submit': 'Download QR Code'},
+        )
+        # No validation bounce — both return PNGs, pixel-identical.
+        assert resp_crafted.status_code == 200
+        assert resp_crafted.content_type.startswith('image/png')
+        assert resp_plain.content_type.startswith('image/png')
+        assert self._decoded_bytes(resp_crafted.data) == self._decoded_bytes(resp_plain.data)
+
+    def test_post_crafted_include_url_ignored_without_url_bbox(
+        self, staff_client, make_equipment, configured_base_url, make_qr_template_config,
+    ):
+        make_qr_template_config(url_bbox=False)
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        resp_crafted = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'wifi_info': 'none', 'include_url': 'y',
+                  'submit': 'Download QR Code'},
+        )
+        resp_plain = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_2', 'wifi_info': 'none', 'submit': 'Download QR Code'},
+        )
+        assert resp_crafted.status_code == 200
+        assert self._decoded_bytes(resp_crafted.data) == self._decoded_bytes(resp_plain.data)
+
+    # --- Preview (GET) ---
+
+    def test_preview_returns_png(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_2')
+        assert resp.status_code == 200
+        assert resp.content_type.startswith('image/png')
+
+    def test_preview_wifi_param_ignored(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        eq = make_equipment('X', 'Y', 'Z')
+        resp_wifi = staff_client.get(
+            f'/equipment/{eq.id}/qr/preview?size=sticker_2&wifi_info=header'
+        )
+        resp_none = staff_client.get(
+            f'/equipment/{eq.id}/qr/preview?size=sticker_2&wifi_info=none'
+        )
+        assert resp_wifi.status_code == 200
+        assert self._decoded_bytes(resp_wifi.data) == self._decoded_bytes(resp_none.data)
+
+    def test_preview_include_url_ignored_without_url_bbox(
+        self, staff_client, make_equipment, configured_base_url, make_qr_template_config,
+    ):
+        make_qr_template_config(url_bbox=False)
+        eq = make_equipment('X', 'Y', 'Z')
+        resp_url = staff_client.get(
+            f'/equipment/{eq.id}/qr/preview?size=sticker_2&include_url=1'
+        )
+        resp_plain = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_2')
+        assert resp_url.status_code == 200
+        assert self._decoded_bytes(resp_url.data) == self._decoded_bytes(resp_plain.data)
+
+    # --- Too-small guard through the routes (AC 8) ---
+
+    def test_post_too_small_template_box_flashes_and_rerenders(
+        self, staff_client, make_equipment, app, qr_template_config,
+    ):
+        # A long base URL inflates the QR's native module count so sticker_1
+        # at 203 dpi cannot fit 1 px per module in the scaled template bbox.
+        app.config['ESB_BASE_URL'] = 'http://' + ('example' * 20) + '.com:5000'
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/qr',
+            data={'size': 'sticker_1', 'device': 'thermal_203', 'wifi_info': 'none',
+                  'submit': 'Download QR Code'},
+        )
+        assert resp.status_code == 200
+        assert not resp.content_type.startswith('image/png')
+        assert b'template box is too small' in resp.data
+        # Form re-rendered, still in template mode (no WiFi select).
+        assert b'name="size"' in resp.data
+        assert b'name="wifi_info"' not in resp.data
+
+    def test_preview_too_small_template_box_400(
+        self, staff_client, make_equipment, app, qr_template_config,
+    ):
+        app.config['ESB_BASE_URL'] = 'http://' + ('example' * 20) + '.com:5000'
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(
+            f'/equipment/{eq.id}/qr/preview?size=sticker_1&device=thermal_203'
+        )
+        assert resp.status_code == 400
+
+    def test_post_include_name_toggle_roundtrips(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+    ):
+        """Unchecking 'Include name' on a template-mode POST must actually
+        change the output (placeholder artwork instead of the drawn name)."""
+        eq = make_equipment('Table Saw', 'SawStop', 'PCS')
+        data = {'size': 'sticker_2', 'wifi_info': 'none', 'submit': 'Download QR Code'}
+        resp_off = staff_client.post(f'/equipment/{eq.id}/qr', data=data)
+        resp_on = staff_client.post(
+            f'/equipment/{eq.id}/qr', data={**data, 'include_name': 'y'},
+        )
+        assert resp_off.status_code == 200
+        assert resp_on.status_code == 200
+        assert resp_off.content_type.startswith('image/png')
+        assert resp_on.content_type.startswith('image/png')
+        assert self._decoded_bytes(resp_on.data) != self._decoded_bytes(resp_off.data)
+
+    def test_preview_swapped_oversized_image_500(
+        self, staff_client, make_equipment, configured_base_url, qr_template_config,
+        monkeypatch,
+    ):
+        """A post-startup swap to a bomb-sized template image surfaces as a
+        clean 500 (DecompressionBombError → RuntimeError → abort(500)), not an
+        unhandled exception."""
+        from PIL import Image
+        # Lower PIL's limit so the (already validated) fixture image now
+        # exceeds 2× MAX_IMAGE_PIXELS at render-time open.
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 1000)
+        eq = make_equipment('X', 'Y', 'Z')
+        resp = staff_client.get(f'/equipment/{eq.id}/qr/preview?size=sticker_2')
+        assert resp.status_code == 500

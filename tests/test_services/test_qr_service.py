@@ -2,7 +2,9 @@
 
 import inspect
 import io
+import json
 import logging
+import os
 
 import pytest
 from PIL import Image, ImageDraw
@@ -16,13 +18,18 @@ from esb.services.qr_service import (
     QR_PRESETS_BY_KEY,
     QR_SIZE_PRESETS,
     QRSizePreset,
+    _draw_text_in_bbox,
     _fit_text,
     _px,
+    load_template_config,
     render_qr_png,
 )
 
 
 BASE_URL = 'http://esb.test:5000'
+
+# tests/ directory — the committed template fixtures live there.
+TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class TestQRSizePresets:
@@ -575,6 +582,546 @@ class TestRenderQRPngWifi:
         assert first_black_y is not None, 'QR not found in expected band'
         assert first_black_y >= qr_band_top, (
             f'QR top {first_black_y} above expected band start {qr_band_top}'
+        )
+
+
+def _write_template_config(tmp_path, **overrides):
+    """Write a template config JSON into tmp_path and return its path.
+
+    Defaults reference the committed example fixtures; pass key=None to omit a
+    key, or key=value to override.
+    """
+    config = {
+        'image': os.path.relpath(os.path.join(TESTS_DIR, 'qr_code_template.png'), tmp_path),
+        'font': os.path.relpath(os.path.join(TESTS_DIR, 'Poppins-Bold.ttf'), tmp_path),
+        'qr_bbox': [509, 949, 1011, 1451],
+        'name_bbox': [240, 540, 1259, 925],
+        'url_bbox': [140, 1490, 1359, 1675],
+    }
+    config.update(overrides)
+    config = {k: v for k, v in config.items() if v is not None}
+    path = tmp_path / 'template_config.json'
+    path.write_text(json.dumps(config))
+    return str(path)
+
+
+def _scaled_bbox(bbox, template, canvas_w, canvas_h):
+    """Map a template-native bbox to canvas coordinates — same math as the renderer."""
+    s = min(canvas_w / template.image_w, canvas_h / template.image_h)
+    scaled_w = max(1, round(template.image_w * s))
+    scaled_h = max(1, round(template.image_h * s))
+    off_x = (canvas_w - scaled_w) // 2
+    off_y = (canvas_h - scaled_h) // 2
+    x0, y0, x1, y1 = bbox
+    return (
+        off_x + round(x0 * s), off_y + round(y0 * s),
+        off_x + round(x1 * s), off_y + round(y1 * s),
+    )
+
+
+class TestLoadTemplateConfig:
+    def test_valid_full_config(self, tmp_path):
+        path = _write_template_config(tmp_path)
+        template = load_template_config(path)
+        assert os.path.isabs(template.image_path)
+        assert template.image_path.endswith('qr_code_template.png')
+        assert os.path.isabs(template.font_path)
+        assert template.font_path.endswith('Poppins-Bold.ttf')
+        assert (template.image_w, template.image_h) == (1500, 1800)
+        assert template.qr_bbox == (509, 949, 1011, 1451)
+        assert template.name_bbox == (240, 540, 1259, 925)
+        assert template.url_bbox == (140, 1490, 1359, 1675)
+
+    def test_font_omitted_falls_back_to_vendored_dejavu(self, tmp_path):
+        import esb
+        path = _write_template_config(tmp_path, font=None)
+        template = load_template_config(path)
+        expected = os.path.join(
+            os.path.dirname(esb.__file__), 'static', 'fonts', 'DejaVuSans-Bold.ttf'
+        )
+        assert template.font_path == expected
+        assert os.path.isfile(template.font_path)
+
+    def test_url_bbox_omitted_is_none(self, tmp_path):
+        path = _write_template_config(tmp_path, url_bbox=None)
+        template = load_template_config(path)
+        assert template.url_bbox is None
+
+    def test_unknown_keys_ignored(self, tmp_path):
+        path = _write_template_config(tmp_path, future_key='whatever', other=[1, 2])
+        template = load_template_config(path)
+        assert template.qr_bbox == (509, 949, 1011, 1451)
+
+    def test_full_bleed_bbox_legal(self, tmp_path):
+        # Exclusive convention: x1 == image_w / y1 == image_h must be accepted.
+        # (Full image width, below the QR bbox so it doesn't overlap anything.)
+        path = _write_template_config(tmp_path, url_bbox=[0, 1451, 1500, 1800])
+        template = load_template_config(path)
+        assert template.url_bbox == (0, 1451, 1500, 1800)
+
+    def test_nonexistent_json_path_raises(self, tmp_path):
+        with pytest.raises(ValueError, match='unreadable'):
+            load_template_config(str(tmp_path / 'missing.json'))
+
+    def test_malformed_json_raises(self, tmp_path):
+        path = tmp_path / 'bad.json'
+        path.write_text('{not json!')
+        with pytest.raises(ValueError, match='not valid JSON'):
+            load_template_config(str(path))
+
+    def test_non_object_json_raises(self, tmp_path):
+        path = tmp_path / 'list.json'
+        path.write_text('[1, 2, 3]')
+        with pytest.raises(ValueError, match='must be a JSON object'):
+            load_template_config(str(path))
+
+    @pytest.mark.parametrize('missing', ['image', 'qr_bbox', 'name_bbox'])
+    def test_missing_required_key_raises(self, tmp_path, missing):
+        path = _write_template_config(tmp_path, **{missing: None})
+        with pytest.raises(ValueError, match=f"missing required key '{missing}'"):
+            load_template_config(str(path))
+
+    @pytest.mark.parametrize('bad_bbox', [
+        [1, 2, 3],                      # wrong length
+        [1, 2, 3, 4, 5],                # wrong length
+        ['a', 2, 3, 4],                 # non-int
+        [1.5, 2, 3, 4],                 # float
+        [True, 2, 3, 4],                # bool is not an int here
+        'not-a-list',
+    ], ids=['len3', 'len5', 'str-coord', 'float-coord', 'bool-coord', 'not-list'])
+    def test_bbox_not_4_ints_raises(self, tmp_path, bad_bbox):
+        path = _write_template_config(tmp_path, qr_bbox=bad_bbox)
+        with pytest.raises(ValueError, match='qr_bbox must be a list of exactly 4 integers'):
+            load_template_config(str(path))
+
+    @pytest.mark.parametrize('degenerate', [
+        [100, 100, 100, 200],   # x1 == x0
+        [200, 100, 100, 200],   # x1 < x0
+        [100, 200, 200, 200],   # y1 == y0
+        [100, 300, 200, 200],   # y1 < y0
+    ], ids=['x-equal', 'x-inverted', 'y-equal', 'y-inverted'])
+    def test_degenerate_bbox_raises(self, tmp_path, degenerate):
+        path = _write_template_config(tmp_path, name_bbox=degenerate)
+        with pytest.raises(ValueError, match='degenerate'):
+            load_template_config(str(path))
+
+    @pytest.mark.parametrize('out_of_bounds', [
+        [-1, 0, 100, 100],
+        [0, -5, 100, 100],
+        [0, 0, 1501, 100],
+        [0, 0, 100, 1801],
+    ], ids=['neg-x0', 'neg-y0', 'x1-over', 'y1-over'])
+    def test_out_of_bounds_bbox_raises(self, tmp_path, out_of_bounds):
+        path = _write_template_config(tmp_path, url_bbox=out_of_bounds)
+        with pytest.raises(ValueError, match='outside the template image bounds'):
+            load_template_config(str(path))
+
+    @pytest.mark.parametrize('bad_image', [123, '', ['a.png']], ids=['int', 'empty', 'list'])
+    def test_non_string_image_raises_valueerror(self, tmp_path, bad_image):
+        path = _write_template_config(tmp_path, image=bad_image)
+        with pytest.raises(ValueError, match='image must be a non-empty string path'):
+            load_template_config(str(path))
+
+    @pytest.mark.parametrize('bad_font', [123, '', {'f': 1}], ids=['int', 'empty', 'dict'])
+    def test_non_string_font_raises_valueerror(self, tmp_path, bad_font):
+        path = _write_template_config(tmp_path, font=bad_font)
+        with pytest.raises(ValueError, match='font must be a non-empty string path'):
+            load_template_config(str(path))
+
+    def test_truncated_image_data_raises_at_load(self, tmp_path):
+        """Image.open parses only the header — validation must force a full decode."""
+        src = os.path.join(TESTS_DIR, 'qr_code_template.png')
+        with open(src, 'rb') as f:
+            truncated = f.read(2000)
+        (tmp_path / 'truncated.png').write_bytes(truncated)
+        path = _write_template_config(tmp_path, image='truncated.png')
+        with pytest.raises(ValueError, match='cannot open template image'):
+            load_template_config(str(path))
+
+    def test_decompression_bomb_raises_valueerror(self, tmp_path, monkeypatch):
+        """DecompressionBombError subclasses Exception, not OSError — must still
+        surface as the specific config ValueError, not a raw traceback."""
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 1000)
+        path = _write_template_config(tmp_path)
+        with pytest.raises(ValueError, match='cannot open template image'):
+            load_template_config(str(path))
+
+    @pytest.mark.parametrize('key,bbox', [
+        # Overlapping the QR bbox would let a later white-fill erase the QR.
+        ('name_bbox', [509, 540, 1259, 1000]),
+        ('url_bbox', [140, 1400, 1359, 1675]),
+    ], ids=['name-over-qr', 'url-over-qr'])
+    def test_overlapping_bboxes_raise(self, tmp_path, key, bbox):
+        path = _write_template_config(tmp_path, **{key: bbox})
+        with pytest.raises(ValueError, match='overlap'):
+            load_template_config(str(path))
+
+    def test_name_url_overlap_raises(self, tmp_path):
+        # Overlaps name_bbox [240, 540, 1259, 925] but not qr_bbox.
+        path = _write_template_config(tmp_path, url_bbox=[240, 700, 1259, 900])
+        with pytest.raises(ValueError, match='overlap'):
+            load_template_config(str(path))
+
+    def test_nonexistent_image_raises(self, tmp_path):
+        path = _write_template_config(tmp_path, image='no-such-image.png')
+        with pytest.raises(ValueError, match='cannot open template image'):
+            load_template_config(str(path))
+
+    def test_nonexistent_font_raises(self, tmp_path):
+        path = _write_template_config(tmp_path, font='no-such-font.ttf')
+        with pytest.raises(ValueError, match='cannot load font'):
+            load_template_config(str(path))
+
+    def test_non_font_file_as_font_raises(self, tmp_path):
+        # The template PNG exists but is not loadable as a truetype font.
+        path = _write_template_config(
+            tmp_path,
+            font=os.path.relpath(os.path.join(TESTS_DIR, 'qr_code_template.png'), tmp_path),
+        )
+        with pytest.raises(ValueError, match='cannot load font'):
+            load_template_config(str(path))
+
+    def test_oversized_template_image_raises(self, tmp_path, monkeypatch):
+        """Input images are capped like output canvases — a huge template
+        would be fully decoded and resized per render."""
+        from esb.services import qr_service
+        monkeypatch.setattr(qr_service, 'MAX_CANVAS_PX', 1000)
+        path = _write_template_config(tmp_path)
+        with pytest.raises(ValueError, match='exceeding the 1,000 px limit'):
+            load_template_config(str(path))
+
+
+class TestRenderQRPngTemplate:
+    """Template rendering tests.
+
+    The fixture template is a mock-up with placeholder content inside every
+    bbox, so presence-of-pixels assertions are vacuous — these tests assert
+    differences between renders instead.
+    """
+
+    @staticmethod
+    def _render(eq, template, preset_key='sticker_2', dpi=300, **kwargs):
+        return render_qr_png(
+            eq, QR_PRESETS_BY_KEY[preset_key], dpi=dpi, base_url=BASE_URL,
+            template=template, **kwargs,
+        )
+
+    @pytest.mark.parametrize(
+        'preset_key', ['sticker_2', 'avery_5163', 'letter'],
+    )
+    def test_dimensions_match_preset(self, app, make_equipment, make_qr_template_config, preset_key):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result = self._render(eq, template, preset_key=preset_key)
+        img = Image.open(io.BytesIO(result))
+        preset = QR_PRESETS_BY_KEY[preset_key]
+        assert img.size == (_px(preset.width_in, 300), _px(preset.height_in, 300))
+
+    @pytest.mark.parametrize(
+        'preset_key',
+        ['sticker_2', 'sticker_1', 'letter'],
+        ids=['downscale', 'aggressive-downscale', 'upscale'],
+    )
+    def test_qr_decodes_at_300dpi(self, app, make_equipment, make_qr_template_config, preset_key):
+        eq = make_equipment(name='Bandsaw')
+        eq.id = 42
+        template = make_qr_template_config()
+        result = self._render(eq, template, preset_key=preset_key)
+        decoded = decode(Image.open(io.BytesIO(result)))
+        assert len(decoded) >= 1
+        assert decoded[0].data.decode('utf-8') == f'{BASE_URL}/public/equipment/42'
+
+    def test_qr_bbox_pure_black_white(self, app, make_equipment, make_qr_template_config):
+        """White-fill + NEAREST invariant: no placeholder ring, no antialiasing."""
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result = self._render(eq, template)
+        img = Image.open(io.BytesIO(result)).convert('RGB')
+        qr_box = _scaled_bbox(template.qr_bbox, template, img.width, img.height)
+        region = img.crop(qr_box)
+        colors = region.getcolors(maxcolors=256 * 256) or []
+        for _, c in colors:
+            assert c in ((0, 0, 0), (255, 255, 255)), f'non-binary pixel {c} in QR bbox'
+
+    def test_template_artwork_visible_outside_bboxes(
+        self, app, make_equipment, make_qr_template_config,
+    ):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result = self._render(eq, template)
+        img = Image.open(io.BytesIO(result)).convert('RGB')
+        # Blank the three bbox regions, then look for remaining artwork.
+        for bbox in (template.qr_bbox, template.name_bbox, template.url_bbox):
+            img.paste((255, 255, 255), _scaled_bbox(bbox, template, img.width, img.height))
+        colors = img.getcolors(maxcolors=256 * 256 * 256) or []
+        assert any(c != (255, 255, 255) for _, c in colors), (
+            'expected template artwork outside the bboxes'
+        )
+
+    def test_name_toggle_difference(self, app, make_equipment, make_qr_template_config):
+        # Descender-free name sized well below the bbox so the outside-bbox
+        # comparison isn't sensitive to ink metrics.
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result_on = self._render(eq, template, include_name=True)
+        result_off = self._render(eq, template, include_name=False)
+        img_on = Image.open(io.BytesIO(result_on)).convert('RGB')
+        img_off = Image.open(io.BytesIO(result_off)).convert('RGB')
+        name_box = _scaled_bbox(template.name_bbox, template, img_on.width, img_on.height)
+        assert img_on.crop(name_box).tobytes() != img_off.crop(name_box).tobytes(), (
+            'name bbox should differ between include_name on/off'
+        )
+        # Outside the name bbox the renders are identical.
+        img_on.paste((0, 0, 0), name_box)
+        img_off.paste((0, 0, 0), name_box)
+        assert img_on.tobytes() == img_off.tobytes(), (
+            'pixels outside the name bbox should be identical'
+        )
+
+    def test_name_off_leaves_placeholder_artwork(
+        self, app, make_equipment, make_qr_template_config,
+    ):
+        """With include_name=False the mock-up's placeholder name shows as-is."""
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result = self._render(eq, template, include_name=False)
+        img = Image.open(io.BytesIO(result)).convert('RGB')
+        name_box = _scaled_bbox(template.name_bbox, template, img.width, img.height)
+        colors = img.crop(name_box).getcolors(maxcolors=256 * 256 * 256) or []
+        assert any(c != (255, 255, 255) for _, c in colors), (
+            'expected placeholder artwork in the untouched name bbox'
+        )
+
+    def test_url_toggle_difference(self, app, make_equipment, make_qr_template_config):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result_on = self._render(eq, template, include_url=True)
+        result_off = self._render(eq, template, include_url=False)
+        img_on = Image.open(io.BytesIO(result_on)).convert('RGB')
+        img_off = Image.open(io.BytesIO(result_off)).convert('RGB')
+        url_box = _scaled_bbox(template.url_bbox, template, img_on.width, img_on.height)
+        assert img_on.crop(url_box).tobytes() != img_off.crop(url_box).tobytes()
+        img_on.paste((0, 0, 0), url_box)
+        img_off.paste((0, 0, 0), url_box)
+        assert img_on.tobytes() == img_off.tobytes()
+
+    def test_include_url_ignored_without_url_bbox(
+        self, app, make_equipment, make_qr_template_config,
+    ):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config(url_bbox=False)
+        result_on = self._render(eq, template, include_url=True)
+        result_off = self._render(eq, template, include_url=False)
+        img_on = Image.open(io.BytesIO(result_on)).convert('RGB')
+        img_off = Image.open(io.BytesIO(result_off)).convert('RGB')
+        assert img_on.tobytes() == img_off.tobytes()
+
+    def test_configured_font_actually_used(
+        self, app, make_equipment, make_qr_template_config,
+    ):
+        """Catches a silent fallback to DejaVu that every other test would miss."""
+        eq = make_equipment(name='Bandsaw')
+        template_poppins = make_qr_template_config(font=True)
+        template_dejavu = make_qr_template_config(font=False)
+        result_poppins = self._render(eq, template_poppins, include_name=True)
+        result_dejavu = self._render(eq, template_dejavu, include_name=True)
+        img_p = Image.open(io.BytesIO(result_poppins)).convert('RGB')
+        img_d = Image.open(io.BytesIO(result_dejavu)).convert('RGB')
+        name_box = _scaled_bbox(template_poppins.name_bbox, template_poppins, img_p.width, img_p.height)
+        assert img_p.crop(name_box).tobytes() != img_d.crop(name_box).tobytes(), (
+            'Poppins and DejaVu renders should differ inside the name bbox'
+        )
+
+    def test_wifi_args_ignored(self, app, make_equipment, make_qr_template_config):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result_password = self._render(
+            eq, template,
+            wifi_info='password', wifi_ssid='TestNet', wifi_password='secret123',
+        )
+        result_none = self._render(eq, template, wifi_info='none')
+        img_password = Image.open(io.BytesIO(result_password)).convert('RGB')
+        img_none = Image.open(io.BytesIO(result_none)).convert('RGB')
+        assert img_password.tobytes() == img_none.tobytes()
+
+    def test_too_small_qr_bbox_raises(self, app, make_equipment, make_qr_template_config):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        tiny = QRSizePreset('tiny', '0.1"×0.1" tiny', 0.1, 0.1)
+        with pytest.raises(ValueError, match='template box is too small'):
+            render_qr_png(eq, tiny, base_url=BASE_URL, template=template)
+
+    def test_marginal_module_size_logs_warning(
+        self, app, make_equipment, make_qr_template_config, caplog,
+    ):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        logger_name = app.logger.name
+        original_propagate = app.logger.propagate
+        app.logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger=logger_name):
+                # sticker_1 @ 300 dpi → ~84 px scaled QR bbox → ~2 px modules.
+                self._render(eq, template, preset_key='sticker_1')
+            messages = ' '.join(r.getMessage() for r in caplog.records)
+            assert 'scannability may be marginal' in messages
+        finally:
+            app.logger.propagate = original_propagate
+
+    @pytest.mark.parametrize('dpi', [203, 300, 600])
+    def test_png_embeds_dpi_metadata(self, app, make_equipment, make_qr_template_config, dpi):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        result = self._render(eq, template, dpi=dpi)
+        img = Image.open(io.BytesIO(result))
+        assert tuple(round(v) for v in img.info['dpi']) == (dpi, dpi)
+
+    def test_max_canvas_guard_raises_before_template_work(
+        self, app, make_equipment, make_qr_template_config,
+    ):
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        with pytest.raises(ValueError, match='too large to render'):
+            render_qr_png(
+                eq, QR_PRESETS_BY_KEY['letter'], dpi=1200,
+                base_url=BASE_URL, template=template,
+            )
+
+    @pytest.mark.parametrize('mode', ['RGBA', 'LA', 'P'])
+    def test_transparency_flattens_to_white(self, app, make_equipment, tmp_path, mode):
+        """Transparent template regions must render white, not raw black RGB —
+        for straight-alpha (RGBA/LA) and palette-transparency (P) images."""
+        from esb.services.qr_service import load_template_config as load
+
+        # Fully transparent 300×360 template: everything outside the
+        # white-filled QR bbox must come out pure white.
+        image_name = f'transparent_{mode}.png'
+        if mode == 'RGBA':
+            Image.new('RGBA', (300, 360), (0, 0, 0, 0)).save(tmp_path / image_name)
+        elif mode == 'LA':
+            Image.new('LA', (300, 360), (0, 0)).save(tmp_path / image_name)
+        else:
+            # Palette image whose only color (index 0, black) is transparent.
+            Image.new('P', (300, 360), 0).save(tmp_path / image_name, transparency=0)
+        config = {
+            'image': image_name,
+            'qr_bbox': [100, 190, 200, 290],
+            'name_bbox': [20, 20, 280, 80],
+        }
+        json_path = tmp_path / f'transparent_{mode}_config.json'
+        json_path.write_text(json.dumps(config))
+        template = load(str(json_path))
+
+        eq = make_equipment(name='Bandsaw')
+        result = self._render(eq, template)
+        img = Image.open(io.BytesIO(result)).convert('RGB')
+        # Blank the QR bbox (the only drawn element), then everything left
+        # must be pure white — transparent artwork flattened onto white.
+        img.paste((255, 255, 255), _scaled_bbox(template.qr_bbox, template, img.width, img.height))
+        colors = img.getcolors(maxcolors=256 * 256 * 256) or []
+        non_white = [c for _, c in colors if c != (255, 255, 255)]
+        assert non_white == [], f'transparent regions rendered as {non_white[:5]}'
+
+    def test_image_size_changed_on_disk_raises(
+        self, app, make_equipment, make_qr_template_config,
+    ):
+        """A post-startup swap to different dimensions must error, not silently
+        distort the artwork against the validated bboxes."""
+        import dataclasses
+        eq = make_equipment(name='Bandsaw')
+        template = make_qr_template_config()
+        stale = dataclasses.replace(template, image_w=1000, image_h=1200)
+        with pytest.raises(RuntimeError, match='changed size on disk'):
+            render_qr_png(
+                eq, QR_PRESETS_BY_KEY['sticker_2'], base_url=BASE_URL, template=stale,
+            )
+
+
+class TestDrawTextInBbox:
+    """Direct tests for the template text helper — ink-height constraint,
+    ellipsization, and the render-nothing degradation."""
+
+    FONT = os.path.join(TESTS_DIR, 'Poppins-Bold.ttf')
+
+    @staticmethod
+    def _assert_ink_only_inside(canvas, bbox):
+        outside = canvas.copy()
+        outside.paste((255, 255, 255), bbox)
+        colors = outside.getcolors(maxcolors=256 * 256 * 256) or []
+        spill = [c for _, c in colors if c != (255, 255, 255)]
+        assert spill == [], f'ink spilled outside bbox: {spill[:5]}'
+
+    @staticmethod
+    def _has_ink_inside(canvas, bbox):
+        colors = canvas.crop(bbox).getcolors(maxcolors=256 * 256 * 256) or []
+        return any(c != (255, 255, 255) for _, c in colors)
+
+    def test_descenders_and_diacritics_stay_inside_bbox(self, app):
+        """Ink (ascenders/diacritics + descenders) exceeds the em size for
+        Poppins — the ink-height loop must shrink until it fits the bbox."""
+        canvas = Image.new('RGB', (400, 100), 'white')
+        bbox = (50, 40, 350, 64)  # 24 px tall — forces the ink-height shrink
+        _draw_text_in_bbox(canvas, 'Äpjgy Qp', bbox, self.FONT, dpi=300)
+        assert self._has_ink_inside(canvas, bbox), 'expected text to render'
+        self._assert_ink_only_inside(canvas, bbox)
+
+    def test_long_text_ellipsized_within_bbox(self, app):
+        canvas = Image.new('RGB', (300, 60), 'white')
+        bbox = (10, 10, 290, 50)
+        _draw_text_in_bbox(canvas, 'X' * 200, bbox, self.FONT, dpi=300)
+        assert self._has_ink_inside(canvas, bbox), 'expected truncated text to render'
+        self._assert_ink_only_inside(canvas, bbox)
+
+    def test_narrow_bbox_shrinks_below_width_floor(self, app):
+        """A width-constrained box must shrink below _fit_text's 8 pt floor
+        (67 px at 600 dpi) instead of going blank — the sub-floor loop covers
+        width, not just ink height."""
+        canvas = Image.new('RGB', (60, 320), 'white')
+        bbox = (20, 10, 40, 310)  # 20 px wide, far below the 600 dpi floor
+        _draw_text_in_bbox(canvas, 'B', bbox, self.FONT, dpi=600)
+        assert self._has_ink_inside(canvas, bbox), 'expected sub-floor text, not a blank box'
+        self._assert_ink_only_inside(canvas, bbox)
+
+    def test_renders_nothing_when_bbox_unusably_small(self, app, caplog):
+        canvas = Image.new('RGB', (50, 20), 'white')
+        # 2 px wide — narrower than the ellipsis at the 4 px hard minimum.
+        bbox = (0, 0, 2, 5)
+        logger_name = app.logger.name
+        original_propagate = app.logger.propagate
+        app.logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger=logger_name):
+                _draw_text_in_bbox(canvas, 'Name', bbox, self.FONT, dpi=300)
+        finally:
+            app.logger.propagate = original_propagate
+        # Canvas untouched (box stays blank) and the degradation is logged.
+        colors = canvas.getcolors(maxcolors=256 * 256) or []
+        assert all(c == (255, 255, 255) for _, c in colors)
+        messages = ' '.join(r.getMessage() for r in caplog.records)
+        assert 'leaving the box blank' in messages
+
+    def test_name_with_descenders_contained_in_full_render(
+        self, app, make_equipment, make_qr_template_config,
+    ):
+        """End-to-end containment: a descender-heavy name must not leak ink
+        outside the white-filled name bbox onto template artwork."""
+        eq = make_equipment(name='Ärgjy Quilting Jig')
+        template = make_qr_template_config()
+        result_on = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_1_5'], base_url=BASE_URL,
+            template=template, include_name=True,
+        )
+        result_off = render_qr_png(
+            eq, QR_PRESETS_BY_KEY['sticker_1_5'], base_url=BASE_URL,
+            template=template, include_name=False,
+        )
+        img_on = Image.open(io.BytesIO(result_on)).convert('RGB')
+        img_off = Image.open(io.BytesIO(result_off)).convert('RGB')
+        name_box = _scaled_bbox(template.name_bbox, template, img_on.width, img_on.height)
+        img_on.paste((0, 0, 0), name_box)
+        img_off.paste((0, 0, 0), name_box)
+        assert img_on.tobytes() == img_off.tobytes(), (
+            'name ink leaked outside the name bbox'
         )
 
 

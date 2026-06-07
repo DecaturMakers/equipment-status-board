@@ -32,6 +32,7 @@ class Config:
 
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
     ESB_BASE_URL = os.environ.get('ESB_BASE_URL', '')
+    QR_TEMPLATE_CONFIG_PATH = os.environ.get('QR_TEMPLATE_CONFIG_PATH', '')
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         'DATABASE_URL', 'mysql+pymysql://root:password@localhost/esb'
     )

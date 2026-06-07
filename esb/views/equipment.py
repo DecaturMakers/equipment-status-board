@@ -283,11 +283,18 @@ def qr(id):
         flash(str(exc), 'danger')
         return redirect(url_for('equipment.detail', id=id))
 
+    template = current_app.config.get('QR_TEMPLATE')
     choices, wifi_config = _build_wifi_choices()
     wifi_default = _get_wifi_default(choices)
+    if template is not None:
+        # WiFi info is unsupported with a template (bake it into the artwork);
+        # the select is hidden and any submitted value is ignored.
+        choices = [('none', 'None')]
+        wifi_default = 'none'
 
     # On POST, accept any of the four known wifi_info values for validation so
-    # the TOCTOU clamp logic below (rather than WTForms) handles stale selections.
+    # the TOCTOU clamp logic below (rather than WTForms) handles stale selections
+    # (and, in template mode, so a crafted wifi_info doesn't bounce the request).
     if request.method == 'POST':
         validation_choices = [('none', 'None'), ('header', 'Header'),
                               ('ssid', 'SSID'), ('password', 'Password')]
@@ -295,8 +302,13 @@ def qr(id):
     else:
         form = QRGenerateForm(wifi_choices=choices)
         form.wifi_info.data = wifi_default
+        if template is not None:
+            # The issue treats the machine name as integral to the template.
+            form.include_name.data = True
 
     def _render_form_with_real_choices():
+        # In template mode `choices` is the static [('none', 'None')] list, so
+        # the WiFi select cannot reappear when a template-active POST fails.
         form.wifi_info.choices = choices
         if form.wifi_info.data not in {v for v, _ in choices}:
             form.wifi_info.data = _clamp_wifi_info(form.wifi_info.data, choices)
@@ -305,18 +317,32 @@ def qr(id):
         # preview src points at a valid device (not a TOCTOU reconciliation).
         if form.device.data not in qr_service.QR_DEVICES_BY_KEY:
             form.device.data = qr_service.DEFAULT_DEVICE_KEY
+        if template is not None and template.url_bbox is None:
+            form.include_url.data = False
         return render_template(
             'equipment/qr.html', equipment=eq, form=form,
             default_device_key=qr_service.DEFAULT_DEVICE_KEY,
+            template_active=template is not None,
+            template_has_url_bbox=template is not None and template.url_bbox is not None,
         )
 
     if form.validate_on_submit():
-        wifi_info = _clamp_wifi_info(form.wifi_info.data, choices)
-        if wifi_info != form.wifi_info.data:
-            flash(
-                f"WiFi settings changed since you loaded this page — your download was adjusted to '{wifi_info}'.",
-                'info',
-            )
+        if template is not None:
+            # No clamp/flash — wifi is simply unsupported in template mode.
+            # Blank the credentials too (matching qr_preview) so no live
+            # secrets ride into a render path that contractually ignores them.
+            wifi_info = 'none'
+            wifi_config = {'wifi_ssid': '', 'wifi_password': ''}
+            if template.url_bbox is None:
+                form.include_url.data = False
+        else:
+            wifi_info = _clamp_wifi_info(form.wifi_info.data, choices)
+            if wifi_info != form.wifi_info.data:
+                flash(
+                    f"WiFi settings changed since you loaded this page — "
+                    f"your download was adjusted to '{wifi_info}'.",
+                    'info',
+                )
         preset = qr_service.QR_PRESETS_BY_KEY[form.size.data]
         device = qr_service.QR_DEVICES_BY_KEY[form.device.data]
         try:
@@ -329,6 +355,7 @@ def qr(id):
                 wifi_info=wifi_info,
                 wifi_ssid=wifi_config['wifi_ssid'],
                 wifi_password=wifi_config['wifi_password'],
+                template=template,
             )
         except ValueError as exc:
             flash(str(exc), 'danger')
@@ -374,15 +401,24 @@ def qr_preview(id):
     include_name = request.args.get('include_name') in ('1', 'true', 'on')
     include_url = request.args.get('include_url') in ('1', 'true', 'on')
 
-    wifi_info = request.args.get('wifi_info', 'none')
-    if wifi_info not in ('none', 'header', 'ssid', 'password'):
+    template = current_app.config.get('QR_TEMPLATE')
+    if template is not None:
+        # WiFi is unsupported in template mode; ignore the query param entirely.
         wifi_info = 'none'
-    wifi_ssid = config_service.get_config('wifi_ssid', '')
-    wifi_password = config_service.get_config('wifi_password', '')
-    if wifi_info == 'password' and (not wifi_password or not wifi_ssid):
-        wifi_info = 'ssid'
-    if wifi_info == 'ssid' and not wifi_ssid:
-        wifi_info = 'header'
+        wifi_ssid = ''
+        wifi_password = ''
+        if template.url_bbox is None:
+            include_url = False
+    else:
+        wifi_info = request.args.get('wifi_info', 'none')
+        if wifi_info not in ('none', 'header', 'ssid', 'password'):
+            wifi_info = 'none'
+        wifi_ssid = config_service.get_config('wifi_ssid', '')
+        wifi_password = config_service.get_config('wifi_password', '')
+        if wifi_info == 'password' and (not wifi_password or not wifi_ssid):
+            wifi_info = 'ssid'
+        if wifi_info == 'ssid' and not wifi_ssid:
+            wifi_info = 'header'
 
     try:
         png_bytes = qr_service.render_qr_png(
@@ -394,6 +430,7 @@ def qr_preview(id):
             wifi_info=wifi_info,
             wifi_ssid=wifi_ssid,
             wifi_password=wifi_password,
+            template=template,
         )
     except ValueError:
         abort(400)
