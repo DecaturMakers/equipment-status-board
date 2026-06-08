@@ -1,0 +1,18 @@
+{# Docs sub-nav. Data-driven from `nav_pages` (derived from DOC_PAGES in the
+   service) so it can't silently drift from the served pages. The index entry
+   links to docs.index; About is a static trailing entry. `active` is applied
+   where the entry's slug matches `current_slug`. #}
+<nav class="docs-subnav mb-4" aria-label="Documentation sections">
+    <ul class="nav nav-pills flex-wrap">
+        {% for slug, title in nav_pages %}
+        <li class="nav-item">
+            <a class="nav-link {% if slug == current_slug %}active{% endif %}"
+               href="{{ url_for('docs.index') if slug == 'index' else url_for('docs.page', slug=slug) }}">{{ title }}</a>
+        </li>
+        {% endfor %}
+        <li class="nav-item">
+            <a class="nav-link {% if current_slug == 'about' %}active{% endif %}"
+               href="{{ url_for('docs.about') }}">About</a>
+        </li>
+    </ul>
+</nav>

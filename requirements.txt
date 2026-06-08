@@ -12,6 +12,7 @@ slack-bolt>=1.27.0
 websocket-client>=1.6.0
 qrcode[pil]>=8.0
 Pillow>=12.1.0
+Markdown>=3.7
 pyzbar>=0.1.9
 boto3>=1.35.0
 google-cloud-storage>=2.18.0

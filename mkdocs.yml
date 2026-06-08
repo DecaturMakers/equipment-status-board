@@ -22,6 +22,21 @@ nav:
   - Staff Guide: staff.md
   - Administrators Guide: administrators.md
 
+# Adding a `plugins:` key disables the implicit default `search` plugin, so it
+# must be listed explicitly. The macros plugin's DEFAULT is `on_undefined: keep`,
+# which silently passes undefined `{{ var }}` through even under `--strict` —
+# `on_undefined: strict` is REQUIRED for the CI drift guard to fail loudly.
+plugins:
+  - search
+  - macros:
+      on_undefined: strict
+
+# Generic default values rendered on the public GH Pages site where the docs
+# placeholders appear. Every key here MUST also exist in the docs service's
+# get_placeholder_values(); both renderers fail on drift.
+extra:
+  oops_channel: '#oops'
+
 markdown_extensions:
   - toc:
       permalink: true

@@ -515,9 +515,11 @@ docker compose logs -f worker
 
 The worker container also exposes a Docker healthcheck driven by a heartbeat file (`/tmp/worker_heartbeat`) refreshed at three points: at startup, after each DB poll returns, and after each individual notification is processed. The healthcheck fails when the file is older than 180 seconds. To check current health:
 
+{% raw %}
 ```bash
 docker inspect --format '{{.State.Health.Status}}' equipment-status-board-worker-1
 ```
+{% endraw %}
 
 If the worker is reported as `unhealthy`, the autoheal sidecar will restart it automatically (typically within a minute).
 

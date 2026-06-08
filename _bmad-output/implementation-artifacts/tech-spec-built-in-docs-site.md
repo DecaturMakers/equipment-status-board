@@ -2,7 +2,7 @@
 title: 'Built-in Docs/Help Site'
 slug: 'built-in-docs-site'
 created: '2026-06-07'
-status: 'ready-for-dev'
+status: 'Completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack:
   - 'Python 3.14 / Flask (app factory, blueprints)'
@@ -132,7 +132,7 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
 
 ### Tasks
 
-- [ ] Task 1: Add dependencies
+- [x] Task 1: Add dependencies
   - File: `requirements.txt`
   - Action: Add `Markdown>=3.7` (python-markdown, runtime dependency for server-side rendering). The Dockerfile installs from this file — it is what makes the library available in the image. (Do not skip because `import markdown` already works locally — that's the transitive mkdocs dependency, absent from the production image.)
   - File: `requirements-docs.txt` (NEW)
@@ -142,7 +142,7 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
   - File: `pyproject.toml`
   - Action: Mirror for consistency: add `"Markdown>=3.7"` to `[project] dependencies`; add `"mkdocs-macros-plugin>=1.0"` to `[project.optional-dependencies] dev`.
 
-- [ ] Task 2: Create docs service
+- [x] Task 2: Create docs service
   - File: `esb/services/docs_service.py` (NEW)
   - Action: Implement the docs rendering service:
     - `DOC_PAGES`: ordered dict mapping slug → `{'file': '<name>.md', 'title': '<nav title>'}` for exactly: `index` → `index.md` / "Home", `members` → `members.md` / "Members Guide", `technicians` → `technicians.md` / "Technicians Guide", `staff` → `staff.md` / "Staff Guide", `administrators` → `administrators.md` / "Administrators Guide". (Mirrors the `nav:` in `mkdocs.yml`. `manual_testing.md` and `original_requirements_doc.md` are deliberately excluded.)
@@ -155,7 +155,7 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
     - Module constants for the About page: `GITHUB_URL = 'https://github.com/jantman/equipment-status-board'`, `DOCS_SITE_URL = 'https://jantman.github.io/equipment-status-board/'`, `ISSUES_URL = GITHUB_URL + '/issues'`, `LICENSE_NAME = 'MIT'`, `LICENSE_URL = GITHUB_URL + '/blob/main/LICENSE'`.
   - Notes: Trust boundary, document in a comment: rendered HTML goes through `|safe`, which is acceptable because BOTH inputs are trusted — the markdown content ships with the repo (no user input), and the interpolated placeholder values come from environment config set by the deployment administrator (not end users). They are injected unescaped; if a future placeholder ever carries non-admin-controlled data, escaping must be added. Also document the `{% raw %}` requirement for any literal `{{`/`{%`/`{#` in future doc content — note that `{#...#}` is a Jinja COMMENT delimiter that both renderers silently swallow rather than error on.
 
-- [ ] Task 3: Create docs blueprint
+- [x] Task 3: Create docs blueprint
   - File: `esb/views/docs.py` (NEW)
   - Action: `docs_bp = Blueprint('docs', __name__, url_prefix='/docs')` with routes:
     - `GET /` → `index()`: render `docs/page.html` with the rendered `index` page.
@@ -164,11 +164,11 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
     - `GET /images/<path:filename>` → `image(filename)`: serve files from `get_docs_dir() / 'images'` via `send_from_directory(..., max_age=86400)` (which handles path-traversal protection); 404 if missing. The explicit `max_age` gives the dozen full-size screenshot PNGs a 1-day browser cache — they only change with releases; without it Flask sends revalidate-only headers. Model: `serve_upload` at `esb/views/public.py:228-243`.
   - Notes: Lazy-import the service inside handlers, matching the convention in `esb/views/public.py`. No auth decorators — fully public.
 
-- [ ] Task 4: Register blueprint
+- [x] Task 4: Register blueprint
   - File: `esb/views/__init__.py`
   - Action: Import `docs_bp` and add `app.register_blueprint(docs_bp)` in `register_blueprints()` (lines 10-16).
 
-- [ ] Task 5: Docs page templates
+- [x] Task 5: Docs page templates
   - File: `esb/templates/docs/page.html` (NEW)
   - Action: `{% extends "base.html" if current_user.is_authenticated else "base_public.html" %}` (same conditional pattern as `esb/templates/public/status_dashboard.html` line 1). Blocks: `title` = page title; `content` = the docs sub-nav (see contract below) above the rendered markdown emitted with `{{ content|safe }}` inside a wrapper `<div class="docs-content">`.
   - Sub-nav data contract (do NOT hardcode page lists in templates — they'd drift from `DOC_PAGES` silently): every docs view passes `nav_pages` (list of `(slug, title)` derived from `DOC_PAGES` in the service, with the index entry linking to `url_for('docs.index')`) and `current_slug` (the About view passes `current_slug='about'`); `_subnav.html` iterates `nav_pages` plus a static About entry, applying `active` where slug == `current_slug`. Task 10 asserts sub-nav completeness on every docs page.
@@ -177,7 +177,7 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
   - File: `esb/static/css/app.css`
   - Action: Append minimal styles scoped under `.docs-content` so python-markdown output renders acceptably under Bootstrap: `.admonition` (bordered/tinted box with bold `.admonition-title`, distinct tint for `.warning` vs `.note`), table borders/padding (python-markdown emits bare `<table>`; add Bootstrap-like styling for tables inside `.docs-content`), constrained `img { max-width: 100%; }`, and code block background.
 
-- [ ] Task 6: Header/footer links
+- [x] Task 6: Header/footer links
   - File: `esb/templates/base.html`
   - Action: Add a nav item `<a class="nav-link" href="{{ url_for('docs.index') }}">Docs</a>` to the navbar list (lines 20-46), visible to ALL users (no auth conditional), with the `active` highlight when `request.endpoint` starts with `'docs.'` (follow the pattern used by the Repairs link at lines 31-35).
   - File: `esb/templates/components/_footer.html`
@@ -186,14 +186,14 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
   - Action: Set the flag around the existing include: `{% with show_docs_link = true %}{% include 'components/_footer.html' %}{% endwith %}`.
   - Notes: `base_kiosk.html` includes the SAME `_footer.html` partial — it is NOT modified and does not set the flag, so the docs link stays off kiosk views (AC 11). The flag-guard is what prevents the leak; an unconditional link in the partial would violate the issue's kiosk exclusion.
 
-- [ ] Task 7: Edit docs content (placeholder + raw-wrap)
+- [x] Task 7: Edit docs content (placeholder + raw-wrap)
   - File: `docs/staff.md`
   - Action: Line 235: replace the literal `` `#oops` `` with `` `{{ oops_channel }}` `` (the sentence describes runtime notification behavior — installation-specific). This is the ONLY placeholder substitution in this change — investigation audited all five guides and found no other literal that describes installation-specific runtime behavior. (`administrators.md` line 86 documents the `SLACK_OOPS_CHANNEL` env var and its `#oops` default — config documentation stays literal, as do example URLs/ports in deployment instructions and the Slack slash command names, which are fixed in code.)
   - File: `docs/administrators.md`
   - Action: Wrap the fenced bash block at lines 518-520 containing `docker inspect --format '{{.State.Health.Status}}' equipment-status-board-worker-1` in `{% raw %}` (line before the opening ```` ``` ```` at 518) and `{% endraw %}` (line after the closing ```` ``` ```` at 520). Without this, BOTH the runtime Jinja render and the mkdocs-macros build throw `TemplateSyntaxError` on `{{.State...}}`. Verify no other Jinja-meaningful sequence exists in ANY `docs/*.md` file — mkdocs-macros Jinja-processes every `.md` in `docs/`, including the non-nav `manual_testing.md` and `original_requirements_doc.md` (both clean today): `grep -n '{{\|{%\|{#' docs/*.md` should afterwards show only the intended placeholder and the raw-wrapped block. The `{#` check matters: it's Jinja's COMMENT delimiter, which both renderers would silently swallow (content vanishes, no error from StrictUndefined or `on_undefined: strict`) — the one drift case the loud-failure design can't catch.
   - Notes: Every placeholder used in any .md file MUST exist both in `get_placeholder_values()` (Task 2) and in `mkdocs.yml extra:` (Task 8) — StrictUndefined (runtime) and `on_undefined: strict` macros config (CI) both fail otherwise, which is the desired sync guarantee.
 
-- [ ] Task 8: mkdocs macros configuration
+- [x] Task 8: mkdocs macros configuration
   - File: `mkdocs.yml`
   - Action: Add:
     ```yaml
@@ -206,14 +206,14 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
     ```
   - Notes: CRITICAL ×2 — (1) adding a `plugins:` key disables the implicit default `search` plugin, so `search` must be listed explicitly; (2) mkdocs-macros' DEFAULT behavior is `on_undefined: keep`, which silently leaves undefined `{{ var }}` in the output and passes `mkdocs build --strict` — `on_undefined: strict` is REQUIRED for the CI drift guard to actually fail on undefined placeholders. The `extra:` values are the generic defaults rendered on the public GH Pages site.
 
-- [ ] Task 9: Docs CI
+- [x] Task 9: Docs CI
   - File: `.github/workflows/docs.yml`
   - Action: Three changes only: (1) line 32: replace `pip install mkdocs mkdocs-material` with `pip install -r requirements-docs.txt` — same toolchain file as the PR gate, so the two can't drift; (2) align the job's `setup-python` to `python-version: "3.14"` with `allow-prereleases: true`, matching `ci.yml`, so the gate actually tests the deploy environment; (3) the push trigger is PATH-FILTERED (lines 7-9: `docs/**`, `mkdocs.yml` — not a bare push-to-main trigger): extend the `paths:` list with `requirements-docs.txt` and `.github/workflows/docs.yml` so toolchain or workflow changes also re-deploy (otherwise a mkdocs-material security bump would never deploy until the next content edit). Do NOT add a `pull_request` trigger to this workflow — it has a `workflow_dispatch` trigger (line 10) used for manual deploys that an `event_name == 'push'` deploy gate would silently break, a shared `concurrency: group: pages` (lines 17-19) that PR builds would pollute (a queued main deploy could be cancelled by a PR build), and an artifact-upload step that PR runs would execute pointlessly.
   - File: `.github/workflows/ci.yml`
   - Action: Add a `docs-build` job (alongside `lint`/`test`/`screenshots-check`/`docker-build`, which already run on every push to main and every PR): checkout + setup-python 3.14 (`allow-prereleases: true`, matching the existing jobs) + `pip install -r requirements-docs.txt` + `mkdocs build --strict`. Installing only `requirements-docs.txt` (not `requirements-dev.txt`) keeps the gate from pulling the whole app stack (boto3, Pillow, playwright…) just to run mkdocs.
   - Notes: This is the pre-merge half of the placeholder-drift guard: `mkdocs build --strict` with `on_undefined: strict` (Task 8) fails the PR check on undefined placeholders or Jinja syntax errors in any `docs/*.md`. `docs.yml` remains deploy-only (push to main + manual dispatch). Both workflows and local dev now install the docs toolchain from the single `requirements-docs.txt`.
 
-- [ ] Task 10: Tests
+- [x] Task 10: Tests
   - File: `tests/test_views/test_docs_views.py` (NEW)
   - Action: Following `tests/test_views/test_public_views.py` conventions (classes per view, unauthenticated `client` fixture, status + content assertions):
     - `TestDocsPages`: each of the six routes (`/docs/`, `/docs/members`, `/docs/technicians`, `/docs/staff`, `/docs/administrators`, `/docs/about`) returns 200 unauthenticated; `/docs/index` returns a 301 redirect to `/docs/` (no duplicate Home URL); unknown slug `/docs/nope` returns 404; every rendered guide contains NO unrendered *placeholder-style* pattern (`re.search(r'\{\{\s*\w+\s*\}\}', html)` is None — NOT a bare `'{{' not in html` check, because the administrators guide legitimately contains the literal `{{.State.Health.Status}}` docker-inspect example in a raw-wrapped code block) and NO intra-doc `.md` hrefs (`re.search(r'href="[^"]*\.md[#"]', html)` is None).
@@ -229,36 +229,36 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
     - `TestDocsCache`: directly verify the cache is per-app, not module-level: in one test, build TWO apps via `create_app('testing')` with different `SLACK_OOPS_CHANNEL` values, render `/docs/staff` in each, and assert each response reflects its own app's channel (a module-level cache would leak the first app's rendering into the second). A second GET on the same app returning identical content is a secondary sanity check only.
   - Notes: No DB models involved; most tests need only `client`.
 
-- [ ] Task 11: Lint + full test pass + drift-guard verification
+- [x] Task 11: Lint + full test pass + drift-guard verification
   - File: n/a
   - Action: `make lint` and `make test` green. Verify the GH Pages build locally: `venv/bin/pip install -r requirements-docs.txt && venv/bin/mkdocs build --strict` succeeds. THEN run the NEGATIVE check (AC 12): temporarily remove `oops_channel` from `extra:` in `mkdocs.yml`, run `mkdocs build --strict` again, and confirm it FAILS; restore the line. This proves `on_undefined: strict` is actually wired up — a typo'd option key silently falls back to the plugin's default `keep` mode, which would leave the entire CI drift guard inert while every positive check passes.
 
-- [ ] Task 12: Version bump
+- [x] Task 12: Version bump
   - File: `pyproject.toml`
   - Action: Bump `version` with a MINOR increment per the project's release procedure in CLAUDE.md — `0.10.0` as of this writing, but re-check at merge time: the bump must be strictly greater than the latest GitHub release tag *when the PR merges*. If another PR ships `0.10.0` first, this branch's identical one-line change merges conflict-free and the release workflow silently no-ops (it only releases when `pyproject.toml` > latest tag). After merge, verify a release was actually cut (new `v<version>` tag + GitHub Release + image on ghcr.io); if not, push a follow-up bump. Without any bump, the release no-ops and the About page advertises a stale version.
 
-- [ ] Task 13: Regenerate committed screenshots
+- [x] Task 13: Regenerate committed screenshots
   - File: `docs/images/*.png`
   - Action: AFTER all template changes (Tasks 5-6) are final, regenerate the committed screenshots with `make screenshots` (Makefile lines 37-39 → `scripts/generate_screenshots.py`; requires playwright chromium, see the `screenshots-check` job in `ci.yml` for the install steps) and commit the updated PNGs.
   - Notes: Task 6 changes the chrome of nearly every captured page (navbar "Docs" item on authed pages; footer docs link on public pages, several captured `full_page=True`). The committed PNGs are displayed on the new `/docs/` pages themselves and on GH Pages — without regeneration, the docs ship screenshots of a UI that lacks the feature's own links. CI will NOT catch this: `screenshots-check` only verifies the files exist, not that they're current.
 
 ### Acceptance Criteria
 
-- [ ] AC 1: Given an unauthenticated visitor, when they GET `/docs/`, then the rendered Home guide is returned with HTTP 200 and no login is required.
-- [ ] AC 2: Given the five guides collectively, when each is GET at `/docs/<slug>`, then every markdown feature used across them renders as proper HTML — tables/admonitions/fenced code via the administrators guide (which contains NO images), images via the guides that have them (index, members, technicians, staff) — and the administrators guide displays the literal `docker inspect --format '{{.State.Health.Status}}'` example intact inside its code block.
-- [ ] AC 3: Given `SLACK_OOPS_CHANNEL=#custom-chan` in the app config (the same value Task 10's `TestDocsInterpolation` uses), when a visitor GETs `/docs/staff`, then the notification sentence shows `#custom-chan` and no unrendered placeholder-style pattern (`{{ identifier }}`) appears in any rendered guide (the raw-wrapped docker-inspect literal in the administrators guide is expressly NOT a violation).
-- [ ] AC 4: Given a guide containing a cross-link to another guide (e.g., `members.md`), when the page is rendered, then the link points to `/docs/members` (not a `.md` file) and resolves with HTTP 200.
-- [ ] AC 5: Given a guide containing an image reference (`images/<file>.png`), when the page is rendered, then every `<img>` src in the output serves HTTP 200 (verified by extracting and GETting rendered srcs, not by inspecting the route alone), and image responses carry `Cache-Control: max-age=86400`.
-- [ ] AC 6: Given a request for `/docs/images/../<anything>` (path traversal) or a nonexistent image, when the route handles it, then HTTP 404 is returned.
-- [ ] AC 7: Given an unknown slug, when a visitor GETs `/docs/whatever`, then HTTP 404 is returned; given `/docs/index`, then a 301 redirect to `/docs/` is returned (no duplicate Home URL).
-- [ ] AC 8: Given the About page at `/docs/about`, when rendered, then its BODY (not merely the site-wide footer, which already carries GitHub/license links) shows the running version (matching `pyproject.toml`), a link to https://github.com/jantman/equipment-status-board, the MIT license with a link, a link to the online GH Pages docs site, and a report-an-issue link.
-- [ ] AC 9: Given `pyproject.toml` is unreadable at runtime (verified via monkeypatched `_pyproject_path`), when the About page renders, then the version displays as "unknown" and the page still returns HTTP 200.
-- [ ] AC 10: Given any authenticated page using `base.html`, when rendered, then the navbar contains a "Docs" link to `/docs/` visible regardless of role; given any public page using `base_public.html` (e.g., a QR equipment page), then a footer link to `/docs/` is present.
-- [ ] AC 11: Given any kiosk view (`/public/kiosk`, `/public/kiosk/<area_id>`), when rendered, then NO docs link is present.
-- [ ] AC 12: Given the modified `docs/*.md`, `mkdocs.yml` (macros plugin with `on_undefined: strict`), and docs workflow, when `mkdocs build --strict` runs with `mkdocs-material` and `mkdocs-macros-plugin` installed, then the build succeeds, the GH Pages output renders the generic default values (e.g., `#oops`) where placeholders appear, and removing a variable from `extra:` makes the build FAIL (drift-guard verification).
-- [ ] AC 13: Given any pull request, when CI runs, then the `docs-build` job in `ci.yml` executes `mkdocs build --strict` as a PR check — placeholder breakage cannot reach `main` unflagged — and `docs.yml` remains deploy-only with its `workflow_dispatch` manual-deploy path intact; both workflows install the docs toolchain from the same `requirements-docs.txt` on the same Python version.
-- [ ] AC 14: Given any of the six docs pages, when rendered, then the sub-nav contains links to all five guides and the About page, derived from `DOC_PAGES` (not hardcoded), with exactly the current page marked active.
-- [ ] AC 15: Given the merged feature, when the release workflow runs on `main`, then `pyproject.toml` carries version `0.10.0` and a release is cut (Task 12).
+- [x] AC 1: Given an unauthenticated visitor, when they GET `/docs/`, then the rendered Home guide is returned with HTTP 200 and no login is required.
+- [x] AC 2: Given the five guides collectively, when each is GET at `/docs/<slug>`, then every markdown feature used across them renders as proper HTML — tables/admonitions/fenced code via the administrators guide (which contains NO images), images via the guides that have them (index, members, technicians, staff) — and the administrators guide displays the literal `docker inspect --format '{{.State.Health.Status}}'` example intact inside its code block.
+- [x] AC 3: Given `SLACK_OOPS_CHANNEL=#custom-chan` in the app config (the same value Task 10's `TestDocsInterpolation` uses), when a visitor GETs `/docs/staff`, then the notification sentence shows `#custom-chan` and no unrendered placeholder-style pattern (`{{ identifier }}`) appears in any rendered guide (the raw-wrapped docker-inspect literal in the administrators guide is expressly NOT a violation).
+- [x] AC 4: Given a guide containing a cross-link to another guide (e.g., `members.md`), when the page is rendered, then the link points to `/docs/members` (not a `.md` file) and resolves with HTTP 200.
+- [x] AC 5: Given a guide containing an image reference (`images/<file>.png`), when the page is rendered, then every `<img>` src in the output serves HTTP 200 (verified by extracting and GETting rendered srcs, not by inspecting the route alone), and image responses carry `Cache-Control: max-age=86400`.
+- [x] AC 6: Given a request for `/docs/images/../<anything>` (path traversal) or a nonexistent image, when the route handles it, then HTTP 404 is returned.
+- [x] AC 7: Given an unknown slug, when a visitor GETs `/docs/whatever`, then HTTP 404 is returned; given `/docs/index`, then a 301 redirect to `/docs/` is returned (no duplicate Home URL).
+- [x] AC 8: Given the About page at `/docs/about`, when rendered, then its BODY (not merely the site-wide footer, which already carries GitHub/license links) shows the running version (matching `pyproject.toml`), a link to https://github.com/jantman/equipment-status-board, the MIT license with a link, a link to the online GH Pages docs site, and a report-an-issue link.
+- [x] AC 9: Given `pyproject.toml` is unreadable at runtime (verified via monkeypatched `_pyproject_path`), when the About page renders, then the version displays as "unknown" and the page still returns HTTP 200.
+- [x] AC 10: Given any authenticated page using `base.html`, when rendered, then the navbar contains a "Docs" link to `/docs/` visible regardless of role; given any public page using `base_public.html` (e.g., a QR equipment page), then a footer link to `/docs/` is present.
+- [x] AC 11: Given any kiosk view (`/public/kiosk`, `/public/kiosk/<area_id>`), when rendered, then NO docs link is present.
+- [x] AC 12: Given the modified `docs/*.md`, `mkdocs.yml` (macros plugin with `on_undefined: strict`), and docs workflow, when `mkdocs build --strict` runs with `mkdocs-material` and `mkdocs-macros-plugin` installed, then the build succeeds, the GH Pages output renders the generic default values (e.g., `#oops`) where placeholders appear, and removing a variable from `extra:` makes the build FAIL (drift-guard verification).
+- [x] AC 13: Given any pull request, when CI runs, then the `docs-build` job in `ci.yml` executes `mkdocs build --strict` as a PR check — placeholder breakage cannot reach `main` unflagged — and `docs.yml` remains deploy-only with its `workflow_dispatch` manual-deploy path intact; both workflows install the docs toolchain from the same `requirements-docs.txt` on the same Python version.
+- [x] AC 14: Given any of the six docs pages, when rendered, then the sub-nav contains links to all five guides and the About page, derived from `DOC_PAGES` (not hardcoded), with exactly the current page marked active.
+- [x] AC 15: Given the merged feature, when the release workflow runs on `main`, then `pyproject.toml` carries version `0.10.0` and a release is cut (Task 12).
 
 ## Additional Context
 
@@ -285,3 +285,15 @@ Serve the existing `docs/*.md` markdown files at a public `/docs/` route inside 
 - **Limitation — GitHub repo file view (accepted):** GitHub's native rendering of `docs/*.md` in the repo browser will show `{% raw %}`/`{% endraw %}` markers and `{{ oops_channel }}` verbatim. Accepted cosmetic cost — the canonical reading surfaces are the GH Pages site and the built-in `/docs/`, both of which render them correctly.
 - **Limitation:** docs render uses python-markdown, not mkdocs-material — the built-in site will look simpler than GH Pages (no theme nav/search). Accepted; the sub-nav covers navigation and search is out of scope.
 - **Future (out of scope):** docs search; serving `manual_testing.md`; per-role docs landing (e.g., technicians land on their guide); an `esb_base_url` placeholder if doc text ever needs the installation URL (deliberately NOT added now — no current doc uses it); linking the static status page URL once a public URL config exists for it.
+
+## Review Notes
+
+- Adversarial review completed (isolated subagent, information-asymmetric — diff only, no implementation context).
+- Findings: 11 total, 4 fixed, 7 acknowledged (by-design/documented or noise).
+- Resolution approach: auto-fix selected findings (F1, F2, F9, F5).
+- **F1 (Critical, fixed):** `docs_cache` namespace collision — `get_version()` shared the page-slug keyspace, so `/docs/version` returned 500 (`ValueError: too many values to unpack`) after the About page was rendered. Fixed by looking up `DOC_PAGES[slug]` before the cache and namespacing cache keys (`('page', slug)` / `('meta', 'version')`). Regression test added.
+- **F2 (High, fixed):** the view's blanket `except KeyError` masked a missing placeholder config key as a 404; replaced with an explicit `DOC_PAGES` membership check so genuine errors fail loud (500). Regression test added.
+- **F9 (Low, fixed):** narrowed `get_version()`'s `except Exception` to `(OSError, KeyError, tomllib.TOMLDecodeError)`.
+- **F5 (Medium, fixed):** added `test_cross_page_anchors_resolve` validating that rewritten `/docs/<slug>#frag` links point at a real id on the target page (the existing test stripped fragments before checking).
+- Acknowledged (no change): F3 (whole-doc Jinja pass — intended fail-loud + `{% raw %}` design), F4 (link-regex edge cases — no current cases; no-`.md`-href test guards future), F6 (extension drift — documented), F7 (`|safe` trust boundary — documented, admin-controlled inputs), F8 (image-route extension allow-list — `docs/images/` holds only repo-shipped PNGs), F10 (`rel` without `target=_blank` — cosmetic), F11 (noise — `docs.yml` does not run on PRs, so the `ci.yml docs-build` job is the intended PR gate, not redundant).
+- Post-fix verification: `ruff` clean, full suite **1701 passed**, `mkdocs build --strict` succeeds, drift-guard negative check confirmed (build fails when `extra.oops_channel` removed).

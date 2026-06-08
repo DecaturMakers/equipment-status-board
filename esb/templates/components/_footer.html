@@ -1,3 +1,3 @@
 <footer class="container mt-5 mb-3 text-center text-muted text-break" role="contentinfo" aria-label="Site copyright and license">
-    <small>&copy; {{ current_year }} Jason Antman. <a href="https://github.com/jantman/equipment-status-board" rel="noopener noreferrer" aria-label="Source code on GitHub">github.com/jantman/equipment-status-board</a> <a href="https://opensource.org/license/mit" rel="noopener noreferrer" aria-label="MIT License (opensource.org)">MIT licensed</a>.</small>
+    <small>&copy; {{ current_year }} Jason Antman. <a href="https://github.com/jantman/equipment-status-board" rel="noopener noreferrer" aria-label="Source code on GitHub">github.com/jantman/equipment-status-board</a> <a href="https://opensource.org/license/mit" rel="noopener noreferrer" aria-label="MIT License (opensource.org)">MIT licensed</a>.{% if show_docs_link %} <a href="{{ url_for('docs.index') }}">Documentation &amp; Help</a>{% endif %}</small>
 </footer>

@@ -1,0 +1,39 @@
+{% extends "base.html" if current_user.is_authenticated else "base_public.html" %}
+
+{% block title %}About - Equipment Status Board{% endblock %}
+
+{% block content %}
+{% include 'docs/_subnav.html' %}
+<div class="docs-content">
+    <h1>About Equipment Status Board</h1>
+
+    <p>Equipment Status Board (ESB) tracks equipment status and repairs at the
+       makerspace.</p>
+
+    <dl class="row">
+        <dt class="col-sm-3">Version</dt>
+        <dd class="col-sm-9">{{ version }}</dd>
+
+        <dt class="col-sm-3">Project</dt>
+        <dd class="col-sm-9">
+            <a href="{{ github_url }}" rel="noopener noreferrer">{{ github_url }}</a>
+        </dd>
+
+        <dt class="col-sm-3">License</dt>
+        <dd class="col-sm-9">
+            {{ license_name }} &mdash;
+            <a href="{{ license_url }}" rel="noopener noreferrer">view license</a>
+        </dd>
+
+        <dt class="col-sm-3">Online documentation</dt>
+        <dd class="col-sm-9">
+            <a href="{{ docs_site_url }}" rel="noopener noreferrer">{{ docs_site_url }}</a>
+        </dd>
+
+        <dt class="col-sm-3">Report an issue</dt>
+        <dd class="col-sm-9">
+            <a href="{{ issues_url }}" rel="noopener noreferrer">{{ issues_url }}</a>
+        </dd>
+    </dl>
+</div>
+{% endblock %}

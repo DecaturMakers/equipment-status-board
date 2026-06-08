@@ -72,6 +72,20 @@ jobs:
           fi
           echo "All ${#expected[@]} screenshots generated successfully."
 
+  docs-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      # Install only the docs toolchain (not requirements-dev.txt) so the gate
+      # doesn't pull the whole app stack just to run mkdocs. on_undefined: strict
+      # (mkdocs.yml) makes this catch undefined placeholders / Jinja errors.
+      - run: pip install -r requirements-docs.txt
+      - run: mkdocs build --strict
+
   docker-build:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,10 @@
+{% extends "base.html" if current_user.is_authenticated else "base_public.html" %}
+
+{% block title %}{{ title }} - Equipment Status Board{% endblock %}
+
+{% block content %}
+{% include 'docs/_subnav.html' %}
+<div class="docs-content">
+    {{ content|safe }}
+</div>
+{% endblock %}

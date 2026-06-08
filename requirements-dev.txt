@@ -1,7 +1,6 @@
 -r requirements.txt
 pytest==8.3.4
 ruff==0.9.7
-mkdocs>=1.6
-mkdocs-material>=9.5
+-r requirements-docs.txt
 playwright>=1.40
 PyYAML>=6.0

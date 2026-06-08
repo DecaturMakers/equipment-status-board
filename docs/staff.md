@@ -232,7 +232,7 @@ Enable or disable which events trigger Slack notifications:
 | Severity Changed | The severity level of a repair changes |
 | ETA Updated | An ETA is set or changed on a repair |
 
-Notifications are sent to the area's configured Slack channel and to the `#oops` channel (configurable via the `SLACK_OOPS_CHANNEL` environment variable).
+Notifications are sent to the area's configured Slack channel and to the `{{ oops_channel }}` channel (configurable via the `SLACK_OOPS_CHANNEL` environment variable).
 
 ![App Configuration](images/app-configuration.png)
 

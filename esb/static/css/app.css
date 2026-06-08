@@ -106,3 +106,62 @@ th.sortable:hover {
 #report-form .form-control[type="file"] {
     min-height: 44px;
 }
+
+/* Built-in docs/help site. python-markdown emits bare HTML (no Bootstrap
+   classes), so these minimal styles make tables, admonitions, code blocks,
+   and images render acceptably under Bootstrap. Scoped under .docs-content. */
+.docs-content img {
+    max-width: 100%;
+    height: auto;
+}
+.docs-content table {
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+    width: auto;
+}
+.docs-content table th,
+.docs-content table td {
+    border: 1px solid #dee2e6;
+    padding: 0.5rem 0.75rem;
+}
+.docs-content table th {
+    background-color: #f8f9fa;
+    text-align: left;
+}
+.docs-content pre {
+    background-color: #f6f8fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+}
+.docs-content code {
+    background-color: #f6f8fa;
+    padding: 0.1rem 0.3rem;
+    border-radius: 0.2rem;
+}
+.docs-content pre code {
+    background-color: transparent;
+    padding: 0;
+}
+/* Admonitions (python-markdown `admonition` extension). */
+.docs-content .admonition {
+    border: 1px solid #dee2e6;
+    border-left-width: 0.25rem;
+    border-radius: 0.25rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    background-color: #f8f9fa;
+}
+.docs-content .admonition-title {
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+.docs-content .admonition.note {
+    border-left-color: #0d6efd;
+    background-color: #e7f1ff;
+}
+.docs-content .admonition.warning {
+    border-left-color: #ffc107;
+    background-color: #fff8e6;
+}

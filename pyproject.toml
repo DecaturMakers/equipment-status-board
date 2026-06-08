@@ -1,6 +1,6 @@
 [project]
 name = "equipment-status-board"
-version = "0.9.0"
+version = "0.10.0"
 description = "Equipment status tracking and repair management for Decatur Makers makerspace"
 requires-python = ">=3.14"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "gunicorn>=23.0.0",
     "newrelic>=10.0.0",
+    "Markdown>=3.7",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,7 @@ dev = [
     "ruff>=0.9.7",
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
+    "mkdocs-macros-plugin>=1.0",
 ]
 
 [tool.pytest.ini_options]
