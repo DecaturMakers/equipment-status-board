@@ -233,14 +233,13 @@ Under **OAuth & Permissions**, add these Bot Token OAuth Scopes:
 
 ### 4. Set Up Slash Commands
 
-Under **Slash Commands**, create four commands:
+Under **Slash Commands**, create three commands:
 
 | Command | Description |
 |---------|-------------|
 | `/esb-report` | Report an equipment problem |
 | `/esb-status` | Check equipment status (area or equipment name) |
 | `/esb-repair` | Technician dispatcher (no args) or create a repair record (with arg) |
-| `/esb-update` | Update a repair record (full edit) |
 
 With Socket Mode enabled, slash commands are automatically routed to your app via WebSocket. No Request URL is needed.
 

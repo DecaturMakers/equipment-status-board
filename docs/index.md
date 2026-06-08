@@ -30,12 +30,11 @@ A lightweight status page that can be hosted externally (e.g., on S3) for checki
 
 ### Slack Integration
 
-Report problems, check equipment status, create and update repair records — all from Slack without leaving the conversation.
+Report problems, check equipment status, and create and triage repairs — all from Slack without leaving the conversation.
 
 - `/esb-report` — Report a problem with any piece of equipment
 - `/esb-status` — Check status of all equipment or a specific item
-- `/esb-repair` — Create a new repair record
-- `/esb-update <id>` — Update an existing repair record
+- `/esb-repair` — Dispatcher for open repairs (no args) or create a new repair record (with an equipment name)
 
 ### Repair Workflow
 
@@ -50,7 +49,7 @@ Three user types with appropriate access levels: Members (public, no login requi
 This documentation is organized by role. Find the guide that matches how you use the Equipment Status Board:
 
 - **[Members Guide](members.md)** — For anyone using the makerspace. Learn how to check equipment status, scan QR codes, and report problems. No account needed.
-- **[Technicians Guide](technicians.md)** — For volunteer repair technicians. Learn how to work the repair queue, update repair records, and use Slack commands.
+- **[Technicians Guide](technicians.md)** — For volunteer repair technicians. Learn how to work the repair queue, manage repair records, and use Slack commands.
 - **[Staff Guide](staff.md)** — For makerspace managers. Learn how to use the Kanban board, manage equipment and users, and configure the system.
 - **[Administrators Guide](administrators.md)** — For technical volunteers deploying and maintaining the system. Covers Docker deployment, environment configuration, Slack App setup, and ongoing maintenance.
 

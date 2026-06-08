@@ -200,25 +200,26 @@ Eleven scenarios for manual verification of the Equipment Status Board's core us
 
 ---
 
-## 9. Slack — Repair Update via Modal
+## 9. In-Depth Repair Update via Web UI
 
-**Role:** Technician or Staff (with Slack account mapped to ESB user)
+**Role:** Technician or Staff
+
+> `/esb-update` was removed in favor of the web UI for in-depth edits. The
+> `/esb-repair` dispatcher still covers quick actions (claim, set ETA, change
+> status, resolve with a note) from Slack.
 
 **Steps:**
 
 1. Note the ID of an open repair record (e.g., #42).
-2. In Slack, type `/esb-update 42`.
-3. Verify a modal opens pre-populated with the repair's current status, severity, assignee, and ETA.
-4. Change the status to "In Progress," add a note, and assign to yourself.
-5. Submit the modal.
-6. Open the same repair record in the web UI (`/repairs/42`).
+2. Open the repair record in the web UI (`/repairs/42`).
+3. Change the status to "In Progress," add a note, set severity, and assign to yourself.
+4. Save.
 
 **Expected Results:**
 
-- Modal fields reflect the repair's current state.
-- After submission, an ephemeral confirmation appears in Slack.
-- The web UI timeline shows the status change, note, and assignee update — attributed to the correct ESB user (mapped from Slack identity).
+- The web UI timeline shows the status change, note, severity, and assignee update — attributed to the correct ESB user.
 - Slack notifications fire per configuration.
+- `/esb-update` is no longer a registered slash command (Slack reports it as unknown if still configured).
 
 ---
 
@@ -269,10 +270,6 @@ Eleven scenarios for manual verification of the Equipment Status Board's core us
 **Admin toggle:**
 
 13. As Staff, navigate to **Admin → App Configuration**. Toggle off "Repair status changed (open transitions)", save. Now perform an open-status transition via the dispatcher → verify no Slack notification posts. Toggle back on; verify subsequent transitions resume notifying.
-
-**`/esb-update` regression:**
-
-14. `/esb-update <id>` opens the existing full-edit modal unchanged.
 
 ---
 

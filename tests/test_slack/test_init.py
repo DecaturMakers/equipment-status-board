@@ -105,14 +105,15 @@ class TestSlackEnabled:
         command_calls = [call[0][0] for call in self.mock_bolt_app.command.call_args_list]
         assert '/esb-report' in command_calls
         assert '/esb-repair' in command_calls
-        assert '/esb-update' in command_calls
+        assert '/esb-status' in command_calls
+        assert '/esb-update' not in command_calls
 
     def test_view_handlers_registered(self):
         """View submission handlers are registered on the Bolt app."""
         view_calls = [call[0][0] for call in self.mock_bolt_app.view.call_args_list]
         assert 'problem_report_submission' in view_calls
         assert 'repair_create_submission' in view_calls
-        assert 'repair_update_submission' in view_calls
+        assert 'repair_update_submission' not in view_calls
 
     def test_app_starts_cleanly_with_slack(self):
         """App starts and responds to health check with Slack configured."""

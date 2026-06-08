@@ -14,7 +14,7 @@ A web application for tracking equipment status and coordinating repairs at comm
 - **Kanban Board** — Visual overview of all active repairs by status with aging indicators to spot stuck items
 - **Kiosk Display** — Large-screen auto-refreshing status grid for wall-mounted monitors in the space
 - **Static Status Page** — Lightweight externally hosted page for checking status from anywhere (pushes to local directory, S3, or Google Cloud Storage)
-- **Slack Integration** — Report problems, check status, create and update repairs via slash commands (`/esb-report`, `/esb-status`, `/esb-repair`, `/esb-update`); automated notifications for new reports, status changes, and more
+- **Slack Integration** — Report problems, check status, create and triage repairs via slash commands (`/esb-report`, `/esb-status`, `/esb-repair`); automated notifications for new reports, status changes, and more
 - **Role-Based Access** — Three user types: Members (public, no login), Technicians (repair management), Staff (full administration)
 
 ## Quick Start

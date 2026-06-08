@@ -169,7 +169,8 @@ If the argument matches zero or multiple pieces of equipment (or matches only as
 | `/esb-report` | Quick problem report — same form as the member QR page report. Use this when you want to file a member-style report from Slack. |
 | `/esb-status` | Check status. No args summarises all areas (with non-green equipment listed beneath each area count). `/esb-status <area name>` shows full detail for one area; `/esb-status <equipment name>` shows one item. |
 | `/esb-repair` | Technician dispatcher. No args lists open repairs you can claim, set ETA, change status, or resolve with a note. With an equipment name, opens the create-record modal (equipment is pre-selected when the name matches exactly). |
-| `/esb-update <id>` | Update an existing repair record in depth — change status, add notes, set severity, assignee, or ETA. Use this when the dispatcher's four quick actions aren't enough. |
+
+For in-depth edits beyond the dispatcher's quick actions — changing severity, reassigning, setting a specialist description, or editing multiple fields at once — use the web UI repair record page (`/repairs/<id>`).
 
 ### Slack notification emojis
 
