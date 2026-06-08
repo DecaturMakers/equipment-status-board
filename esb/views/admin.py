@@ -267,6 +267,9 @@ def app_config():
         form.notify_status_changed.data = (
             config_service.get_config('notify_status_changed', 'true') == 'true'
         )
+        form.notify_assignee_changed.data = (
+            config_service.get_config('notify_assignee_changed', 'true') == 'true'
+        )
         form.notify_eta_updated.data = (
             config_service.get_config('notify_eta_updated', 'true') == 'true'
         )
@@ -280,6 +283,7 @@ def app_config():
             ('notify_resolved', 'true'),
             ('notify_severity_changed', 'true'),
             ('notify_status_changed', 'true'),
+            ('notify_assignee_changed', 'true'),
             ('notify_eta_updated', 'true'),
         ]
         for key, default in config_keys:

@@ -105,6 +105,16 @@
 
             <div class="mb-3">
                 <div class="form-check form-switch">
+                    {{ form.notify_assignee_changed(class="form-check-input", role="switch") }}
+                    <label class="form-check-label" for="{{ form.notify_assignee_changed.id }}">
+                        {{ form.notify_assignee_changed.label.text }}
+                    </label>
+                </div>
+                <div class="form-text">Notify when a repair's assignee changes without a status change (e.g., reassignment or unassignment).</div>
+            </div>
+
+            <div class="mb-3">
+                <div class="form-check form-switch">
                     {{ form.notify_eta_updated(class="form-check-input", role="switch") }}
                     <label class="form-check-label" for="{{ form.notify_eta_updated.id }}">
                         {{ form.notify_eta_updated.label.text }}

@@ -28,6 +28,7 @@ _SEVERITY_PREFIX = ':wrench: '
 _STATUS_PREFIX = ':arrows_counterclockwise: '
 _ETA_PREFIX = ':calendar: '
 _RESOLVED_PREFIX = ':white_check_mark: '
+_ASSIGNEE_PREFIX = ':bust_in_silhouette: '
 
 # Exponential backoff schedule (in seconds): 30s, 1m, 2m, 5m, 15m, 1h max
 BACKOFF_SCHEDULE = [30, 60, 120, 300, 900, 3600]
@@ -250,7 +251,31 @@ def _deliver_slack_message(notification: PendingNotification) -> None:
     # timeout caps each Slack HTTP call so a hung connection cannot wedge the
     # worker loop indefinitely.
     client = WebClient(token=token, timeout=15)
-    payload = notification.payload or {}
+    # Copy the payload: notification.payload aliases the ORM db.JSON attribute,
+    # and the assignee_display we add below must not mutate the persisted model.
+    payload = dict(notification.payload or {})
+
+    # Delivery-time mention resolution: turn the queued assignee identity into a
+    # real Slack @mention (<@U...>) when possible, falling back to the plain
+    # username. Only the NEW assignee is resolved; the old one stays plain text.
+    if payload.get('assignee_username'):
+        if payload.get('assignee_has_slack') and payload.get('assignee_email'):
+            try:
+                result = client.users_lookupByEmail(email=payload['assignee_email'])
+                slack_user_id = result['user']['id']
+                payload['assignee_display'] = f'<@{slack_user_id}>'
+            except Exception:
+                # Any Slack API error / missing id degrades to the plain
+                # username. The lookup must never raise out of delivery.
+                logger.info(
+                    'Assignee Slack lookup failed for notification=%d, '
+                    'falling back to username', notification.id, exc_info=True,
+                )
+                payload['assignee_display'] = payload['assignee_username']
+        else:
+            # No Slack handle (or, defensively, no email) -- use plain username.
+            payload['assignee_display'] = payload['assignee_username']
+
     text, blocks = _format_slack_message(payload)
 
     # Post to primary target channel (area-specific or #general)
@@ -309,6 +334,11 @@ def _format_slack_message(payload: dict) -> tuple[str, list | None]:
             f'Severity: {severity} | Reported by: {reporter}\n'
             f'{description}'
         )
+        # Enriched when created already assigned. Detection is by key presence;
+        # creation never unassigns, so assignee_username/assignee_display are
+        # always truthy/set here.
+        if 'assignee_username' in payload:
+            text += f'\nAssigned to: {payload.get("assignee_display")}'
 
     elif event_type == 'resolved':
         new_status = payload.get('new_status', 'Resolved')
@@ -340,6 +370,28 @@ def _format_slack_message(payload: dict) -> tuple[str, list | None]:
             f'{_STATUS_PREFIX}Status changed: *{equipment_name}* ({area_name})\n'
             f'{old_status} -> {new_status}'
         )
+        # Enriched assignee line when the assignee changed in the same update.
+        # Detect by KEY PRESENCE (not truthiness) so unassignment still renders.
+        # NOTE: the reassignment wording here intentionally differs from the
+        # assignee_changed branch below -- do not factor into a shared helper.
+        if 'assignee_username' in payload:
+            old_assignee = payload.get('old_assignee_username')
+            if payload.get('assignee_username') is None:
+                text += f'\nUnassigned (was {old_assignee})'
+            elif not old_assignee:
+                text += f'\nAssigned to: {payload.get("assignee_display")}'
+            else:
+                text += f'\nAssigned to: {payload.get("assignee_display")} (was {old_assignee})'
+
+    elif event_type == 'assignee_changed':
+        old_assignee = payload.get('old_assignee_username')
+        heading = f'{_ASSIGNEE_PREFIX}Assignee changed: *{equipment_name}* ({area_name})'
+        if payload.get('assignee_username') is None:
+            text = f'{heading}\nUnassigned (was {old_assignee})'
+        elif not old_assignee:
+            text = f'{heading}\nAssigned to: {payload.get("assignee_display")}'
+        else:
+            text = f'{heading}\nReassigned: {old_assignee} -> {payload.get("assignee_display")}'
 
     elif event_type == 'eta_updated':
         eta = payload.get('eta', 'Unknown')

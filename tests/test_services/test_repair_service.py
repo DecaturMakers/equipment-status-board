@@ -691,6 +691,292 @@ class TestUpdateRepairRecordSlackNotification:
         assert notification.payload['area_name'] == 'No Slack Area'
 
 
+def _make_user(username, *, slack_handle=None, role='technician'):
+    """Create a User with an optional slack_handle for assignee-notification tests."""
+    from esb.models.user import User
+
+    user = User(
+        username=username,
+        email=f'{username}@example.com',
+        role=role,
+        slack_handle=slack_handle,
+    )
+    user.set_password('testpass')
+    _db.session.add(user)
+    _db.session.commit()
+    return user
+
+
+def _slack_notifications():
+    from esb.models.pending_notification import PendingNotification
+
+    return _db.session.execute(
+        _db.select(PendingNotification).filter_by(notification_type='slack_message')
+    ).scalars().all()
+
+
+class TestAssigneeNotification:
+    """Issue #54: assignee identity in slack_message notifications."""
+
+    def test_assignee_only_change_queues_assignee_changed(self, app, make_area, make_equipment, staff_user, capture):
+        """Assignee-only change queues exactly one assignee_changed with full payload."""
+        assignee = _make_user('alice', slack_handle='@alice')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, assignee_id=assignee.id,
+        )
+
+        notifications = _slack_notifications()
+        assert len(notifications) == 1
+        payload = notifications[0].payload
+        assert payload['event_type'] == 'assignee_changed'
+        assert payload['old_assignee_username'] is None
+        assert payload['assignee_username'] == 'alice'
+        assert payload['assignee_email'] == 'alice@example.com'
+        assert payload['assignee_has_slack'] is True
+
+    def test_assignee_change_no_notification_when_disabled(self, app, make_area, make_equipment, staff_user, capture):
+        """notify_assignee_changed='false' suppresses assignee_changed (AC 16)."""
+        from esb.services import config_service
+
+        config_service.set_config('notify_assignee_changed', 'false', changed_by='test')
+        assignee = _make_user('alice', slack_handle='@alice')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, assignee_id=assignee.id,
+        )
+
+        assert len(_slack_notifications()) == 0
+
+    def test_claim_from_new_enriches_status_changed(self, app, make_area, make_equipment, capture):
+        """AC 6: claim from New queues a single enriched status_changed (no assignee_changed)."""
+        claimer = _make_user('bob', slack_handle='@bob')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.claim_repair_record(
+            repair_record_id=record.id, claimed_by_user_id=claimer.id,
+            claimed_by_username=claimer.username,
+        )
+
+        notifications = _slack_notifications()
+        event_types = [n.payload['event_type'] for n in notifications]
+        assert event_types == ['status_changed']
+        payload = notifications[0].payload
+        assert payload['new_status'] == 'Assigned'
+        assert payload['old_assignee_username'] is None
+        assert payload['assignee_username'] == 'bob'
+        assert payload['assignee_has_slack'] is True
+
+    def test_other_open_transition_with_assignment_enriches_status_changed(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 7: New -> In Progress + assignment enriches status_changed, no assignee_changed."""
+        assignee = _make_user('carol', slack_handle='@carol')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id,
+            status='In Progress', assignee_id=assignee.id,
+        )
+
+        notifications = _slack_notifications()
+        event_types = [n.payload['event_type'] for n in notifications]
+        assert event_types == ['status_changed']
+        assert notifications[0].payload['assignee_username'] == 'carol'
+
+    def test_fall_through_to_assignee_changed_when_status_disabled(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 12: notify_status_changed=false + notify_assignee_changed=true + combined update => one assignee_changed."""
+        from esb.services import config_service
+
+        config_service.set_config('notify_status_changed', 'false', changed_by='test')
+        assignee = _make_user('dave', slack_handle='@dave')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id,
+            status='In Progress', assignee_id=assignee.id,
+        )
+
+        notifications = _slack_notifications()
+        event_types = [n.payload['event_type'] for n in notifications]
+        assert event_types == ['assignee_changed']
+        assert notifications[0].payload['assignee_username'] == 'dave'
+
+    def test_both_toggles_disabled_combined_update_queues_nothing(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 12: both toggles false + combined status+assignee update => nothing queued."""
+        from esb.services import config_service
+
+        config_service.set_config('notify_status_changed', 'false', changed_by='test')
+        config_service.set_config('notify_assignee_changed', 'false', changed_by='test')
+        assignee = _make_user('erin', slack_handle='@erin')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='New')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id,
+            status='In Progress', assignee_id=assignee.id,
+        )
+
+        assert len(_slack_notifications()) == 0
+
+    def test_unassignment_queues_assignee_changed(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 11: clearing the assignee (no status change) queues assignee_changed with username=None."""
+        assignee = _make_user('frank', slack_handle='@frank')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(
+            equipment_id=equip.id, description='Test', status='In Progress',
+            assignee_id=assignee.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, assignee_id=None,
+        )
+
+        notifications = _slack_notifications()
+        assert len(notifications) == 1
+        payload = notifications[0].payload
+        assert payload['event_type'] == 'assignee_changed'
+        assert payload['assignee_username'] is None
+        assert payload['old_assignee_username'] == 'frank'
+
+    def test_closed_transition_with_assignee_change_queues_only_resolved(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 17: status->closed + assignee change queues only resolved, no assignee fields."""
+        assignee = _make_user('grace', slack_handle='@grace')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id,
+            status='Resolved', assignee_id=assignee.id,
+        )
+
+        notifications = _slack_notifications()
+        event_types = [n.payload['event_type'] for n in notifications]
+        assert event_types == ['resolved']
+        assert 'assignee_username' not in notifications[0].payload
+
+    def test_reassignment_carries_old_and_new(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 10: reassignment A->B (no status change) carries both usernames."""
+        old = _make_user('henry', slack_handle='@henry')
+        new = _make_user('ivy', slack_handle='@ivy')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(
+            equipment_id=equip.id, description='Test', status='In Progress',
+            assignee_id=old.id,
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, assignee_id=new.id,
+        )
+
+        notifications = _slack_notifications()
+        assert len(notifications) == 1
+        payload = notifications[0].payload
+        assert payload['event_type'] == 'assignee_changed'
+        assert payload['old_assignee_username'] == 'henry'
+        assert payload['assignee_username'] == 'ivy'
+
+    def test_assignee_has_slack_false_without_handle(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 15 (queue side): assignee_has_slack is False when the user has no slack_handle."""
+        assignee = _make_user('jack')  # no slack_handle
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(equipment_id=equip.id, description='Test', status='In Progress')
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id, assignee_id=assignee.id,
+        )
+
+        payload = _slack_notifications()[0].payload
+        assert payload['assignee_has_slack'] is False
+        assert payload['assignee_email'] == 'jack@example.com'
+
+    def test_create_with_assignee_includes_fields(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 13: create_repair_record with assignee_id includes assignee fields in new_report."""
+        assignee = _make_user('kate', slack_handle='@kate')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+
+        repair_service.create_repair_record(
+            equipment_id=equip.id, description='Motor broken', created_by='staffuser',
+            severity='Down', assignee_id=assignee.id, author_id=staff_user.id,
+        )
+
+        payload = _slack_notifications()[0].payload
+        assert payload['event_type'] == 'new_report'
+        assert payload['old_assignee_username'] is None
+        assert payload['assignee_username'] == 'kate'
+        assert payload['assignee_has_slack'] is True
+
+    def test_create_without_assignee_omits_fields(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 13: create_repair_record without assignee_id omits assignee fields."""
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+
+        repair_service.create_repair_record(
+            equipment_id=equip.id, description='Motor broken', created_by='staffuser',
+            severity='Down', author_id=staff_user.id,
+        )
+
+        payload = _slack_notifications()[0].payload
+        assert payload['event_type'] == 'new_report'
+        assert 'assignee_username' not in payload
+
+    def test_assignee_plus_severity_change_no_status_queues_both(self, app, make_area, make_equipment, staff_user, capture):
+        """AC 7b: assignee + severity change with NO status change queues BOTH events."""
+        assignee = _make_user('leo', slack_handle='@leo')
+        area = make_area(name='Woodshop', slack_channel='#woodshop')
+        equip = make_equipment(name='SawStop', area=area)
+        record = RepairRecord(
+            equipment_id=equip.id, description='Test', status='In Progress',
+            severity='Degraded',
+        )
+        _db.session.add(record)
+        _db.session.commit()
+
+        repair_service.update_repair_record(
+            record.id, 'staffuser', author_id=staff_user.id,
+            assignee_id=assignee.id, severity='Down',
+        )
+
+        event_types = {n.payload['event_type'] for n in _slack_notifications()}
+        assert event_types == {'assignee_changed', 'severity_changed'}
+
+
 class TestGetRepairRecord:
     """Tests for get_repair_record()."""
 

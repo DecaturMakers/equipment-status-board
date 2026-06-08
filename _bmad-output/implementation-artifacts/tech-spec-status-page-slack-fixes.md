@@ -2,7 +2,7 @@
 title: 'Status Page & Slack Notification Fixes (Issues #52, #53, #54)'
 slug: 'status-page-slack-fixes'
 created: '2026-06-07'
-status: 'ready-for-dev'
+status: 'Completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['Python 3.14', 'Flask', 'Flask-SQLAlchemy', 'MariaDB (Docker) / SQLite in tests', 'Slack Bolt SDK', 'Jinja2', 'Flask-WTF', 'pytest', 'ruff']
 files_to_modify:
@@ -160,24 +160,24 @@ Three small UX defects, tracked as GitHub Issues #52, #53, and #54:
 
 **Issue #52 — Center generated time on static status page**
 
-- [ ] Task 1: Restyle `.generated-at` rule
+- [x] Task 1: Restyle `.generated-at` rule
   - File: `esb/templates/public/static_page.html`
   - Action: On line 12, change `.generated-at { text-align: right; font-size: 0.85rem; color: #6c757d; margin-bottom: 1rem; }` to `text-align: center;` and `color: #000;` (keep `font-size: 0.85rem; margin-bottom: 1rem;` unchanged).
   - Notes: The div renders at line 41 directly below the centered `<h1>`, so no markup change is needed — CSS only.
 
-- [ ] Task 2: Test the new styling
+- [x] Task 2: Test the new styling
   - File: `tests/test_services/test_static_page_service.py`
   - Action: Add a test (near `test_includes_generated_timestamp`, line 49) asserting the generated HTML's `.generated-at` rule contains `text-align: center` and `color: #000`, and does NOT contain `text-align: right`.
   - Notes: Existing tests `test_includes_generated_timestamp` (49) and `test_generated_at_subheading_renders_above_areas` (131) assert structure, not style — they should pass unchanged.
 
 **Issue #53 — `/esb-repair` flow terminates on Apply**
 
-- [ ] Task 3: Close the full modal stack on successful submission
+- [x] Task 3: Close the full modal stack on successful submission
   - File: `esb/slack/handlers.py`
   - Action: In `handle_repair_action_submission` (line 525), change the success-path bare `ack()` at line 678 to `ack(response_action='clear')`.
   - Notes: `response_action='clear'` closes ALL views in the stack (pushed action modal + underlying dispatcher). This is the single shared success ack for all four actions (claim / set_eta / set_status / resolve_with_note). Do NOT touch the error-path `ack(response_action='errors', ...)` calls, the dispatcher's `ack(response_action='push', ...)` (line 522), or the `chat_postEphemeral` confirmation (lines 698-702), which still fires after the clear.
 
-- [ ] Task 4: Update and EXTEND Slack handler tests for the clear ack
+- [x] Task 4: Update and EXTEND Slack handler tests for the clear ack
   - File: `tests/test_slack/test_handlers.py`
   - Action: In `TestRepairActionSubmission` (line 1147):
     1. **Update** the only two existing success-ack assertions — `test_claim_assigns_to_caller_and_sets_status_to_assigned_when_new` (~line 1214) and `test_set_status_closed_duplicate_with_target_succeeds` (~line 1562) — from `ack.assert_called_once_with()` to `ack.assert_called_once_with(response_action='clear')`.
@@ -187,7 +187,7 @@ Three small UX defects, tracked as GitHub Issues #52, #53, and #54:
 
 **Issue #54 — Assignee in Slack notifications**
 
-- [ ] Task 5: Add the `notify_assignee_changed` trigger toggle (admin config)
+- [x] Task 5: Add the `notify_assignee_changed` trigger toggle (admin config)
   - Files: `esb/forms/admin_forms.py`, `esb/views/admin.py`, `esb/templates/admin/config.html`
   - Action:
     1. `admin_forms.py` (lines 33-64): add `notify_assignee_changed = BooleanField('Repair assignee changed')` to `AppConfigForm`, alongside the existing five trigger fields.
@@ -195,7 +195,7 @@ Three small UX defects, tracked as GitHub Issues #52, #53, and #54:
     3. `templates/admin/config.html` (Notification Triggers card, lines 59-116): add a `form-check form-switch` block for `form.notify_assignee_changed`, copying the structure of the existing five switches.
   - Notes: Follow the existing pattern exactly; values are `'true'`/`'false'` strings persisted via `config_service.set_config` only on change.
 
-- [ ] Task 6: Queue assignee notification data in `repair_service`
+- [x] Task 6: Queue assignee notification data in `repair_service`
   - File: `esb/services/repair_service.py`
   - Action:
     1. Add a module-level helper (near `_queue_slack_notification`) `_assignee_payload_fields(user)` returning `{'assignee_username': user.username, 'assignee_email': user.email, 'assignee_has_slack': bool(user.slack_handle)}` for a `User`, or `{'assignee_username': None, 'assignee_email': None, 'assignee_has_slack': False}` for `None`.
@@ -207,7 +207,7 @@ Three small UX defects, tracked as GitHub Issues #52, #53, and #54:
     4. In `create_repair_record()`: the `assignee` User object is already loaded for validation (lines 105-108). When `assignee_id` was provided, merge `{'old_assignee_username': None, **_assignee_payload_fields(assignee)}` into the `new_report` extra payload (~lines 168-176).
   - Notes: `claim_repair_record()` (lines 244-294) needs no changes — it funnels through `update_repair_record()`. A claim from `'New'` produces the enriched `status_changed` (or the fall-through `assignee_changed` if that toggle is off); a claim on an already-assigned repair produces `assignee_changed`. The severity/eta notification branches are untouched. The static-page-push hook (691-699) is untouched — assignee changes still don't regenerate the page.
 
-- [ ] Task 7: Format and resolve the assignee mention in `notification_service`
+- [x] Task 7: Format and resolve the assignee mention in `notification_service`
   - File: `esb/services/notification_service.py`
   - Action:
     1. **Copy the payload first** in `_deliver_slack_message()`: change line 253 from `payload = notification.payload or {}` to `payload = dict(notification.payload or {})` — the current expression aliases the ORM `db.JSON` attribute and any mutation would hit the model object.
@@ -221,28 +221,28 @@ Three small UX defects, tracked as GitHub Issues #52, #53, and #54:
     5. **Enriched `new_report`** (lines 302-311, three-line template): detect by **key presence** — `if 'assignee_username' in payload`, append `\nAssigned to: {display}` (creation never unassigns, so `assignee_username` is always truthy and `assignee_display` is always set here).
   - Notes: `_format_slack_message` stays a pure function — it only reads `assignee_display`/`old_assignee_username`/`assignee_username` from the payload; the Slack API call lives in delivery. Detection is **uniformly key-presence** across all three event types; the unassignment line needs no `assignee_display`. `old_assignee_username` renders as plain text (no mention) — only the NEW assignee gets pinged. The unknown-event/empty-payload fallbacks (tests at 1110/1122) must keep passing.
 
-- [ ] Task 8: Service-layer tests for assignee notifications
+- [x] Task 8: Service-layer tests for assignee notifications
   - File: `tests/test_services/test_repair_service.py`
   - Action:
     1. **Do NOT touch** `test_assignee_only_does_not_queue_notification` (lines 216-228, in `TestUpdateRepairRecordStaticPageHook`) — it guards static-page-push behavior (`notification_type='static_page_push'`), which is unchanged: assignee changes still must not regenerate the static page.
     2. **Add** new `slack_message`-typed tests (pattern: `TestUpdateRepairRecordSlackNotification`, class at line 318): (a) assignee-only change queues exactly one `assignee_changed` with correct payload fields (`old_assignee_username`, `assignee_username`, `assignee_email`, `assignee_has_slack`); (b) no `assignee_changed` when `notify_assignee_changed` is `'false'`; (c) claim from `'New'` queues a single enriched `status_changed` (no `assignee_changed`) whose payload includes the assignee delta; (d) any other open transition + assignee change (e.g. `New` → `In Progress` with assignment) also enriches `status_changed`; (e) **fall-through**: `notify_status_changed='false'` + `notify_assignee_changed='true'` + combined status+assignee update queues exactly one `assignee_changed`; (f) both toggles `'false'` + combined update queues nothing; (g) unassignment (`assignee_id=None`) queues `assignee_changed` with `assignee_username=None` and `old_assignee_username` set; (h) status→closed + assignee change queues only `resolved` with no assignee fields and no `assignee_changed`; (i) reassignment carries both old and new usernames; (j) `assignee_has_slack` is `False` when the user has no `slack_handle`; (k) `create_repair_record` with `assignee_id` includes the assignee fields in the `new_report` payload; without `assignee_id` it does not; (l) assignee change + severity change with NO status change queues BOTH `assignee_changed` AND `severity_changed` (the independent severity branch is unaffected) — assert both are present.
   - Notes: Use existing fixtures (`make_repair_record`, user factories) and the established `PendingNotification` query assertions filtered by `notification_type='slack_message'`.
 
-- [ ] Task 9: Formatting/delivery tests for assignee messages
+- [x] Task 9: Formatting/delivery tests for assignee messages
   - File: `tests/test_services/test_notification_service.py`
   - Action:
     1. In `TestFormatSlackMessage` (lines 929-1129) add exact-string tests for the normative templates in Technical Decisions: (a) `assignee_changed` assigned; (b) `assignee_changed` reassigned; (c) `assignee_changed` unassigned; (d) enriched `status_changed` assigned; (e) enriched `status_changed` reassigned (`(was {old})`); (f) enriched `status_changed` unassigned; (g) `status_changed` without assignee keys is byte-identical to current output (regression guard); (h) `new_report` with `assignee_display` appends the line; (i) `new_report` without it is unchanged.
     2. In the `_deliver_slack_message` tests: (a) `assignee_has_slack=True` + successful `users_lookupByEmail` → posted text contains `<@U...>`; (b) lookup raises → falls back to plain username, delivery still succeeds (notification marked delivered, not failed); (c) `assignee_has_slack=False` → `users_lookupByEmail` is never called, plain username used; (d) `notification.payload` (the model attribute) is not mutated by delivery — assert `assignee_display` is absent from it afterward.
   - Notes: Mock the Slack client per existing delivery-test pattern in this file. The unknown-event fallback (line 1110) and empty-payload fallback (line 1122) tests must keep passing.
 
-- [ ] Task 10: Admin UI tests for the new toggle
+- [x] Task 10: Admin UI tests for the new toggle
   - File: `tests/test_views/test_admin_views.py`
   - Action: Extend `TestAppConfigNotificationTriggers` (class at line 959): the config page shows the new switch; it defaults to enabled; disabling persists `notify_assignee_changed='false'`; re-enabling persists `'true'`; mutation logging fires on change (mirror `test_disable_status_changed_trigger`, ~line 1008).
   - Notes: Copy the structure of the existing per-trigger tests.
 
 **Wrap-up**
 
-- [ ] Task 11: Full verification and release bump
+- [x] Task 11: Full verification and release bump
   - Files: `pyproject.toml`
   - Action: Run `make test` (full suite) and `make lint`; fix any fallout. Bump `version` in `pyproject.toml` from `0.9.0` by a **minor** increment to `0.10.0` so the release workflow publishes on merge to `main`.
   - Notes: Per CLAUDE.md release guidance, **minor for new features** — #54 adds a new notification event type, a new persisted config key, and a new admin UI control, so a minor bump (not patch) is correct even though #52/#53 are pure fixes. No manual tags, no CHANGELOG.
@@ -251,34 +251,34 @@ Three small UX defects, tracked as GitHub Issues #52, #53, and #54:
 
 **Issue #52**
 
-- [ ] AC 1: Given the static status page is generated, when viewing the HTML, then the `.generated-at` CSS rule specifies `text-align: center` and `color: #000`, and the "Generated: ..." line renders directly under the page title.
-- [ ] AC 2: Given the static status page is generated, when inspecting the rest of the page, then all other styling (status colors, footer, layout) is unchanged.
+- [x] AC 1: Given the static status page is generated, when viewing the HTML, then the `.generated-at` CSS rule specifies `text-align: center` and `color: #000`, and the "Generated: ..." line renders directly under the page title.
+- [x] AC 2: Given the static status page is generated, when inspecting the rest of the page, then all other styling (status colors, footer, layout) is unchanged.
 
 **Issue #53**
 
-- [ ] AC 3: Given a technician submits the `/esb-repair` action modal with any valid action (claim, set ETA, set status, resolve with note), when they click Apply, then the handler acks with `response_action='clear'` (entire modal stack closes — no return to "Open Repairs") and the ephemeral confirmation message is still posted. Every action's success path has a test asserting the clear ack.
-- [ ] AC 4: Given the action modal submission fails validation (e.g. missing ETA, closed record, unauthorized user), when the handler acks, then it still uses `response_action='errors'` and the modal stack remains open showing the error.
-- [ ] AC 5: Given a technician selects a repair in the dispatcher modal and clicks Continue, when the dispatcher acks, then it still pushes the action modal (`response_action='push'`) — dispatcher behavior unchanged.
+- [x] AC 3: Given a technician submits the `/esb-repair` action modal with any valid action (claim, set ETA, set status, resolve with note), when they click Apply, then the handler acks with `response_action='clear'` (entire modal stack closes — no return to "Open Repairs") and the ephemeral confirmation message is still posted. Every action's success path has a test asserting the clear ack.
+- [x] AC 4: Given the action modal submission fails validation (e.g. missing ETA, closed record, unauthorized user), when the handler acks, then it still uses `response_action='errors'` and the modal stack remains open showing the error.
+- [x] AC 5: Given a technician selects a repair in the dispatcher modal and clicks Continue, when the dispatcher acks, then it still pushes the action modal (`response_action='push'`) — dispatcher behavior unchanged.
 
 **Issue #54**
 
-- [ ] AC 6: Given an unassigned repair in status `New` and `notify_status_changed` enabled (default), when a technician claims it (status promotes to `Assigned` and assignee is set in one update, with no severity/eta change), then exactly one `status_changed` Slack notification is queued whose payload includes the assignee fields, and the delivered message ends with `Assigned to: {assignee}`.
-- [ ] AC 7: Given any other open-transition status change bundled with an assignment in one update (e.g. `New` → `In Progress` + assign via the web edit form), then the `status_changed` notification is enriched with the assignee line and no separate `assignee_changed` is queued. ("Enriched, not separately notified" — the total notification count may still exceed one if severity/eta also changed in the same update.)
-- [ ] AC 7b: Given an assignee change AND a severity change in one update with NO status change, then both an `assignee_changed` and a `severity_changed` notification are queued (the independent severity branch is unaffected by the assignee logic).
-- [ ] AC 8: Given a status change bundled with a reassignment A→B in one update, then the enriched `status_changed` message shows `Assigned to: {B} (was {A})` — the displaced assignee is never silently dropped.
-- [ ] AC 9: Given a status change bundled with an unassignment in one update, then the enriched `status_changed` message shows `Unassigned (was {A})`.
-- [ ] AC 10: Given an already-assigned repair, when the assignee changes without a status change, then exactly one `assignee_changed` notification is queued and the delivered message shows `Reassigned: {old} -> {new}`.
-- [ ] AC 11: Given an assigned repair, when the assignee is cleared without a status change, then an `assignee_changed` notification is queued and the delivered message shows `Unassigned (was {old})`.
-- [ ] AC 12: Given `notify_status_changed` is `'false'` and `notify_assignee_changed` is `'true'`, when a single update changes both status (open transition) and assignee, then exactly one `assignee_changed` notification fires (fall-through); given both toggles are `'false'`, nothing fires.
-- [ ] AC 13: Given a repair record is created with an assignee, when the `new_report` notification is delivered, then its message includes an `Assigned to:` line; without an assignee at creation the message is unchanged.
-- [ ] AC 14: Given the new assignee has a `slack_handle` set and `users_lookupByEmail` resolves their email, when the notification is delivered, then the message contains a real Slack mention (`<@U...>`) for the new assignee.
-- [ ] AC 15: Given the new assignee has no `slack_handle` (or the email lookup fails/raises), when the notification is delivered, then the message falls back to the plain ESB username, delivery still succeeds, and `users_lookupByEmail` is not called at all in the no-handle case.
-- [ ] AC 16: Given `notify_assignee_changed` is `'false'`, when an assignee-only change occurs, then no `assignee_changed` notification is queued.
-- [ ] AC 17: Given a repair is closed (status → `Resolved`/`Closed - *`) in the same update that changes the assignee, then only the `resolved` notification fires, with its existing message format (no assignee line, no `assignee_changed`).
-- [ ] AC 18: Given a status change with no assignee change, when the `status_changed` notification is delivered, then its message is byte-identical to the current format (no assignee line).
-- [ ] AC 19: Given any assignment-related delivery, when it completes, then the persisted `PendingNotification.payload` does not contain `assignee_display` (delivery works on a copy, never mutates the model).
-- [ ] AC 20: Given a staff user opens `/admin/config`, when viewing the Notification Triggers card, then a "Repair assignee changed" switch appears, defaults to enabled, and toggling it persists `notify_assignee_changed` with mutation logging.
-- [ ] AC 21: Given an assignee-only change, when notifications are queued, then no `static_page_push` notification is queued (existing guard test at `test_repair_service.py:216-228` passes unchanged).
+- [x] AC 6: Given an unassigned repair in status `New` and `notify_status_changed` enabled (default), when a technician claims it (status promotes to `Assigned` and assignee is set in one update, with no severity/eta change), then exactly one `status_changed` Slack notification is queued whose payload includes the assignee fields, and the delivered message ends with `Assigned to: {assignee}`.
+- [x] AC 7: Given any other open-transition status change bundled with an assignment in one update (e.g. `New` → `In Progress` + assign via the web edit form), then the `status_changed` notification is enriched with the assignee line and no separate `assignee_changed` is queued. ("Enriched, not separately notified" — the total notification count may still exceed one if severity/eta also changed in the same update.)
+- [x] AC 7b: Given an assignee change AND a severity change in one update with NO status change, then both an `assignee_changed` and a `severity_changed` notification are queued (the independent severity branch is unaffected by the assignee logic).
+- [x] AC 8: Given a status change bundled with a reassignment A→B in one update, then the enriched `status_changed` message shows `Assigned to: {B} (was {A})` — the displaced assignee is never silently dropped.
+- [x] AC 9: Given a status change bundled with an unassignment in one update, then the enriched `status_changed` message shows `Unassigned (was {A})`.
+- [x] AC 10: Given an already-assigned repair, when the assignee changes without a status change, then exactly one `assignee_changed` notification is queued and the delivered message shows `Reassigned: {old} -> {new}`.
+- [x] AC 11: Given an assigned repair, when the assignee is cleared without a status change, then an `assignee_changed` notification is queued and the delivered message shows `Unassigned (was {old})`.
+- [x] AC 12: Given `notify_status_changed` is `'false'` and `notify_assignee_changed` is `'true'`, when a single update changes both status (open transition) and assignee, then exactly one `assignee_changed` notification fires (fall-through); given both toggles are `'false'`, nothing fires.
+- [x] AC 13: Given a repair record is created with an assignee, when the `new_report` notification is delivered, then its message includes an `Assigned to:` line; without an assignee at creation the message is unchanged.
+- [x] AC 14: Given the new assignee has a `slack_handle` set and `users_lookupByEmail` resolves their email, when the notification is delivered, then the message contains a real Slack mention (`<@U...>`) for the new assignee.
+- [x] AC 15: Given the new assignee has no `slack_handle` (or the email lookup fails/raises), when the notification is delivered, then the message falls back to the plain ESB username, delivery still succeeds, and `users_lookupByEmail` is not called at all in the no-handle case.
+- [x] AC 16: Given `notify_assignee_changed` is `'false'`, when an assignee-only change occurs, then no `assignee_changed` notification is queued.
+- [x] AC 17: Given a repair is closed (status → `Resolved`/`Closed - *`) in the same update that changes the assignee, then only the `resolved` notification fires, with its existing message format (no assignee line, no `assignee_changed`).
+- [x] AC 18: Given a status change with no assignee change, when the `status_changed` notification is delivered, then its message is byte-identical to the current format (no assignee line).
+- [x] AC 19: Given any assignment-related delivery, when it completes, then the persisted `PendingNotification.payload` does not contain `assignee_display` (delivery works on a copy, never mutates the model).
+- [x] AC 20: Given a staff user opens `/admin/config`, when viewing the Notification Triggers card, then a "Repair assignee changed" switch appears, defaults to enabled, and toggling it persists `notify_assignee_changed` with mutation logging.
+- [x] AC 21: Given an assignee-only change, when notifications are queued, then no `static_page_push` notification is queued (existing guard test at `test_repair_service.py:216-228` passes unchanged).
 
 ## Additional Context
 
@@ -307,3 +307,15 @@ Three small UX defects, tracked as GitHub Issues #52, #53, and #54:
 - **Not pinged**: the OLD assignee in a reassignment/unassignment is plain text by design; only the new assignee gets a mention.
 - **Future consideration (out of scope)**: storing the resolved Slack user ID on the `User` model would avoid the per-delivery email lookup.
 - GitHub Issues: #52 (static page timestamp), #53 (`/esb-repair` modal flow), #54 (assignment notification content).
+
+## Review Notes
+
+- Adversarial review completed (information-asymmetry subagent: diff-only context).
+- Findings: 5 total (0 Critical/High; 1 Medium, 4 Low) — 4 fixed, 1 skipped as noise.
+  - **F1 (Medium, fixed)**: `docs/administrators.md` trigger table said "All five default to true" and omitted `notify_assignee_changed` — updated to six keys with the new row (user-visible via the #58 docs site).
+  - **F2 (Low, fixed)**: documented the deliberate status→assignee fall-through in `docs/administrators.md`.
+  - **F3 (Low, fixed)**: `create_repair_record` now snapshots assignee scalars before `commit()` (avoids `expire_on_commit` reload SELECTs; matches `update_repair_record`).
+  - **F4 (Low, fixed)**: added a delivery test for a malformed `users_lookupByEmail` success response (KeyError → username fallback).
+  - **F5 (Low, skipped/noise)**: end-to-end delivery test for `<@U...>` injection only covers `assignee_changed`; format and delivery layers are independently covered.
+- Resolution approach: auto-fix real findings.
+- Verification: `make lint` clean; full suite **1731 passed**. Version bumped `0.10.0` → `0.11.0` (minor; the spec's planned 0.9.0→0.10.0 was superseded because #58 already published 0.10.0).

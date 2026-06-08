@@ -675,7 +675,11 @@ def register_handlers(bolt_app, app):
                 })
                 return
 
-            ack()
+            # response_action='clear' closes the ENTIRE modal stack (the pushed
+            # action modal AND the underlying dispatcher), so the user is not
+            # returned to the "Open Repairs" dialog after a successful Apply
+            # (Issue #53). The ephemeral confirmation below still posts.
+            ack(response_action='clear')
 
             # Declarative wording (F28): the message describes post-state, so it
             # is accurate even when the value matched current state and no DB

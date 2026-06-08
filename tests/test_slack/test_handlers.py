@@ -1211,7 +1211,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
-        ack.assert_called_once_with()
+        ack.assert_called_once_with(response_action='clear')
         from esb.models.repair_record import RepairRecord
         self.db.session.expire_all()
         rec = self.db.session.get(RepairRecord, record.id)
@@ -1233,6 +1233,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         from esb.models.repair_record import RepairRecord
         self.db.session.expire_all()
         rec = self.db.session.get(RepairRecord, record.id)
@@ -1252,6 +1253,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         from esb.models.repair_record import RepairRecord
         self.db.session.expire_all()
         rec = self.db.session.get(RepairRecord, record.id)
@@ -1271,6 +1273,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         from datetime import date
         from esb.models.repair_record import RepairRecord
         from esb.models.repair_timeline_entry import RepairTimelineEntry
@@ -1298,6 +1301,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         from esb.models.repair_timeline_entry import RepairTimelineEntry
         entries = self.db.session.execute(
             self.db.select(RepairTimelineEntry)
@@ -1339,6 +1343,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         from esb.models.repair_record import RepairRecord
         from esb.models.repair_timeline_entry import RepairTimelineEntry
         self.db.session.expire_all()
@@ -1363,6 +1368,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         from esb.models.repair_timeline_entry import RepairTimelineEntry
         entries = self.db.session.execute(
             self.db.select(RepairTimelineEntry)
@@ -1403,6 +1409,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         from esb.models.repair_record import RepairRecord
         from esb.models.repair_timeline_entry import RepairTimelineEntry
         self.db.session.expire_all()
@@ -1430,6 +1437,7 @@ class TestRepairActionSubmission:
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
 
+        ack.assert_called_once_with(response_action='clear')
         notifications = self.db.session.execute(
             self.db.select(PendingNotification).filter_by(notification_type='slack_message')
         ).scalars().all()
@@ -1559,7 +1567,7 @@ class TestRepairActionSubmission:
         self.handlers['view:repair_action_submission'](
             ack=ack, body=self._body(self.tech_user.email), client=client, view=view,
         )
-        ack.assert_called_once_with()
+        ack.assert_called_once_with(response_action='clear')
 
         from esb.models.repair_record import RepairRecord
         self.db.session.expire_all()

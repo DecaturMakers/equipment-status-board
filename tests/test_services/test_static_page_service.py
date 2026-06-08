@@ -61,6 +61,20 @@ class TestGenerate:
             html,
         )
 
+    def test_generated_at_style_is_centered_and_black(self, app, make_area, make_equipment):
+        """The .generated-at rule centers the timestamp and renders it black (Issue #52)."""
+        area = make_area(name='TestArea')
+        make_equipment(name='TestEquip', area=area)
+
+        html = static_page_service.generate()
+
+        rule = re.search(r'\.generated-at \{[^}]*\}', html)
+        assert rule is not None
+        rule_text = rule.group(0)
+        assert 'text-align: center' in rule_text
+        assert 'color: #000' in rule_text
+        assert 'text-align: right' not in rule_text
+
     def test_csp_meta_tag_directive_unchanged(self, app, make_area, make_equipment):
         """generate() includes the exact CSP directive on the meta tag (no policy weakening)."""
         area = make_area(name='TestArea')

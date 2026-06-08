@@ -1,6 +1,6 @@
 [project]
 name = "equipment-status-board"
-version = "0.10.0"
+version = "0.11.0"
 description = "Equipment status tracking and repair management for Decatur Makers makerspace"
 requires-python = ">=3.14"
 dependencies = [

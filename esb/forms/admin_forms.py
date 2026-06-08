@@ -38,6 +38,7 @@ class AppConfigForm(FlaskForm):
     notify_resolved = BooleanField('Repair record resolved or closed')
     notify_severity_changed = BooleanField('Severity level changed')
     notify_status_changed = BooleanField('Repair status changed (open transitions)')
+    notify_assignee_changed = BooleanField('Repair assignee changed')
     notify_eta_updated = BooleanField('ETA set or updated')
     wifi_ssid = StringField('WiFi Network Name (SSID)', validators=[Optional(), Length(max=100)])
     wifi_password = PasswordField('WiFi Password', validators=[Optional(), Length(max=100)])

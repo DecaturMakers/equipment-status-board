@@ -937,8 +937,8 @@ class TestAppConfig:
             json.loads(r.message) for r in capture.records
             if 'app_config.updated' in r.message
         ]
-        # All 6 values change from defaults (tech_doc false→true, 5 triggers true→false)
-        assert len(entries) == 6
+        # All 7 values change from defaults (tech_doc false→true, 6 triggers true→false)
+        assert len(entries) == 7
         tech_doc_entries = [e for e in entries if e['data']['key'] == 'tech_doc_edit_enabled']
         assert len(tech_doc_entries) == 1
         assert tech_doc_entries[0]['data']['new_value'] == 'true'
@@ -968,6 +968,7 @@ class TestAppConfigNotificationTriggers:
         assert b'notify_resolved' in resp.data
         assert b'notify_severity_changed' in resp.data
         assert b'notify_status_changed' in resp.data
+        assert b'notify_assignee_changed' in resp.data
         assert b'notify_eta_updated' in resp.data
 
     def test_triggers_enabled_by_default(self, staff_client, staff_user):
@@ -978,7 +979,7 @@ class TestAppConfigNotificationTriggers:
         # Each trigger input should be rendered with checked attribute
         for field_name in ('notify_new_report', 'notify_resolved',
                            'notify_severity_changed', 'notify_status_changed',
-                           'notify_eta_updated'):
+                           'notify_assignee_changed', 'notify_eta_updated'):
             # Find the input tag for this field and verify it has 'checked'
             idx = html.find(f'id="{field_name}"')
             assert idx != -1, f'{field_name} input not found'
@@ -1019,6 +1020,44 @@ class TestAppConfigNotificationTriggers:
         assert resp.status_code == 200
         from esb.services import config_service
         assert config_service.get_config('notify_status_changed') == 'false'
+
+    def test_disable_assignee_changed_trigger(self, staff_client, staff_user, capture):
+        """AC 20: staff can disable notify_assignee_changed; the change is persisted and logged."""
+        capture.records.clear()
+        resp = staff_client.post('/admin/config', data={
+            'tech_doc_edit_enabled': 'y',
+            'notify_new_report': 'y',
+            'notify_resolved': 'y',
+            'notify_severity_changed': 'y',
+            'notify_status_changed': 'y',
+            'notify_eta_updated': 'y',
+            'wifi_info_default': 'none',
+            # notify_assignee_changed NOT included = disabled
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        from esb.services import config_service
+        assert config_service.get_config('notify_assignee_changed') == 'false'
+
+        entries = [
+            json.loads(r.message) for r in capture.records
+            if 'app_config.updated' in r.message
+        ]
+        assigned_entries = [e for e in entries if e['data']['key'] == 'notify_assignee_changed']
+        assert len(assigned_entries) == 1
+        assert assigned_entries[0]['data']['new_value'] == 'false'
+
+    def test_enable_assignee_changed_trigger(self, staff_client, staff_user):
+        """AC 20: staff can re-enable notify_assignee_changed after it was disabled."""
+        from esb.services import config_service
+        config_service.set_config('notify_assignee_changed', 'false', changed_by='test')
+
+        resp = staff_client.post('/admin/config', data={
+            'notify_assignee_changed': 'y',
+            'wifi_info_default': 'none',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'Configuration updated successfully' in resp.data
+        assert config_service.get_config('notify_assignee_changed') == 'true'
 
     def test_enable_trigger(self, staff_client, staff_user):
         """Staff can enable a notification trigger."""

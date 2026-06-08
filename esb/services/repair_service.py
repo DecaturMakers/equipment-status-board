@@ -30,6 +30,31 @@ def _serialize(value):
     return str(value) if value is not None else None
 
 
+def _assignee_payload_fields(user):
+    """Build the assignee-related payload fields for a Slack notification.
+
+    Args:
+        user: A User instance, or None for unassignment.
+
+    Returns:
+        Dict with assignee_username/assignee_email/assignee_has_slack. For a
+        None user (unassignment), all fields are None/False. ``assignee_has_slack``
+        records whether the user has a ``slack_handle`` set (the "wants Slack"
+        flag); the actual Slack-ID resolution happens at delivery time.
+    """
+    if user is None:
+        return {
+            'assignee_username': None,
+            'assignee_email': None,
+            'assignee_has_slack': False,
+        }
+    return {
+        'assignee_username': user.username,
+        'assignee_email': user.email,
+        'assignee_has_slack': bool(user.slack_handle),
+    }
+
+
 def _queue_slack_notification(equipment, event_type, extra_payload=None):
     """Queue a slack_message notification for a repair event.
 
@@ -102,10 +127,16 @@ def create_repair_record(
     if severity is not None and severity not in REPAIR_SEVERITIES:
         raise ValidationError(f'Invalid severity: {severity!r}')
 
+    # Snapshot assignee scalars BEFORE the commit below. The new_report
+    # notification block runs after db.session.commit(), and with
+    # expire_on_commit=True reading .username/.email/.slack_handle off the ORM
+    # User there would each trigger a refresh SELECT (mirrors update_repair_record).
+    assignee_fields = None
     if assignee_id is not None:
         assignee = db.session.get(User, assignee_id)
         if assignee is None:
             raise ValidationError(f'User with id {assignee_id} not found')
+        assignee_fields = _assignee_payload_fields(assignee)
 
     record = RepairRecord(
         equipment_id=equipment_id,
@@ -168,12 +199,20 @@ def create_repair_record(
     # Queue Slack notification if new_report trigger is enabled
     from esb.services import config_service
     if config_service.get_config('notify_new_report', 'true') == 'true':
-        _queue_slack_notification(equipment, 'new_report', {
+        new_report_payload = {
             'severity': severity,
             'description': description.strip(),
             'reporter_name': reporter_name,
             'has_safety_risk': has_safety_risk,
-        })
+        }
+        # When the repair is created already assigned, carry the assignee
+        # identity so the new_report message gains an "Assigned to:" line.
+        # Creation has no previous assignee, so old_assignee_username is None.
+        # Uses the scalars snapshotted before commit (see assignee_fields above).
+        if assignee_fields is not None:
+            new_report_payload['old_assignee_username'] = None
+            new_report_payload.update(assignee_fields)
+        _queue_slack_notification(equipment, 'new_report', new_report_payload)
 
     return record
 
@@ -606,6 +645,13 @@ def update_repair_record(
 
     # Detect changes and create timeline entries
     audit_changes = {}
+    # Capture assignee identity as plain scalars (NOT ORM objects) inside the
+    # assignee_id branch below. The Slack-notification block runs AFTER
+    # db.session.commit(); with Flask-SQLAlchemy's default expire_on_commit=True,
+    # reading .username/.email/.slack_handle off an ORM User there would each
+    # trigger a refresh SELECT. Pre-initialized here so they are always bound.
+    old_assignee_username = None
+    new_assignee_fields = _assignee_payload_fields(None)
     for field_name in _REPAIR_UPDATABLE_FIELDS:
         if field_name not in changes:
             continue
@@ -631,6 +677,11 @@ def update_repair_record(
         elif field_name == 'assignee_id':
             old_user = db.session.get(User, old_value) if old_value else None
             new_user = db.session.get(User, new_value) if new_value else None
+            # Snapshot scalars for the post-commit notification block (see note
+            # at audit_changes init). Do NOT re-derive old assignee from
+            # audit_changes['assignee_id'] -- those values are _serialize()'d strings.
+            old_assignee_username = old_user.username if old_user else None
+            new_assignee_fields = _assignee_payload_fields(new_user)
             db.session.add(RepairTimelineEntry(
                 repair_record_id=record.id,
                 entry_type='assignee_change',
@@ -704,18 +755,45 @@ def update_repair_record(
     if audit_changes:
         from esb.services import config_service
 
+        # Assignee delta (None unless the assignee actually changed in this
+        # update). The scalars were snapshotted in the audit loop above.
+        if 'assignee_id' in audit_changes:
+            assignee_delta = {'old_assignee_username': old_assignee_username, **new_assignee_fields}
+        else:
+            assignee_delta = None
+
+        # Status/assignee notification chain (single if/elif keyed on status).
+        # The severity/eta branches below are INDEPENDENT and still fire on top.
         if 'status' in audit_changes and audit_changes['status'][1] in CLOSED_STATUSES:
+            # Closed transition: resolved only -- assignee info never added,
+            # assignee_changed never queued (even if assignee also changed).
             if config_service.get_config('notify_resolved', 'true') == 'true':
                 _queue_slack_notification(record.equipment, 'resolved', {
                     'old_status': audit_changes['status'][0],
                     'new_status': audit_changes['status'][1],
                 })
         elif 'status' in audit_changes:
+            # Open transition. Enrich status_changed with the assignee delta when
+            # one is present; fall through to assignee_changed if status_changed
+            # is suppressed so assignment visibility is governed by its own toggle.
             if config_service.get_config('notify_status_changed', 'true') == 'true':
-                _queue_slack_notification(record.equipment, 'status_changed', {
+                status_payload = {
                     'old_status': audit_changes['status'][0],
                     'new_status': audit_changes['status'][1],
-                })
+                }
+                if assignee_delta is not None:
+                    status_payload.update(assignee_delta)
+                _queue_slack_notification(record.equipment, 'status_changed', status_payload)
+            elif assignee_delta is not None and (
+                config_service.get_config('notify_assignee_changed', 'true') == 'true'
+            ):
+                _queue_slack_notification(record.equipment, 'assignee_changed', assignee_delta)
+        elif assignee_delta is not None:
+            # Assignee changed with NO status change in the update. Guarded as the
+            # elif tail of the status-keyed chain so it can never double-fire
+            # alongside resolved or an enriched status_changed.
+            if config_service.get_config('notify_assignee_changed', 'true') == 'true':
+                _queue_slack_notification(record.equipment, 'assignee_changed', assignee_delta)
 
         # Severity changed trigger
         if 'severity' in audit_changes:

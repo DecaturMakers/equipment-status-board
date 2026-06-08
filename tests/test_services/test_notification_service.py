@@ -925,6 +925,126 @@ class TestDeliverSlackMessage:
 
         assert mock_client.chat_postMessage.call_count == 2
 
+    def test_assignee_with_slack_resolves_mention(self, app):
+        """AC 14: assignee_has_slack + successful lookup => message contains <@U...>."""
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test-token'
+        n = _create_notification(
+            notification_type='slack_message',
+            target='#woodshop',
+            payload={'event_type': 'assignee_changed', 'equipment_name': 'SawStop',
+                     'area_name': 'Woodshop', 'old_assignee_username': None,
+                     'assignee_username': 'alice', 'assignee_email': 'alice@example.com',
+                     'assignee_has_slack': True},
+        )
+
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        mock_client.users_lookupByEmail.return_value = {'user': {'id': 'U999'}}
+        with patch('slack_sdk.WebClient', return_value=mock_client):
+            notification_service._deliver_slack_message(n)
+
+        mock_client.users_lookupByEmail.assert_called_once_with(email='alice@example.com')
+        text = mock_client.chat_postMessage.call_args_list[0].kwargs['text']
+        assert '<@U999>' in text
+        assert 'Assigned to: <@U999>' in text
+
+    def test_assignee_lookup_failure_falls_back_to_username(self, app):
+        """AC 15: lookup raises => falls back to plain username, delivery still succeeds."""
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test-token'
+        n = _create_notification(
+            notification_type='slack_message',
+            target='#woodshop',
+            payload={'event_type': 'assignee_changed', 'equipment_name': 'SawStop',
+                     'area_name': 'Woodshop', 'old_assignee_username': None,
+                     'assignee_username': 'alice', 'assignee_email': 'alice@example.com',
+                     'assignee_has_slack': True},
+        )
+
+        from slack_sdk.errors import SlackApiError
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.data = {'ok': False, 'error': 'users_not_found'}
+        mock_client.users_lookupByEmail.side_effect = SlackApiError(
+            message='users_not_found', response=mock_response,
+        )
+        with patch('slack_sdk.WebClient', return_value=mock_client):
+            # Must NOT raise -- lookup failure degrades gracefully.
+            notification_service._deliver_slack_message(n)
+
+        text = mock_client.chat_postMessage.call_args_list[0].kwargs['text']
+        assert 'Assigned to: alice' in text
+        assert '<@' not in text
+
+    def test_assignee_malformed_lookup_response_falls_back_to_username(self, app):
+        """AC 15: a malformed lookup response (missing user id) degrades to the plain username."""
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test-token'
+        n = _create_notification(
+            notification_type='slack_message',
+            target='#woodshop',
+            payload={'event_type': 'assignee_changed', 'equipment_name': 'SawStop',
+                     'area_name': 'Woodshop', 'old_assignee_username': None,
+                     'assignee_username': 'alice', 'assignee_email': 'alice@example.com',
+                     'assignee_has_slack': True},
+        )
+
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        # 'ok' response shape but no 'user' key => KeyError inside the try block.
+        mock_client.users_lookupByEmail.return_value = {'ok': True}
+        with patch('slack_sdk.WebClient', return_value=mock_client):
+            # Must NOT raise.
+            notification_service._deliver_slack_message(n)
+
+        text = mock_client.chat_postMessage.call_args_list[0].kwargs['text']
+        assert 'Assigned to: alice' in text
+        assert '<@' not in text
+
+    def test_assignee_without_slack_skips_lookup(self, app):
+        """AC 15: assignee_has_slack=False => users_lookupByEmail not called, plain username used."""
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test-token'
+        n = _create_notification(
+            notification_type='slack_message',
+            target='#woodshop',
+            payload={'event_type': 'assignee_changed', 'equipment_name': 'SawStop',
+                     'area_name': 'Woodshop', 'old_assignee_username': None,
+                     'assignee_username': 'alice', 'assignee_email': 'alice@example.com',
+                     'assignee_has_slack': False},
+        )
+
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        with patch('slack_sdk.WebClient', return_value=mock_client):
+            notification_service._deliver_slack_message(n)
+
+        mock_client.users_lookupByEmail.assert_not_called()
+        text = mock_client.chat_postMessage.call_args_list[0].kwargs['text']
+        assert 'Assigned to: alice' in text
+
+    def test_delivery_does_not_mutate_persisted_payload(self, app):
+        """AC 19: the persisted PendingNotification.payload never gains assignee_display."""
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test-token'
+        n = _create_notification(
+            notification_type='slack_message',
+            target='#woodshop',
+            payload={'event_type': 'assignee_changed', 'equipment_name': 'SawStop',
+                     'area_name': 'Woodshop', 'old_assignee_username': None,
+                     'assignee_username': 'alice', 'assignee_email': 'alice@example.com',
+                     'assignee_has_slack': True},
+        )
+
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        mock_client.users_lookupByEmail.return_value = {'user': {'id': 'U999'}}
+        with patch('slack_sdk.WebClient', return_value=mock_client):
+            notification_service._deliver_slack_message(n)
+
+        assert 'assignee_display' not in n.payload
+        # Re-fetch from the DB to be certain nothing was persisted.
+        _db.session.expire_all()
+        refetched = _db.session.get(PendingNotification, n.id)
+        assert 'assignee_display' not in refetched.payload
+
 
 class TestFormatSlackMessage:
     """Tests for _format_slack_message()."""
@@ -1106,6 +1226,157 @@ class TestFormatSlackMessage:
 
         assert 'SAFETY RISK' not in text
         assert ':rotating_light:' in text
+
+    def test_assignee_changed_assigned_format(self):
+        """assignee_changed with no previous assignee: 'Assigned to: {display}'."""
+        text, blocks = notification_service._format_slack_message({
+            'event_type': 'assignee_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_assignee_username': None,
+            'assignee_username': 'alice',
+            'assignee_display': '<@U123>',
+        })
+        assert text == (
+            ':bust_in_silhouette: Assignee changed: *SawStop* (Woodshop)\n'
+            'Assigned to: <@U123>'
+        )
+        assert blocks is None
+
+    def test_assignee_changed_reassigned_format(self):
+        """assignee_changed reassignment: 'Reassigned: {old} -> {display}'."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'assignee_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_assignee_username': 'bob',
+            'assignee_username': 'alice',
+            'assignee_display': '<@U123>',
+        })
+        assert text == (
+            ':bust_in_silhouette: Assignee changed: *SawStop* (Woodshop)\n'
+            'Reassigned: bob -> <@U123>'
+        )
+
+    def test_assignee_changed_unassigned_format(self):
+        """assignee_changed unassignment: 'Unassigned (was {old})'."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'assignee_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_assignee_username': 'bob',
+            'assignee_username': None,
+        })
+        assert text == (
+            ':bust_in_silhouette: Assignee changed: *SawStop* (Woodshop)\n'
+            'Unassigned (was bob)'
+        )
+
+    def test_status_changed_enriched_assigned(self):
+        """Enriched status_changed appends 'Assigned to: {display}' (no previous)."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'status_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_status': 'New',
+            'new_status': 'Assigned',
+            'old_assignee_username': None,
+            'assignee_username': 'alice',
+            'assignee_display': '<@U123>',
+        })
+        assert text == (
+            ':arrows_counterclockwise: Status changed: *SawStop* (Woodshop)\n'
+            'New -> Assigned\n'
+            'Assigned to: <@U123>'
+        )
+
+    def test_status_changed_enriched_reassigned(self):
+        """Enriched status_changed reassignment appends 'Assigned to: {display} (was {old})'."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'status_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_status': 'Assigned',
+            'new_status': 'In Progress',
+            'old_assignee_username': 'bob',
+            'assignee_username': 'alice',
+            'assignee_display': '<@U123>',
+        })
+        assert text == (
+            ':arrows_counterclockwise: Status changed: *SawStop* (Woodshop)\n'
+            'Assigned -> In Progress\n'
+            'Assigned to: <@U123> (was bob)'
+        )
+
+    def test_status_changed_enriched_unassigned(self):
+        """Enriched status_changed unassignment appends 'Unassigned (was {old})'."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'status_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_status': 'Assigned',
+            'new_status': 'In Progress',
+            'old_assignee_username': 'bob',
+            'assignee_username': None,
+        })
+        assert text == (
+            ':arrows_counterclockwise: Status changed: *SawStop* (Woodshop)\n'
+            'Assigned -> In Progress\n'
+            'Unassigned (was bob)'
+        )
+
+    def test_status_changed_without_assignee_keys_unchanged(self):
+        """Regression guard: status_changed with no assignee keys is byte-identical to legacy output."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'status_changed',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'old_status': 'New',
+            'new_status': 'In Progress',
+        })
+        assert text == (
+            ':arrows_counterclockwise: Status changed: *SawStop* (Woodshop)\n'
+            'New -> In Progress'
+        )
+
+    def test_new_report_enriched_with_assignee(self):
+        """new_report with assignee keys appends 'Assigned to: {display}'."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'new_report',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'severity': 'Down',
+            'description': 'Broken',
+            'reporter_name': 'John',
+            'has_safety_risk': False,
+            'old_assignee_username': None,
+            'assignee_username': 'alice',
+            'assignee_display': '<@U123>',
+        })
+        assert text == (
+            ':rotating_light: New problem report: *SawStop* (Woodshop)\n'
+            'Severity: Down | Reported by: John\n'
+            'Broken\n'
+            'Assigned to: <@U123>'
+        )
+
+    def test_new_report_without_assignee_unchanged(self):
+        """new_report without assignee keys is unchanged (no trailing Assigned line)."""
+        text, _ = notification_service._format_slack_message({
+            'event_type': 'new_report',
+            'equipment_name': 'SawStop',
+            'area_name': 'Woodshop',
+            'severity': 'Down',
+            'description': 'Broken',
+            'reporter_name': 'John',
+            'has_safety_risk': False,
+        })
+        assert 'Assigned to:' not in text
+        assert text == (
+            ':rotating_light: New problem report: *SawStop* (Woodshop)\n'
+            'Severity: Down | Reported by: John\n'
+            'Broken'
+        )
 
     def test_unknown_event_type_fallback(self):
         """Unknown event type returns generic message."""

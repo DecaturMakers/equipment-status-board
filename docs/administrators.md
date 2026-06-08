@@ -270,17 +270,20 @@ After installation:
 
 ### Notification Trigger Configuration
 
-Slack outbound notifications are governed by per-event app-config keys. Each is a boolean stored in `app_config` (string `'true'` / `'false'`) and toggled via the admin UI at **Admin → App Configuration**. All five default to `'true'`, so a fresh deployment inherits notifications automatically.
+Slack outbound notifications are governed by per-event app-config keys. Each is a boolean stored in `app_config` (string `'true'` / `'false'`) and toggled via the admin UI at **Admin → App Configuration**. All six default to `'true'`, so a fresh deployment inherits notifications automatically.
 
 | Config key | Default | Fires on |
 |------------|---------|----------|
-| `notify_new_report` | `'true'` | A new problem report is filed (member or technician path). |
-| `notify_resolved` | `'true'` | A repair record's status transitions to a closed status (`Resolved`, `Closed - Duplicate`, `Closed - No Issue Found`). |
+| `notify_new_report` | `'true'` | A new problem report is filed (member or technician path). If the repair is created already assigned, the message gains an `Assigned to:` line. |
+| `notify_resolved` | `'true'` | A repair record's status transitions to a closed status (`Resolved`, `Closed - Duplicate`, `Closed - No Issue Found`). Assignee changes in the same update are never appended here. |
 | `notify_severity_changed` | `'true'` | A repair record's severity level changes. |
-| `notify_status_changed` | `'true'` | A repair record's status changes between **open** states (e.g., `New` → `In Progress`, `Assigned` → `Parts Needed`). Closed-status transitions go through `notify_resolved` instead, so disabling this key does not silence resolutions. |
+| `notify_status_changed` | `'true'` | A repair record's status changes between **open** states (e.g., `New` → `In Progress`, `Assigned` → `Parts Needed`). Closed-status transitions go through `notify_resolved` instead, so disabling this key does not silence resolutions. When the assignee also changes in the same update, the assignee is folded into this `status_changed` message rather than firing a separate `notify_assignee_changed`. |
+| `notify_assignee_changed` | `'true'` | A repair record's assignee changes (assignment, reassignment, or unassignment) **without** an accompanying open-status change. The new assignee is rendered as a real Slack mention when they have a Slack handle, falling back to their username. |
 | `notify_eta_updated` | `'true'` | A repair record's ETA is set or changed. |
 
 If `notify_resolved` is `'false'` AND a status transition lands on a closed status, no notification fires — the elif-structure does NOT fall through to `status_changed`.
+
+One deliberate fall-through exists for assignment visibility: if an open-status change and an assignee change happen in the **same** update but `notify_status_changed` is `'false'`, the assignee change is not silently lost — it falls through to a `notify_assignee_changed` notification instead (so assignment visibility is always governed by its own toggle). Disable both `notify_status_changed` and `notify_assignee_changed` to silence such combined updates entirely.
 
 ## Static Status Page Setup
 
