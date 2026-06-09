@@ -1,6 +1,6 @@
 # Equipment Status Board
 
-The Equipment Status Board (ESB) is a web application for tracking equipment status and coordinating repairs at [Decatur Makers](https://decaturmakers.org), a 501(c)(3) non-profit makerspace with approximately 600 members and 24/7 access.
+The Equipment Status Board (ESB) is a web application for tracking equipment status and coordinating repairs at [{{ org_name }}]({{ org_url }}){% if org_blurb %}, {{ org_blurb }}{% endif %}.
 
 ## What is the Equipment Status Board?
 
@@ -28,6 +28,7 @@ A large-screen display mode designed for wall-mounted monitors or projectors in 
 
 A lightweight status page that can be hosted externally (e.g., on S3) for checking equipment status from anywhere, even outside the local network.
 
+{% if slack_enabled %}
 ### Slack Integration
 
 Report problems, check equipment status, and create and triage repairs — all from Slack without leaving the conversation.
@@ -35,6 +36,7 @@ Report problems, check equipment status, and create and triage repairs — all f
 - `/esb-report` — Report a problem with any piece of equipment
 - `/esb-status` — Check status of all equipment or a specific item
 - `/esb-repair` — Dispatcher for open repairs (no args) or create a new repair record (with an equipment name)
+{% endif %}
 
 ### Repair Workflow
 

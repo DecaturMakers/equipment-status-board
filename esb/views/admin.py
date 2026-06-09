@@ -250,6 +250,8 @@ def app_config():
     """App configuration page."""
     from esb.services import config_service
 
+    from esb.services import docs_service
+
     form = AppConfigForm()
     if request.method == 'GET':
         form.tech_doc_edit_enabled.data = (
@@ -320,6 +322,9 @@ def app_config():
                 log_old_override=('***' if current_pw else ''),
                 log_new_override='***',
             )
+        # WiFi settings feed the built-in /docs/ guides, whose rendered HTML is
+        # cached per-app; drop the cache so the next docs view reflects changes.
+        docs_service.invalidate_page_cache()
         flash('Configuration updated successfully.', 'success')
         return redirect(url_for('admin.app_config'))
 

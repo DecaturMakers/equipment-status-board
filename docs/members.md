@@ -1,6 +1,6 @@
 # Members Guide
 
-This guide is for anyone who uses the makerspace. You do not need an account or login to use any of the features described here. Everything works by simply visiting a web page or using a Slack command.
+This guide is for anyone who uses the makerspace. You do not need an account or login to use any of the features described here. Everything works by simply visiting a web page{% if slack_enabled %} or using a Slack command{% endif %}.
 
 ## Checking Equipment Status
 
@@ -14,22 +14,23 @@ The Status Dashboard shows every piece of tracked equipment organized by area (e
 - **Yellow / Degraded** — Equipment works but has a known problem, or the severity hasn't been determined yet
 - **Red / Down** — Equipment is not usable
 
-Navigate to the Equipment Status Board URL in your browser to see the dashboard. No login is required.
+Go to {{ base_url_display }} in your browser to see the dashboard. No login is required.
 
 ![Status Dashboard](images/status-dashboard.png)
 
+{% if static_page_enabled %}
 ### Static Status Page (Remote Access)
 
-A lightweight version of the status dashboard is available at a separate public URL that can be accessed from anywhere, even outside the makerspace network. This page is automatically updated whenever equipment status changes.
+A lightweight version of the status dashboard is available {% if static_page_url %}at [{{ static_page_url }}]({{ static_page_url }}){% else %}at a separate public URL — ask a staff member for it if you don't have it{% endif %} that can be accessed from anywhere, even outside the makerspace network. This page is automatically updated whenever equipment status changes.
 
-Ask a staff member for the static status page URL if you don't have it.
-
+{% endif %}
 ### Kiosk Display (In the Space)
 
 Large-screen displays mounted in the makerspace show a full-width status grid that's readable from across the room. These displays auto-refresh every 60 seconds, so the status is always current. You don't need to interact with them — just look up.
 
 ![Kiosk Display](images/kiosk-display.png)
 
+{% if qr_enabled %}
 ## Using QR Code Equipment Pages
 
 Every tracked piece of equipment has a QR code sticker on it. This is the fastest way to check on a specific tool or machine.
@@ -37,6 +38,8 @@ Every tracked piece of equipment has a QR code sticker on it. This is the fastes
 ### How to Scan
 
 Point your phone's camera at the QR code sticker on the equipment. Your phone will show a link — tap it to open the equipment page in your browser. No app is needed.
+
+{% if wifi_configured %}You must be connected to the **{{ wifi_ssid }}** WiFi network for the link to open — the equipment pages are served on the makerspace network.{% else %}You must be connected to the makerspace WiFi for the link to open — the equipment pages are served on the local network.{% endif %}
 
 ### What You'll See
 
@@ -60,11 +63,12 @@ If your issue is already listed, there's no need to report it again.
 ### Accessing Equipment Documentation
 
 Below the status information, you'll find an "Equipment Info" section with links to documentation such as owner's manuals, quick start guides, training materials, and other helpful resources uploaded by staff or technicians.
-
+{% endif %}
 ## Reporting a Problem
 
 If you find a piece of equipment that's broken or not working properly, and the issue isn't already listed under "Known Issues," please report it. Problem reports go directly to the repair queue so technicians can address them.
 
+{% if qr_enabled %}
 ### Reporting via QR Code Page
 
 1. Scan the QR code on the equipment to open its page
@@ -77,10 +81,11 @@ If you find a piece of equipment that's broken or not working properly, and the 
     - **Photo** (optional) — Attach a photo showing the issue
 4. Tap the submit button
 
-You'll see a confirmation page with a link to the Slack channel where repairs for that area are discussed.
+You'll see a confirmation page{% if slack_enabled %} with a link to the Slack channel where repairs for that area are discussed{% endif %}.
 
 ![Problem Report Form](images/problem-report-form-mobile.png)
-
+{% endif %}
+{% if slack_enabled %}
 ### Reporting via Slack
 
 You can also report problems from Slack using the `/esb-report` command:
@@ -90,14 +95,16 @@ You can also report problems from Slack using the `/esb-report` command:
 3. Submit the form
 
 The repair record is created immediately and technicians are notified.
+{% endif %}
 
 ### What Happens After You Report
 
 - A repair record is created in the system
 - The equipment status updates on the dashboard, QR page, and kiosk displays
-- Technicians are notified via Slack (if notifications are enabled)
-- You can check back on the QR code page anytime to see the current repair status
+{% if slack_enabled %}- Technicians are notified via Slack (if notifications are enabled)
+{% endif %}- You can check back on the QR code page anytime to see the current repair status
 
+{% if slack_enabled %}
 ## Checking Status via Slack
 
 If you'd rather check equipment status from Slack:
@@ -105,7 +112,7 @@ If you'd rather check equipment status from Slack:
 - **`/esb-status`** — Shows a summary of all areas. For each area you also get a bulleted list of any equipment that is currently degraded or down, with a brief description and ETA when known. The summary ends with a tip pointing at `/esb-status <area name>` for one-area detail.
 - **`/esb-status [area name]`** — Shows the full status of one area: every piece of equipment, plus the issue / ETA / assignee for any non-green item (e.g., `/esb-status Woodshop`). Area-name match takes precedence over equipment-name search, so an area named `Woodshop` always wins over an equipment name that contains `Woodshop`.
 - **`/esb-status [equipment name]`** — When the argument doesn't match an area name exactly, it falls back to equipment search. Shows the status of a specific piece of equipment (e.g., `/esb-status SawStop`).
-
+{% endif %}
 ## Understanding Status Colors
 
 | Color | Status | What It Means |

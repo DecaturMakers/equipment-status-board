@@ -150,10 +150,180 @@ class TestDocsInterpolation:
 
     def test_custom_oops_channel_rendered(self, app, client):
         # Set BEFORE first render (cache is per-app, populated on first GET).
+        # The oops-channel placeholder lives in the Slack-gated Notification
+        # Triggers section, so Slack must be enabled for it to render.
         app.config['SLACK_OOPS_CHANNEL'] = '#custom-chan'
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test'
+        app.config['SLACK_APP_TOKEN'] = 'xapp-test'
         html = client.get('/docs/staff').data.decode()
         assert '#custom-chan' in html
         assert '#oops' not in html
+
+
+# Config that flips each gated feature on. Slack needs BOTH tokens.
+SLACK_ON = {'SLACK_BOT_TOKEN': 'xoxb-x', 'SLACK_APP_TOKEN': 'xapp-x'}
+QR_ON = {'ESB_BASE_URL': 'https://esb.example.com'}
+STATIC_ON = {'STATIC_PAGE_PUBLIC_URL': 'https://status.example.com/'}
+
+
+def _render(slug, overrides):
+    """Render a guide in a fresh app so per-app caching never leaks config.
+
+    Config must be set before the first GET (the render cache is populated on
+    first request and assumes startup-fixed config).
+    """
+    app = create_app('testing')
+    app.config.update(overrides)
+    return app.test_client().get(GUIDE_PATHS[slug]).data.decode()
+
+
+class TestDocsFeatureGating:
+    """Feature sections appear only when the feature is actually configured."""
+
+    def test_slack_sections_hidden_when_disabled(self):
+        html = _render('members', {})
+        assert '/esb-status' not in html
+        assert 'Checking Status via Slack' not in html
+
+    def test_slack_sections_shown_when_enabled(self):
+        html = _render('members', SLACK_ON)
+        assert '/esb-status' in html
+        assert 'Checking Status via Slack' in html
+
+    def test_technician_slack_flows_gated(self):
+        assert 'Using Slack Commands' not in _render('technicians', {})
+        assert 'Using Slack Commands' in _render('technicians', SLACK_ON)
+
+    def test_index_slack_feature_gated(self):
+        assert '/esb-repair' not in _render('index', {})
+        assert '/esb-repair' in _render('index', SLACK_ON)
+
+    def test_qr_section_hidden_when_base_url_unset(self):
+        assert 'Using QR Code Equipment Pages' not in _render('members', {})
+
+    def test_qr_section_shown_when_base_url_set(self):
+        assert 'Using QR Code Equipment Pages' in _render('members', QR_ON)
+
+    def test_static_page_section_gated_on_members(self):
+        assert 'Static Status Page' not in _render('members', {})
+        assert 'Static Status Page' in _render('members', STATIC_ON)
+
+    def test_static_page_section_gated_on_staff(self):
+        # STATIC_PAGE_PUBLIC_URL governs both the Members and Staff guides.
+        assert 'Static Status Page' not in _render('staff', {})
+        assert 'Static Status Page' in _render('staff', STATIC_ON)
+
+
+class TestDocsValueSubstitution:
+    """Installation-specific values replace the old generic phrases."""
+
+    def test_base_url_substituted_when_set(self):
+        assert 'https://esb.example.com' in _render('members', QR_ON)
+
+    def test_base_url_fallback_phrase_when_unset(self):
+        html = _render('members', {})
+        assert 'the Equipment Status Board URL provided by your makerspace' in html
+
+    def test_static_page_url_rendered(self):
+        assert 'https://status.example.com/' in _render('members', STATIC_ON)
+
+    def test_qr_disabled_notice_only_when_disabled(self):
+        assert 'ESB_BASE_URL not configured' in _render('staff', {})
+        assert 'ESB_BASE_URL not configured' not in _render('staff', QR_ON)
+
+
+class TestDocsBranding:
+    """Org name/URL/blurb are configurable (defaults preserve current text)."""
+
+    def test_org_defaults_rendered(self):
+        html = _render('index', {})
+        assert 'Decatur Makers' in html
+        assert 'https://decaturmakers.org' in html
+        assert '600 members' in html
+
+    def test_org_overridden(self):
+        html = _render('index', {
+            'ORG_NAME': 'Acme Makerspace',
+            'ORG_URL': 'https://acme.example.org',
+            'ORG_BLURB': '',
+        })
+        assert 'Acme Makerspace' in html
+        assert 'https://acme.example.org' in html
+        assert 'Decatur Makers' not in html
+        assert '600 members' not in html  # blurb omitted when empty
+
+
+class TestDocsWifiCacheInvalidation:
+    """WiFi SSID is DB-backed and mutable; the page cache must be evictable."""
+
+    def test_wifi_ssid_reflected_after_invalidation(self, app, client):
+        from esb.services import config_service, docs_service
+
+        # QR section (which contains the WiFi note) must be enabled.
+        app.config['ESB_BASE_URL'] = 'https://esb.example.com'
+        first = client.get('/docs/members').data.decode()
+        assert 'makerspace WiFi' in first  # generic branch, no SSID configured
+        assert 'DM-Members' not in first
+
+        with app.app_context():
+            config_service.set_config('wifi_ssid', 'DM-Members', changed_by='test')
+            docs_service.invalidate_page_cache()
+
+        second = client.get('/docs/members').data.decode()
+        assert 'DM-Members' in second
+
+    def test_invalidate_preserves_version_meta(self, app, client):
+        """invalidate_page_cache() drops page renders but not the cached
+        version (an env-immutable ('meta', 'version') entry)."""
+        from esb.services import docs_service
+
+        client.get('/docs/about')  # populates ('meta', 'version')
+        client.get('/docs/staff')  # populates ('page', 'staff')
+        with app.app_context():
+            docs_service.invalidate_page_cache()
+            cache = app.extensions['docs_cache']
+            assert ('meta', 'version') in cache
+            assert not any(k[0] == 'page' for k in cache)
+
+    def test_invalidate_swaps_dict_leaving_old_intact(self, app, client):
+        """invalidate_page_cache() replaces the dict rather than mutating in
+        place, so a concurrent reader holding the old reference never sees a
+        key vanish mid-lookup (the 2-thread-worker race)."""
+        from esb.services import docs_service
+
+        client.get('/docs/staff')  # populates ('page', 'staff')
+        with app.app_context():
+            old = app.extensions['docs_cache']
+            docs_service.invalidate_page_cache()
+            assert app.extensions['docs_cache'] is not old  # swapped, not mutated
+            assert ('page', 'staff') in old  # old reference still complete
+
+
+class TestDocsWifiQueryResilience:
+    """A missing/failed app_config query must not 500 the public docs."""
+
+    def test_missing_app_config_table_fails_safe_and_logs(self, caplog):
+        docs_service._wifi_query_failed_once = False  # reset per-process latch
+        app = create_app('testing')  # tables deliberately NOT created
+        with caplog.at_level('WARNING', logger='esb.services.docs_service'):
+            resp = app.test_client().get('/docs/members')
+        assert resp.status_code == 200  # fail-safe, not a 500
+        assert any('wifi_ssid' in r.message for r in caplog.records)
+
+
+class TestDocsPlaceholderParity:
+    """Drift guard: every runtime placeholder has a mkdocs.yml extra default."""
+
+    def test_mkdocs_extra_keys_match_placeholder_values(self):
+        import yaml
+
+        app = create_app('testing')
+        with app.app_context():
+            runtime_keys = set(docs_service.get_placeholder_values().keys())
+        mkdocs_path = Path(__file__).resolve().parents[2] / 'mkdocs.yml'
+        with open(mkdocs_path) as fh:
+            extra_keys = set(yaml.safe_load(fh)['extra'].keys())
+        assert runtime_keys == extra_keys
 
 
 class TestDocsAbout:
@@ -228,10 +398,12 @@ class TestDocsCache:
     """Render cache is per-app, not module-level."""
 
     def test_cache_isolated_between_apps(self):
+        # Slack enabled so the oops-channel placeholder (in the Slack-gated
+        # Notification Triggers section) actually renders.
         app_a = create_app('testing')
-        app_a.config['SLACK_OOPS_CHANNEL'] = '#chan-a'
+        app_a.config.update(SLACK_BOT_TOKEN='x', SLACK_APP_TOKEN='x', SLACK_OOPS_CHANNEL='#chan-a')
         app_b = create_app('testing')
-        app_b.config['SLACK_OOPS_CHANNEL'] = '#chan-b'
+        app_b.config.update(SLACK_BOT_TOKEN='x', SLACK_APP_TOKEN='x', SLACK_OOPS_CHANNEL='#chan-b')
 
         html_a = app_a.test_client().get('/docs/staff').data.decode()
         html_b = app_b.test_client().get('/docs/staff').data.decode()

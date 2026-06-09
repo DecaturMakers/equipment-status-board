@@ -6,7 +6,7 @@ This guide is for volunteer repair technicians. You'll learn how to work with th
 
 ### Logging In
 
-Navigate to the Equipment Status Board URL in your browser and enter the username and password provided to you by a staff member.
+Go to {{ base_url_display }} in your browser and enter the username and password provided to you by a staff member.
 
 ### Changing Your Password
 
@@ -132,11 +132,11 @@ You can make multiple changes at once — update the status, add a note, change 
 
 ### Via Web
 
-1. Navigate to Repairs > New in the navigation bar
-2. Select the equipment from the dropdown
-3. Fill in the description, severity, and any other details
-4. Click Save
+1. Click **Equipment** in the navigation bar, open the affected item's detail page, and click **Report Issue** — this opens the Create Repair Record form with that equipment already selected
+2. Fill in the description, severity, and any other details
+3. Click Save
 
+{% if slack_enabled %}
 ### Via Slack — two distinct flows
 
 `/esb-repair` does two things depending on whether you give it an argument.
@@ -183,7 +183,7 @@ Outbound notifications and ephemeral messages start with a small fixed legend so
 - `:calendar:` — ETA set or changed.
 - `:white_check_mark:` — repair resolved or closed (any closure: `Resolved`, `Closed - Duplicate`, `Closed - No Issue Found`). Also generic success confirmations.
 - `:x:` — error / not-found ephemeral messages.
-
+{% endif %}
 ## Viewing Equipment Details
 
 ### Equipment Registry

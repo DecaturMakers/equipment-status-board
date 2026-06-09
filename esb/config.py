@@ -49,7 +49,21 @@ class Config:
     SLACK_SOCKET_MODE_CONNECT = os.environ.get('SLACK_SOCKET_MODE_CONNECT', '')
     STATIC_PAGE_PUSH_METHOD = os.environ.get('STATIC_PAGE_PUSH_METHOD', 'local')
     STATIC_PAGE_PUSH_TARGET = os.environ.get('STATIC_PAGE_PUSH_TARGET', '')
+    # Public URL where the pushed static status page is *served* to members. This
+    # is distinct from STATIC_PAGE_PUSH_TARGET (where the page is uploaded). Used
+    # only by the built-in /docs/ site: when set, the member/staff guides link
+    # the real URL; when empty, the static-page references are omitted.
+    STATIC_PAGE_PUBLIC_URL = os.environ.get('STATIC_PAGE_PUBLIC_URL', '')
     CLOUDFRONT_DISTRIBUTION_ID = os.environ.get('CLOUDFRONT_DISTRIBUTION_ID', '')
+    # Organization branding surfaced in the built-in /docs/ site. Defaults match
+    # the upstream Decatur Makers deployment so an unconfigured instance renders
+    # unchanged; set these to re-brand the docs for another makerspace.
+    ORG_NAME = os.environ.get('ORG_NAME', 'Decatur Makers')
+    ORG_URL = os.environ.get('ORG_URL', 'https://decaturmakers.org')
+    ORG_BLURB = os.environ.get(
+        'ORG_BLURB',
+        'a 501(c)(3) non-profit makerspace with approximately 600 members and 24/7 access',
+    )
     NEW_RELIC_LICENSE_KEY = os.environ.get('NEW_RELIC_LICENSE_KEY', '')
     NEW_RELIC_APP_NAME = os.environ.get('NEW_RELIC_APP_NAME', 'Equipment Status Board')
 

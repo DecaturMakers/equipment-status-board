@@ -33,9 +33,25 @@ plugins:
 
 # Generic default values rendered on the public GH Pages site where the docs
 # placeholders appear. Every key here MUST also exist in the docs service's
-# get_placeholder_values(); both renderers fail on drift.
+# get_placeholder_values(); both renderers fail on drift. Most feature booleans
+# default to `true` so the public reference site documents every feature, even
+# though a given live deployment may have some disabled. The exception is
+# `wifi_configured`, which defaults to `false`: with no real SSID to show, the
+# public site renders the generic "be on the makerspace WiFi" wording rather
+# than a placeholder network name.
 extra:
   oops_channel: '#oops'
+  base_url: ''
+  base_url_display: 'the Equipment Status Board URL provided by your makerspace'
+  static_page_url: ''
+  wifi_ssid: ''
+  org_name: 'Decatur Makers'
+  org_url: 'https://decaturmakers.org'
+  org_blurb: 'a 501(c)(3) non-profit makerspace with approximately 600 members and 24/7 access'
+  qr_enabled: true
+  slack_enabled: true
+  static_page_enabled: true
+  wifi_configured: false
 
 markdown_extensions:
   - toc:
