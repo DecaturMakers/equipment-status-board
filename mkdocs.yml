@@ -33,9 +33,12 @@ plugins:
 
 # Generic default values rendered on the public GH Pages site where the docs
 # placeholders appear. Every key here MUST also exist in the docs service's
-# get_placeholder_values(); both renderers fail on drift. The feature booleans
+# get_placeholder_values(); both renderers fail on drift. Most feature booleans
 # default to `true` so the public reference site documents every feature, even
-# though a given live deployment may have some disabled.
+# though a given live deployment may have some disabled. The exception is
+# `wifi_configured`, which defaults to `false`: with no real SSID to show, the
+# public site renders the generic "be on the makerspace WiFi" wording rather
+# than a placeholder network name.
 extra:
   oops_channel: '#oops'
   base_url: ''
