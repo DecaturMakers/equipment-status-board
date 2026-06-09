@@ -161,11 +161,16 @@ def invalidate_page_cache():
     ``('page', …)`` entries are dropped; the ``('meta', 'version')`` entry (env-
     immutable) is left intact. Safe no-op if nothing has been cached yet.
     """
-    cache = current_app.extensions.get('docs_cache')
+    ext = current_app.extensions
+    cache = ext.get('docs_cache')
     if not cache:
         return
-    for key in [k for k in cache if k[0] == 'page']:
-        del cache[key]
+    # Replace the dict atomically rather than deleting keys in place. A
+    # concurrent render_page()/get_version() holds its own reference to the old
+    # dict and keeps reading from it safely (no check-then-delete KeyError race
+    # on a 2-thread gunicorn worker), and overlapping invalidations cannot
+    # double-delete. The ('meta', 'version') entry (env-immutable) is preserved.
+    ext['docs_cache'] = {k: v for k, v in cache.items() if k[0] != 'page'}
 
 
 def _file_to_slug():
@@ -208,8 +213,12 @@ def render_page(slug):
 
     cache = current_app.extensions.setdefault('docs_cache', {})
     cache_key = ('page', slug)
-    if cache_key in cache:
-        return cache[cache_key]
+    # Atomic single-dict lookup: invalidate_page_cache() may swap the cache dict
+    # out concurrently, so a check-then-index would risk a KeyError. dict.get()
+    # is atomic under the GIL and a miss simply re-renders.
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     path = get_docs_dir() / meta['file']
     text = path.read_text(encoding='utf-8')  # OSError propagates → 500
@@ -241,8 +250,9 @@ def get_version():
     """
     cache = current_app.extensions.setdefault('docs_cache', {})
     cache_key = ('meta', 'version')
-    if cache_key in cache:
-        return cache[cache_key]
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         with open(_pyproject_path(), 'rb') as fh:

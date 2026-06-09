@@ -285,6 +285,19 @@ class TestDocsWifiCacheInvalidation:
             assert ('meta', 'version') in cache
             assert not any(k[0] == 'page' for k in cache)
 
+    def test_invalidate_swaps_dict_leaving_old_intact(self, app, client):
+        """invalidate_page_cache() replaces the dict rather than mutating in
+        place, so a concurrent reader holding the old reference never sees a
+        key vanish mid-lookup (the 2-thread-worker race)."""
+        from esb.services import docs_service
+
+        client.get('/docs/staff')  # populates ('page', 'staff')
+        with app.app_context():
+            old = app.extensions['docs_cache']
+            docs_service.invalidate_page_cache()
+            assert app.extensions['docs_cache'] is not old  # swapped, not mutated
+            assert ('page', 'staff') in old  # old reference still complete
+
 
 class TestDocsPlaceholderParity:
     """Drift guard: every runtime placeholder has a mkdocs.yml extra default."""
