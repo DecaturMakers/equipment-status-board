@@ -6,7 +6,7 @@ This guide is for makerspace managers with the Staff role. You have full access 
 
 ### Logging In
 
-Navigate to the Equipment Status Board URL and log in with your username and password. After logging in, you land on the **Kanban Board** — your primary tool for monitoring repair activity.
+Go to {{ base_url_display }} and log in with your username and password. After logging in, you land on the **Kanban Board** — your primary tool for monitoring repair activity.
 
 ### Navigation
 
@@ -135,7 +135,7 @@ Each piece of equipment can have a printable QR code label attached to it. When 
 
 ### Who can generate QR codes
 
-Any logged-in user (Staff or Technician) can generate QR codes from the equipment detail page. The feature is only available when an administrator has set the `ESB_BASE_URL` environment variable — see the [Administrators Guide](administrators.md) for details. If the button is disabled with the tooltip "ESB_BASE_URL not configured", contact an administrator.
+Any logged-in user (Staff or Technician) can generate QR codes from the equipment detail page.{% if not qr_enabled %} **This feature is currently disabled** because the `ESB_BASE_URL` environment variable is not set — the **Generate QR Code** button is disabled with the tooltip "ESB_BASE_URL not configured". Ask an administrator to set it (see the [Administrators Guide](administrators.md)) to enable QR codes.{% endif %}
 
 ### Generating a QR code label
 
@@ -161,18 +161,18 @@ When someone scans a printed QR label, they see the public equipment status page
 
 ## Managing Areas
 
-Navigate to **Admin > Areas** to manage the areas (rooms/zones) of the makerspace.
+Click **Admin** in the navigation bar, then the **Areas** tab, to manage the areas (rooms/zones) of the makerspace.
 
 ### Creating Areas
 
 1. Click **Add Area**
 2. Enter the area **name** (e.g., "Woodshop")
-3. Set the **Slack channel** for repair notifications for this area (e.g., `#woodshop-repairs`)
-4. Click Save
+{% if slack_enabled %}3. Set the **Slack channel** for repair notifications for this area (e.g., `#woodshop-repairs`)
+{% endif %}4. Click Save
 
 ### Editing Areas
 
-Click an area to change its name or Slack channel mapping.
+Click an area to change its name{% if slack_enabled %} or Slack channel mapping{% endif %}.
 
 ### Archiving Areas
 
@@ -180,7 +180,7 @@ Archive an area to remove it from active views. Existing equipment retains its a
 
 ## Managing Users
 
-Navigate to **Admin > Users** to manage technician and staff accounts.
+Click **Admin** in the navigation bar (it opens the **Users** tab) to manage technician and staff accounts.
 
 ### User List
 
@@ -215,12 +215,13 @@ Generate a new temporary password for a user. The password is delivered via the 
 
 ## Configuring the System
 
-Navigate to **Admin > Config** to adjust system-wide settings.
+Click **Admin** in the navigation bar, then the **Config** tab, to adjust system-wide settings.
 
 ### Technician Documentation Editing
 
 Toggle whether Technicians can edit equipment documentation (upload documents, photos, and add links). When disabled, only Staff can manage equipment documentation.
 
+{% if slack_enabled %}
 ### Notification Triggers
 
 Enable or disable which events trigger Slack notifications:
@@ -233,12 +234,12 @@ Enable or disable which events trigger Slack notifications:
 | ETA Updated | An ETA is set or changed on a repair |
 
 Notifications are sent to the area's configured Slack channel and to the `{{ oops_channel }}` channel (configurable via the `SLACK_OOPS_CHANNEL` environment variable).
-
+{% endif %}
 ![App Configuration](images/app-configuration.png)
 
 ## Working with Repairs
 
-Staff have full access to the Repair Queue (accessible via the **Repair Queue** link in the navigation bar). All repair record management capabilities described in the [Technicians Guide](technicians.md) apply to you as well — viewing the queue, managing records, adding notes, changing status, assigning, and using Slack commands.
+Staff have full access to the Repair Queue (accessible via the **Repair Queue** link in the navigation bar). All repair record management capabilities described in the [Technicians Guide](technicians.md) apply to you as well — viewing the queue, managing records, adding notes, changing status, assigning{% if slack_enabled %}, and using Slack commands{% endif %}.
 
 ## Understanding Status
 
@@ -248,4 +249,4 @@ Click **Status** in the navigation bar to see the color-coded equipment grid org
 
 ### Static Status Page
 
-The static status page is an externally hosted lightweight version of the status dashboard. It is automatically regenerated and pushed whenever equipment status changes. This allows members to check status from outside the makerspace network. Configuration of the static page push method is handled by an administrator via environment variables.
+The static status page is an externally hosted lightweight version of the status dashboard. It is automatically regenerated and pushed whenever equipment status changes. This allows members to check status from outside the makerspace network. Configuration of the static page push method is handled by an administrator via environment variables.{% if static_page_url %} On this deployment it is published at [{{ static_page_url }}]({{ static_page_url }}) — share that link with members who need to check status remotely.{% endif %}

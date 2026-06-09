@@ -22,6 +22,20 @@ content (e.g. the docker-inspect example in administrators.md) MUST be wrapped
 in ``{% raw %}``/``{% endraw %}`` — note ``{#...#}`` is a Jinja COMMENT
 delimiter that both renderers silently swallow rather than error on.
 
+Feature conditionals: beyond simple value substitution, the guides use Jinja
+``{% if feature_enabled %}…{% endif %}`` blocks to tailor the live site to what
+a deployment actually has configured (Slack, QR codes, the static status page,
+WiFi info). The booleans below derive from live config. On the public GitHub
+Pages build these booleans default to ``true`` in ``mkdocs.yml`` ``extra:`` so
+the general-reference site documents every feature.
+
+Cache & mutable config: rendered pages are cached per-app under ``('page',
+slug)`` keys. Most placeholder values come from env config fixed at startup, but
+the WiFi values come from the runtime-mutable ``app_config`` table. Whenever a
+docs-relevant ``AppConfig`` key changes, the admin config view calls
+``invalidate_page_cache()`` so the next render reflects the new value rather than
+serving stale HTML.
+
 Supported markdown extensions (runtime): ``tables``, ``fenced_code``,
 ``admonition``, ``toc`` — the only features the five guides use today.
 ``mkdocs.yml`` additionally enables ``pymdownx.details``,
@@ -94,11 +108,64 @@ def _pyproject_path():
 def get_placeholder_values():
     """Return the placeholder interpolation dict from live config.
 
-    Exactly one placeholder initially. This dict is the single extension point
-    for future placeholders; every key here MUST also exist in mkdocs.yml
-    ``extra:``.
+    This dict is the single extension point for placeholders and feature
+    conditionals; every key here MUST also exist in mkdocs.yml ``extra:`` (the
+    drift guard). ``oops_channel`` is read with ``[]`` (not ``.get``) so a
+    missing key fails loud — a deliberately tested invariant.
+
+    Values are derived from env config (fixed at startup) except the WiFi keys,
+    which come from the runtime-mutable ``app_config`` table; see
+    ``invalidate_page_cache()``.
     """
-    return {'oops_channel': current_app.config['SLACK_OOPS_CHANNEL']}
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from esb.extensions import db
+    from esb.services import config_service
+
+    cfg = current_app.config
+    base_url = cfg.get('ESB_BASE_URL', '')
+    static_page_url = cfg.get('STATIC_PAGE_PUBLIC_URL', '')
+    # The docs site is public and unauthenticated; it must stay up even on a
+    # fresh deployment that has not yet run `flask db upgrade` (no app_config
+    # table) or during a transient DB outage. Treat any DB failure as "WiFi not
+    # configured" rather than 500-ing every guide page.
+    try:
+        wifi_ssid = config_service.get_config('wifi_ssid', '')
+    except SQLAlchemyError:
+        db.session.rollback()
+        wifi_ssid = ''
+    return {
+        # Values
+        'oops_channel': cfg['SLACK_OOPS_CHANNEL'],
+        'base_url': base_url,
+        # Human-friendly fallback so an unset base URL never renders a broken
+        # sentence ("Navigate to  in your browser").
+        'base_url_display': base_url or 'the Equipment Status Board URL provided by your makerspace',
+        'static_page_url': static_page_url,
+        'wifi_ssid': wifi_ssid,
+        'org_name': cfg.get('ORG_NAME', ''),
+        'org_url': cfg.get('ORG_URL', ''),
+        'org_blurb': cfg.get('ORG_BLURB', ''),
+        # Feature conditionals
+        'qr_enabled': bool(base_url),
+        'slack_enabled': bool(cfg.get('SLACK_BOT_TOKEN') and cfg.get('SLACK_APP_TOKEN')),
+        'static_page_enabled': bool(static_page_url),
+        'wifi_configured': bool(wifi_ssid),
+    }
+
+
+def invalidate_page_cache():
+    """Evict cached rendered pages so the next render re-reads live config.
+
+    Call after a docs-relevant ``AppConfig`` change (WiFi settings). Only the
+    ``('page', …)`` entries are dropped; the ``('meta', 'version')`` entry (env-
+    immutable) is left intact. Safe no-op if nothing has been cached yet.
+    """
+    cache = current_app.extensions.get('docs_cache')
+    if not cache:
+        return
+    for key in [k for k in cache if k[0] == 'page']:
+        del cache[key]
 
 
 def _file_to_slug():
