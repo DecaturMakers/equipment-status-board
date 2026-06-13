@@ -182,12 +182,11 @@ class TestStatusDashboardView:
 
     @staticmethod
     def _assert_copyright_footer(body):
-        """Verify the new copyright footer text, both links, and absence of the old text."""
-        assert b'Jason Antman' in body
-        assert b'href="https://github.com/jantman/equipment-status-board"' in body
+        """Verify the copyright footer attribution and both links."""
+        assert b'Jason Antman / Decatur Makers' in body
+        assert b'href="https://github.com/DecaturMakers/equipment-status-board"' in body
         assert b'href="https://opensource.org/license/mit"' in body
         assert b'MIT licensed' in body
-        assert b'Decatur Makers' not in body
 
     def test_area_headings_displayed(self, staff_client, make_area, make_equipment):
         """Area names are displayed as section headings."""

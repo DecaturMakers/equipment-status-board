@@ -249,7 +249,9 @@ class TestDocsBranding:
         })
         assert 'Acme Makerspace' in html
         assert 'https://acme.example.org' in html
-        assert 'Decatur Makers' not in html
+        # Org branding (link + blurb) is overridden. The copyright footer's fixed
+        # "Jason Antman / Decatur Makers" attribution is intentionally NOT white-labeled.
+        assert 'https://decaturmakers.org' not in html
         assert '600 members' not in html  # blurb omitted when empty
 
 
@@ -336,8 +338,8 @@ class TestDocsAbout:
         with open(pyproject, 'rb') as fh:
             version = tomllib.load(fh)['project']['version']
         assert version in html
-        assert 'https://github.com/jantman/equipment-status-board/issues' in html
-        assert 'https://jantman.github.io/equipment-status-board/' in html
+        assert 'https://github.com/DecaturMakers/equipment-status-board/issues' in html
+        assert 'https://decaturmakers.github.io/equipment-status-board/' in html
 
 
 class TestDocsVersionFallback:

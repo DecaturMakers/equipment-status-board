@@ -393,7 +393,7 @@ class TestGenerate:
         assert 'Jason Antman' in html
         assert 'aria-label="Source code on GitHub"' in html
         assert 'aria-label="MIT License (opensource.org)"' in html
-        assert 'github.com/jantman/equipment-status-board' in html
+        assert 'github.com/DecaturMakers/equipment-status-board' in html
         assert 'MIT licensed' in html
         assert '<div class="footer">' not in html
 
@@ -436,7 +436,7 @@ class TestGenerate:
         # Sanity: the substrings we are pinning actually appear in the source.
         for needle in (
             'Jason Antman',
-            'https://github.com/jantman/equipment-status-board',
+            'https://github.com/DecaturMakers/equipment-status-board',
             'https://opensource.org/license/mit',
         ):
             assert needle in source
@@ -444,7 +444,7 @@ class TestGenerate:
         html = static_page_service.generate()
         for needle in (
             'Jason Antman',
-            'https://github.com/jantman/equipment-status-board',
+            'https://github.com/DecaturMakers/equipment-status-board',
             'https://opensource.org/license/mit',
         ):
             assert needle in html

@@ -1,6 +1,6 @@
 site_name: Equipment Status Board Documentation
 site_description: User guides and administrator documentation for the Equipment Status Board
-site_url: https://jantman.github.io/equipment-status-board/
+site_url: https://decaturmakers.github.io/equipment-status-board/
 
 theme:
   name: material

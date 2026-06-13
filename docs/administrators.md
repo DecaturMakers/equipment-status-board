@@ -16,7 +16,7 @@ Before you begin, ensure you have:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/jantman/equipment-status-board.git
+git clone https://github.com/DecaturMakers/equipment-status-board.git
 cd equipment-status-board
 ```
 

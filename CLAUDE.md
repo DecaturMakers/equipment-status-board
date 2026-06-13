@@ -79,7 +79,7 @@ Ruff with 120-char line length, target Python 3.13 (configured in `pyproject.tom
 
 Releases are fully automated by `.github/workflows/release.yml`, which runs on every push to `main`. The workflow reads the `version` field from `pyproject.toml`, compares it against the most recent GitHub release tag, and if the `pyproject.toml` version is strictly greater:
 
-1. Builds and pushes the Docker image to `ghcr.io/jantman/equipment-status-board` with both `:<version>` and `:latest` tags
+1. Builds and pushes the Docker image to `ghcr.io/decaturmakers/equipment-status-board` with both `:<version>` and `:latest` tags
 2. Creates the git tag `v<version>` and pushes it
 3. Creates a GitHub Release with auto-generated notes (from PR titles via `gh api releases/generate-notes`) and a Docker pull snippet
 
