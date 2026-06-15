@@ -190,6 +190,7 @@ cython_debug/
 
 # ESB application
 uploads/
+.local/
 
 # Ruff stuff:
 .ruff_cache/
