@@ -30,6 +30,19 @@ class User(UserMixin, db.Model):
         onupdate=lambda: datetime.now(UTC),
     )
 
+    reservations = db.relationship(
+        'Reservation',
+        foreign_keys='Reservation.user_id',
+        back_populates='user',
+        lazy='dynamic',
+    )
+    canceled_reservations = db.relationship(
+        'Reservation',
+        foreign_keys='Reservation.canceled_by_user_id',
+        back_populates='canceled_by_user',
+        lazy='dynamic',
+    )
+
     def set_password(self, password):
         """Hash and store the password using Werkzeug defaults (scrypt)."""
         self.password_hash = generate_password_hash(password)

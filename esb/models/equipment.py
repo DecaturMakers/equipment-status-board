@@ -36,6 +36,17 @@ class Equipment(db.Model):
 
     # Relationships
     area = db.relationship('Area', backref=db.backref('equipment', lazy='dynamic'))
+    reservation_settings = db.relationship(
+        'EquipmentReservationSettings',
+        back_populates='equipment',
+        uselist=False,
+        cascade='all, delete-orphan',
+    )
+    reservations = db.relationship(
+        'Reservation',
+        back_populates='equipment',
+        lazy='dynamic',
+    )
 
     def __repr__(self):
         return f'<Equipment {self.name!r}>'

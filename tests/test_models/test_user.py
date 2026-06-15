@@ -85,7 +85,6 @@ class TestUserUniqueConstraints:
             _db.session.commit()
         _db.session.rollback()
 
-
 class TestUserPassword:
     """Tests for password hashing and verification."""
 
