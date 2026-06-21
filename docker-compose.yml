@@ -32,6 +32,8 @@ services:
 
   db:
     image: mariadb:12.2.2
+    ports:
+      - "127.0.0.1:${ESB_DB_HOST_PORT:-3306}:3306"
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-esb_dev_password}
       MARIADB_DATABASE: esb

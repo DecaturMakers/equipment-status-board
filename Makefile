@@ -1,7 +1,12 @@
-.PHONY: help setup db-up migrate run worker test test-e2e lint docker-build docker-up screenshots
+.PHONY: help setup db-up migrate run dev worker test test-e2e lint docker-build docker-up docker-down screenshots
 
 VENV := venv
 FLASK_APP := esb:create_app
+MARIADB_ROOT_PASSWORD ?= esb_dev_password
+ESB_DB_HOST_PORT ?= 3306
+ESB_DEV_HOST_PORT ?= 5001
+LOCAL_DATABASE_URL := mysql+pymysql://root:$(MARIADB_ROOT_PASSWORD)@localhost:$(ESB_DB_HOST_PORT)/esb
+LOCAL_ESB_BASE_URL := http://localhost:$(ESB_DEV_HOST_PORT)
 
 .DEFAULT_GOAL := help
 
@@ -13,13 +18,18 @@ setup: ## Create venv and install dev requirements
 	$(VENV)/bin/pip install -r requirements-dev.txt
 
 db-up: ## Start the local database container
-	docker compose up -d db
+	docker compose up --wait --wait-timeout 60 db
 
 migrate: ## Run database migrations
 	FLASK_APP=$(FLASK_APP) $(VENV)/bin/flask db upgrade
 
 run: ## Run Flask dev server
 	FLASK_APP=$(FLASK_APP) $(VENV)/bin/flask run --debug
+
+dev: db-up ## Run Flask dev server with Docker DB and hot reload
+	docker compose stop app worker
+	DATABASE_URL=$(LOCAL_DATABASE_URL) FLASK_APP=$(FLASK_APP) $(VENV)/bin/flask db upgrade
+	DATABASE_URL=$(LOCAL_DATABASE_URL) ESB_BASE_URL=$(LOCAL_ESB_BASE_URL) SLACK_SOCKET_MODE_CONNECT=true FLASK_APP=$(FLASK_APP) FLASK_RUN_PORT=$(ESB_DEV_HOST_PORT) $(VENV)/bin/flask run --debug
 
 worker: ## Run notification worker
 	FLASK_APP=$(FLASK_APP) $(VENV)/bin/flask worker run
@@ -38,6 +48,9 @@ docker-build: ## Build Docker images
 
 docker-up: ## Start Docker Compose stack
 	docker compose up
+
+docker-down: ## Stop Docker Compose stack
+	docker compose down
 
 screenshots: ## Generate documentation screenshots
 	$(VENV)/bin/python -m playwright install chromium
