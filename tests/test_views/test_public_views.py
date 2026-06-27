@@ -6,7 +6,25 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from esb.extensions import db
+from esb.models.equipment_reservation_settings import EquipmentReservationSettings
 from esb.models.repair_record import RepairRecord
+
+
+def _reservation_settings(equipment, *, enabled=True):
+    settings = EquipmentReservationSettings(
+        equipment_id=equipment.id,
+        reservation_slug=f'{equipment.id}-dashboard',
+        reservations_enabled=enabled,
+        min_advance_notice_minutes=120,
+        max_advance_notice_minutes=14 * 24 * 60,
+        min_duration_minutes=30,
+        max_duration_minutes=120,
+        slot_granularity_minutes=30,
+    )
+    db.session.add(settings)
+    db.session.commit()
+    return settings
 
 
 def _main_element_classes(html: str) -> list[str]:
@@ -421,6 +439,27 @@ class TestStatusDashboardView:
             resp.data.decode(),
         )
         assert section_headings == ['Area B', 'Area C', 'Area A']
+
+    def test_dashboard_displays_reservation_summary_for_reservable_equipment(
+        self, client, make_area, make_equipment,
+    ):
+        area = make_area(name='Shop')
+        equipment = make_equipment(name='Reservable Tool', area=area)
+        _reservation_settings(equipment)
+
+        response = client.get('/public/')
+
+        assert b'Available now' in response.data
+
+    def test_dashboard_omits_reservation_summary_for_non_reservable_equipment(
+        self, client, make_area, make_equipment,
+    ):
+        area = make_area(name='Shop')
+        make_equipment(name='Ordinary Tool', area=area)
+
+        response = client.get('/public/')
+
+        assert b'Available now' not in response.data
 
 
 class TestKioskView:
