@@ -13,6 +13,7 @@ from esb.utils.exceptions import ValidationError
 
 ACTIVE_STATUS = "active"
 CANCELED_STATUS = "canceled"
+RESERVATION_POLICY_OVERRIDE_ROLES = ("staff", "technician")
 
 
 def list_reservable_equipment() -> list[Equipment]:
@@ -40,7 +41,7 @@ def get_public_availability(now=None) -> dict:
 
     for equipment in list_reservable_equipment():
         settings = equipment.reservation_settings
-        window_end = now_utc + timedelta(minutes=settings.advance_booking_window_minutes)
+        window_end = now_utc + timedelta(minutes=settings.max_advance_notice_minutes)
         reservations = _active_reservations_for_window(
             equipment.id,
             now_utc,
@@ -52,6 +53,8 @@ def get_public_availability(now=None) -> dict:
                 "name": equipment.name,
                 "reservation_slug": settings.reservation_slug,
                 "reservations_enabled": settings.reservations_enabled,
+                "min_advance_notice_minutes": settings.min_advance_notice_minutes,
+                "max_advance_notice_minutes": settings.max_advance_notice_minutes,
                 "min_duration_minutes": settings.min_duration_minutes,
                 "max_duration_minutes": settings.max_duration_minutes,
                 "slot_granularity_minutes": settings.slot_granularity_minutes,
@@ -87,11 +90,13 @@ def create_reservation(
     if user is None:
         raise ValidationError(f"User with id {user_id} not found")
 
+    can_override_policy = user.role in RESERVATION_POLICY_OVERRIDE_ROLES
     equipment = _get_equipment_for_update(equipment_id)
     starts_at, ends_at = _validate_reservation_request(
         equipment,
         starts_at_utc,
         duration_minutes,
+        can_override_policy=can_override_policy,
     )
 
     reservation = Reservation(
@@ -160,11 +165,21 @@ def _validate_reservation_request(
     equipment: Equipment,
     starts_at_utc: datetime,
     duration_minutes: int,
+    *,
+    can_override_policy: bool = False,
 ) -> tuple[datetime, datetime]:
     settings = _validate_reservable_equipment(equipment)
-    _validate_duration(duration_minutes, settings)
+    _validate_duration(
+        duration_minutes,
+        settings,
+        can_override_policy=can_override_policy,
+    )
     starts_at = _to_utc_naive(starts_at_utc)
-    _validate_start_time(starts_at, settings)
+    _validate_start_time(
+        starts_at,
+        settings,
+        can_override_policy=can_override_policy,
+    )
     ends_at = starts_at + timedelta(minutes=duration_minutes)
     conflict = (
         db.session.execute(
@@ -203,8 +218,12 @@ def _validate_reservable_equipment(
 
 
 def _validate_settings_policy(settings: EquipmentReservationSettings) -> None:
-    if settings.advance_booking_window_minutes <= 0:
-        raise ValidationError("Advance booking window must be greater than 0 minutes")
+    if settings.min_advance_notice_minutes < 0:
+        raise ValidationError("Minimum advance notice cannot be negative")
+    if settings.max_advance_notice_minutes <= 0:
+        raise ValidationError("Maximum advance notice must be greater than 0 minutes")
+    if settings.max_advance_notice_minutes < settings.min_advance_notice_minutes:
+        raise ValidationError("Maximum advance notice must be at least the minimum advance notice")
     if settings.min_duration_minutes <= 0:
         raise ValidationError("Minimum reservation duration must be greater than 0 minutes")
     if settings.max_duration_minutes < settings.min_duration_minutes:
@@ -220,10 +239,14 @@ def _validate_settings_policy(settings: EquipmentReservationSettings) -> None:
 def _validate_duration(
     duration_minutes: int,
     settings: EquipmentReservationSettings,
+    *,
+    can_override_policy: bool = False,
 ) -> None:
-    if duration_minutes < settings.min_duration_minutes:
+    if duration_minutes <= 0:
+        raise ValidationError("Reservation duration must be greater than 0 minutes")
+    if not can_override_policy and duration_minutes < settings.min_duration_minutes:
         raise ValidationError(f"Reservation must be at least {settings.min_duration_minutes} minutes")
-    if duration_minutes > settings.max_duration_minutes:
+    if not can_override_policy and duration_minutes > settings.max_duration_minutes:
         raise ValidationError(f"Reservation cannot exceed {settings.max_duration_minutes} minutes")
     if duration_minutes % settings.slot_granularity_minutes != 0:
         raise ValidationError(f"Duration must use {settings.slot_granularity_minutes}-minute increments")
@@ -232,14 +255,21 @@ def _validate_duration(
 def _validate_start_time(
     starts_at: datetime,
     settings: EquipmentReservationSettings,
+    *,
+    can_override_policy: bool = False,
 ) -> None:
     now = _utc_now()
     if starts_at < now:
         raise ValidationError("Reservation cannot start in the past")
 
-    latest_start = now + timedelta(minutes=settings.advance_booking_window_minutes)
-    if starts_at > latest_start:
-        raise ValidationError("Reservation is outside the advance booking window")
+    if not can_override_policy:
+        earliest_start = now + timedelta(minutes=settings.min_advance_notice_minutes)
+        if starts_at < earliest_start:
+            raise ValidationError("Reservation does not meet the minimum advance notice")
+
+        latest_start = now + timedelta(minutes=settings.max_advance_notice_minutes)
+        if starts_at > latest_start:
+            raise ValidationError("Reservation is outside the maximum advance notice")
 
     minutes_since_midnight = starts_at.hour * 60 + starts_at.minute
     if (

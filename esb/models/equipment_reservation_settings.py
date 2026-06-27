@@ -5,6 +5,10 @@ from datetime import UTC, datetime
 from esb.extensions import db
 
 
+DEFAULT_MIN_ADVANCE_NOTICE_MINUTES = 2 * 60
+DEFAULT_MAX_ADVANCE_NOTICE_MINUTES = 14 * 24 * 60
+
+
 class EquipmentReservationSettings(db.Model):
     """Scheduling settings for one reservable equipment item."""
 
@@ -16,7 +20,16 @@ class EquipmentReservationSettings(db.Model):
     )
     reservation_slug = db.Column(db.String(200), unique=True, nullable=False, index=True)
     reservations_enabled = db.Column(db.Boolean, default=True, nullable=False)
-    advance_booking_window_minutes = db.Column(db.Integer, nullable=False)
+    min_advance_notice_minutes = db.Column(
+        db.Integer,
+        default=DEFAULT_MIN_ADVANCE_NOTICE_MINUTES,
+        nullable=False,
+    )
+    max_advance_notice_minutes = db.Column(
+        db.Integer,
+        default=DEFAULT_MAX_ADVANCE_NOTICE_MINUTES,
+        nullable=False,
+    )
     min_duration_minutes = db.Column(db.Integer, nullable=False)
     max_duration_minutes = db.Column(db.Integer, nullable=False)
     slot_granularity_minutes = db.Column(db.Integer, nullable=False)

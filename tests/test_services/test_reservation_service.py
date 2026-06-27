@@ -10,6 +10,7 @@ from esb.models.equipment_reservation_settings import EquipmentReservationSettin
 from esb.models.reservation import Reservation
 from esb.services import reservation_service
 from esb.utils.exceptions import ValidationError
+from tests.conftest import _create_user
 
 
 FROZEN_NOW = datetime(2026, 6, 15, 12, 0)
@@ -24,7 +25,8 @@ def _settings(
     *,
     slug='bookable-tool',
     enabled=True,
-    advance=7 * 24 * 60,
+    min_advance=0,
+    max_advance=14 * 24 * 60,
     min_duration=30,
     max_duration=120,
     granularity=30,
@@ -33,7 +35,8 @@ def _settings(
         equipment_id=equipment.id,
         reservation_slug=slug,
         reservations_enabled=enabled,
-        advance_booking_window_minutes=advance,
+        min_advance_notice_minutes=min_advance,
+        max_advance_notice_minutes=max_advance,
         min_duration_minutes=min_duration,
         max_duration_minutes=max_duration,
         slot_granularity_minutes=granularity,
@@ -171,16 +174,17 @@ class TestCreateReservation:
         ],
     )
     def test_enforces_duration_rules(
-        self, app, make_equipment, staff_user, monkeypatch, duration, message,
+        self, app, make_equipment, monkeypatch, duration, message,
     ):
         _freeze_now(monkeypatch)
+        member_user = _create_user('member', username=f'member_duration_{duration}')
         equipment = make_equipment(name='Duration Tool')
         _settings(equipment, min_duration=30, max_duration=120, granularity=30)
 
         with pytest.raises(ValidationError, match=message):
             reservation_service.create_reservation(
                 equipment.id,
-                staff_user.id,
+                member_user.id,
                 datetime(2026, 6, 15, 13, 0, tzinfo=UTC),
                 duration,
                 None,
@@ -190,7 +194,9 @@ class TestCreateReservation:
     @pytest.mark.parametrize(
         ('field_name', 'value', 'message'),
         [
-            ('advance_booking_window_minutes', 0, 'Advance booking window'),
+            ('min_advance_notice_minutes', -1, 'Minimum advance notice'),
+            ('max_advance_notice_minutes', 0, 'Maximum advance notice'),
+            ('max_advance_notice_minutes', -1, 'Maximum advance notice'),
             ('min_duration_minutes', 0, 'Minimum reservation duration'),
             ('max_duration_minutes', 15, 'Maximum reservation duration'),
             ('slot_granularity_minutes', 0, 'Slot granularity'),
@@ -217,37 +223,125 @@ class TestCreateReservation:
                 'slack',
             )
 
-    def test_enforces_booking_window_and_slot_granularity(
-        self, app, make_equipment, staff_user, monkeypatch,
+    def test_enforces_advance_notice_and_slot_granularity(
+        self, app, make_equipment, monkeypatch,
     ):
         _freeze_now(monkeypatch)
+        member_user = _create_user('member', username='member_advance_policy')
         equipment = make_equipment(name='Window Tool')
-        _settings(equipment, advance=120, granularity=30)
+        _settings(equipment, min_advance=120, max_advance=180, granularity=30)
+
+        with pytest.raises(ValidationError, match='past'):
+            reservation_service.create_reservation(
+                equipment.id,
+                member_user.id,
+                datetime(2026, 6, 15, 11, 30, tzinfo=UTC),
+                60,
+                None,
+                'slack',
+            )
+        with pytest.raises(ValidationError, match='minimum advance notice'):
+            reservation_service.create_reservation(
+                equipment.id,
+                member_user.id,
+                datetime(2026, 6, 15, 13, 30, tzinfo=UTC),
+                60,
+                None,
+                'slack',
+            )
+        with pytest.raises(ValidationError, match='maximum advance notice'):
+            reservation_service.create_reservation(
+                equipment.id,
+                member_user.id,
+                datetime(2026, 6, 15, 16, 0, tzinfo=UTC),
+                60,
+                None,
+                'slack',
+            )
+        with pytest.raises(ValidationError, match='Start time'):
+            reservation_service.create_reservation(
+                equipment.id,
+                member_user.id,
+                datetime(2026, 6, 15, 14, 15, tzinfo=UTC),
+                60,
+                None,
+                'slack',
+            )
+        with pytest.raises(ValidationError, match='Start time'):
+            reservation_service.create_reservation(
+                equipment.id,
+                member_user.id,
+                datetime(2026, 6, 15, 14, 0, 30, tzinfo=UTC),
+                60,
+                None,
+                'slack',
+            )
+
+    @pytest.mark.parametrize('role', ['staff', 'technician'])
+    def test_staff_and_technicians_bypass_duration_and_advance_notice_bounds(
+        self, app, make_equipment, monkeypatch, role,
+    ):
+        _freeze_now(monkeypatch)
+        user = _create_user(role, username=f'{role}_reservation_override')
+        equipment = make_equipment(name=f'{role.title()} Override Tool')
+        _settings(
+            equipment,
+            min_advance=120,
+            max_advance=180,
+            min_duration=60,
+            max_duration=120,
+            granularity=15,
+        )
+
+        short_notice = reservation_service.create_reservation(
+            equipment.id,
+            user.id,
+            datetime(2026, 6, 15, 12, 15, tzinfo=UTC),
+            15,
+            None,
+            'slack',
+        )
+        far_future = reservation_service.create_reservation(
+            equipment.id,
+            user.id,
+            datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+            180,
+            None,
+            'slack',
+        )
+
+        assert short_notice.starts_at == datetime(2026, 6, 15, 12, 15)
+        assert short_notice.ends_at == datetime(2026, 6, 15, 12, 30)
+        assert far_future.ends_at == datetime(2026, 6, 20, 15, 0)
+
+    def test_policy_override_still_requires_future_aligned_non_overlapping_time(
+        self, app, make_equipment, staff_user, tech_user, monkeypatch,
+    ):
+        _freeze_now(monkeypatch)
+        equipment = make_equipment(name='Override Guardrail Tool')
+        _settings(equipment, min_duration=60, max_duration=120, granularity=30)
+        _reservation(
+            equipment,
+            tech_user,
+            starts_at=datetime(2026, 6, 15, 14, 0),
+            ends_at=datetime(2026, 6, 15, 15, 0),
+        )
 
         with pytest.raises(ValidationError, match='past'):
             reservation_service.create_reservation(
                 equipment.id,
                 staff_user.id,
                 datetime(2026, 6, 15, 11, 30, tzinfo=UTC),
-                60,
+                30,
                 None,
                 'slack',
             )
-        with pytest.raises(ValidationError, match='advance booking window'):
+        with pytest.raises(ValidationError, match='increments'):
             reservation_service.create_reservation(
                 equipment.id,
                 staff_user.id,
-                datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
-                60,
-                None,
-                'slack',
-            )
-        with pytest.raises(ValidationError, match='Start time'):
-            reservation_service.create_reservation(
-                equipment.id,
-                staff_user.id,
-                datetime(2026, 6, 15, 12, 15, tzinfo=UTC),
-                60,
+                datetime(2026, 6, 15, 13, 0, tzinfo=UTC),
+                45,
                 None,
                 'slack',
             )
@@ -255,8 +349,17 @@ class TestCreateReservation:
             reservation_service.create_reservation(
                 equipment.id,
                 staff_user.id,
-                datetime(2026, 6, 15, 12, 0, 30, tzinfo=UTC),
-                60,
+                datetime(2026, 6, 15, 13, 15, tzinfo=UTC),
+                30,
+                None,
+                'slack',
+            )
+        with pytest.raises(ValidationError, match='overlaps'):
+            reservation_service.create_reservation(
+                equipment.id,
+                staff_user.id,
+                datetime(2026, 6, 15, 14, 30, tzinfo=UTC),
+                30,
                 None,
                 'slack',
             )
@@ -390,6 +493,8 @@ class TestPublicAvailability:
             'starts_at': '2026-06-15T14:00:00+00:00',
             'ends_at': '2026-06-15T15:00:00+00:00',
         }]
+        assert enabled_item['min_advance_notice_minutes'] == 0
+        assert enabled_item['max_advance_notice_minutes'] == 14 * 24 * 60
         assert 'timezone' not in availability
         assert 'generated_at' not in availability
         assert 'secret member note' not in str(availability)

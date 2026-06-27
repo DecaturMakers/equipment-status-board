@@ -127,7 +127,8 @@ class TestEsbReserveCommand:
             equipment_id=equipment.id,
             reservation_slug=slug,
             reservations_enabled=enabled,
-            advance_booking_window_minutes=7 * 24 * 60,
+            min_advance_notice_minutes=2 * 60,
+            max_advance_notice_minutes=14 * 24 * 60,
             min_duration_minutes=30,
             max_duration_minutes=120,
             slot_granularity_minutes=30,
@@ -224,9 +225,20 @@ class TestEsbReserveCommand:
             for block in modal['blocks']
             if block.get('type') == 'section'
         )
-        assert 'Current status: ' in rendered_text
-        assert 'Existing reservations are listed below. Pick a time that does not overlap.' in rendered_text
-        assert '*Existing reservations*' in rendered_text
+        rendered_context = '\n'.join(
+            element['text']
+            for block in modal['blocks']
+            if block.get('type') == 'context'
+            for element in block.get('elements', [])
+        )
+        rendered_headers = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'header'
+        )
+        assert '*Limits:* 30 min-2 hours reservations; 2 hours-14 days advance notice.' in rendered_context
+        assert 'Existing Reservations' in rendered_headers
+        assert 'Reservation Request' in rendered_headers
         assert '*Today*' in rendered_text
         assert '*Tomorrow*' in rendered_text
         assert 'No existing reservations' in rendered_text
@@ -261,7 +273,7 @@ class TestEsbReserveCommand:
         assert input_blocks['reservation_start_at_block']['element']['type'] == 'datetimepicker'
         assert input_blocks['reservation_start_at_block']['element']['action_id'] == 'reservation_start_at'
         assert 'initial_date_time' in input_blocks['reservation_start_at_block']['element']
-        assert input_blocks['reservation_start_at_block']['label']['text'] == 'Requested start'
+        assert input_blocks['reservation_start_at_block']['label']['text'] == 'Requested Start'
         assert input_blocks['reservation_end_at_block']['element']['type'] == 'datetimepicker'
         assert input_blocks['reservation_end_at_block']['element']['action_id'] == 'reservation_end_at'
         start_initial = input_blocks['reservation_start_at_block']['element']['initial_date_time']
@@ -273,11 +285,11 @@ class TestEsbReserveCommand:
         )
         assert datetime.fromtimestamp(start_initial, UTC).minute in (0, 30)
         assert datetime.fromtimestamp(end_initial, UTC).minute in (0, 30)
-        assert input_blocks['reservation_end_at_block']['label']['text'] == 'Requested end'
-        assert input_blocks['reservation_notes_block']['optional'] is True
+        assert input_blocks['reservation_end_at_block']['label']['text'] == 'Requested End'
+        assert 'optional' not in input_blocks['reservation_notes_block']
         assert input_blocks['reservation_notes_block']['element']['type'] == 'plain_text_input'
         assert input_blocks['reservation_notes_block']['element']['multiline'] is True
-        assert input_blocks['reservation_notes_block']['label']['text'] == 'Notes'
+        assert input_blocks['reservation_notes_block']['label']['text'] == 'Note'
 
     def test_availability_modal_groups_bookings_by_start_day(self):
         """Flow 2: midnight-crossing reservations appear only on their start day."""
@@ -295,6 +307,8 @@ class TestEsbReserveCommand:
         item = {
             'id': self.laser.id,
             'name': self.laser.name,
+            'min_advance_notice_minutes': 120,
+            'max_advance_notice_minutes': 14 * 24 * 60,
             'min_duration_minutes': 30,
             'max_duration_minutes': 120,
             'slot_granularity_minutes': 30,
@@ -330,6 +344,8 @@ class TestEsbReserveCommand:
         item = {
             'id': self.laser.id,
             'name': self.laser.name,
+            'min_advance_notice_minutes': 180,
+            'max_advance_notice_minutes': 14 * 24 * 60,
             'min_duration_minutes': 120,
             'max_duration_minutes': 240,
             'slot_granularity_minutes': 60,
@@ -340,6 +356,15 @@ class TestEsbReserveCommand:
             item,
             now=datetime(2026, 6, 20, 12, 45, tzinfo=UTC),
         )
+        booked_blocks = [
+            block for block in modal['blocks']
+            if block.get('block_id', '').startswith('reservation_booked_')
+        ]
+        assert [block['block_id'] for block in booked_blocks] == [
+            'reservation_booked_empty_block',
+        ]
+        assert booked_blocks[0]['text']['text'] == 'No existing reservations'
+
         input_blocks = {
             block['block_id']: block
             for block in modal['blocks']
@@ -351,7 +376,7 @@ class TestEsbReserveCommand:
         start = datetime.fromtimestamp(start_initial, UTC)
         end = datetime.fromtimestamp(end_initial, UTC)
         assert start.minute == 0
-        assert start.hour == 15
+        assert start.hour == 16
         assert end - start == timedelta(minutes=120)
 
     def _future_aligned_window(self, *, hours_from_now=2, duration_minutes=60):
@@ -400,7 +425,7 @@ class TestEsbReserveCommand:
         rendered_text = modal['blocks'][0]['text']['text']
         assert '*Reservation confirmed*' in rendered_text
         assert 'Tool: Laser Cutter' in rendered_text
-        assert 'Notes: Table saw checkout' in rendered_text
+        assert 'Note: Table saw checkout' in rendered_text
         actions = modal['blocks'][1]['elements']
         assert actions[0]['text']['text'] == 'Cancel reservation'
         assert actions[0]['action_id'] == 'reservation_cancel_start'
@@ -469,13 +494,12 @@ class TestEsbReserveCommand:
         assert client.views_update.call_args.kwargs['view_id'] == 'V123'
         modal = client.views_update.call_args.kwargs['view']
         assert modal['callback_id'] == 'reservation_availability'
-        rendered_text = '\n'.join(
+        rendered_headers = '\n'.join(
             block['text']['text']
             for block in modal['blocks']
-            if block.get('type') == 'section'
+            if block.get('type') == 'header'
         )
-        assert 'Current status: ' in rendered_text
-        assert 'Existing reservations are listed below. Pick a time that does not overlap.' in rendered_text
+        assert 'Reservation Request' in rendered_headers
 
     def test_view_my_reservations_pushes_upcoming_reservations_modal(self):
         """Flow 4: shared View my reservations action lists the user's future reservations."""

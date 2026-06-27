@@ -12,6 +12,18 @@ def _format_datetime(value):
     return f'{value.astimezone().strftime("%A, %B")} {value.astimezone().day}, {_format_time(value)}'
 
 
+def _format_duration(minutes):
+    if minutes % (24 * 60) == 0:
+        days = minutes // (24 * 60)
+        unit = 'day' if days == 1 else 'days'
+        return f'{days} {unit}'
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        unit = 'hour' if hours == 1 else 'hours'
+        return f'{hours} {unit}'
+    return f'{minutes} min'
+
+
 def _ceil_to_slot(value, slot_minutes):
     value = value.astimezone(UTC).replace(second=0, microsecond=0)
     minutes_since_midnight = value.hour * 60 + value.minute
@@ -178,63 +190,92 @@ def build_reservation_availability_modal(item, availability_url=None, now=None):
     today = now.astimezone().date()
     slot_minutes = item['slot_granularity_minutes']
     duration_minutes = item['min_duration_minutes']
-    initial_start = _ceil_to_slot(now + timedelta(hours=2), slot_minutes)
+    initial_start = _ceil_to_slot(
+        now + timedelta(minutes=item['min_advance_notice_minutes']),
+        slot_minutes,
+    )
     initial_end = initial_start + timedelta(minutes=duration_minutes)
     initial_start_date_time = int(initial_start.timestamp())
     initial_end_date_time = int(initial_end.timestamp())
     booked_ranges_by_day = _booked_ranges_by_day(item, now)
 
     blocks = [
+        {'type': 'divider'},
         {
-            'type': 'section',
-            'block_id': 'reservation_availability_header_block',
-            'text': {
-                'type': 'mrkdwn',
-                'text': (
-                    f'Current status: {_availability_status(item, now)}\n'
-                    'Existing reservations are listed below. Pick a time that does not overlap.'
-                ),
-            },
-        },
-        {
-            'type': 'section',
+            'type': 'header',
             'block_id': 'reservation_existing_reservations_header_block',
             'text': {
-                'type': 'mrkdwn',
-                'text': '*Existing reservations*',
+                'type': 'plain_text',
+                'text': 'Existing Reservations',
             },
         },
-        {'type': 'divider'},
     ]
 
-    for offset, (day, booked_ranges) in enumerate(booked_ranges_by_day.items()):
-        range_text = '\n'.join(
-            _format_booked_range(start, end) for start, end in booked_ranges
-        ) or 'No existing reservations'
+    has_booked_ranges = any(booked_ranges_by_day.values())
+    if not has_booked_ranges:
         blocks.append(
             {
                 'type': 'section',
-                'block_id': f'reservation_booked_day_{offset}_block',
+                'block_id': 'reservation_booked_empty_block',
                 'text': {
                     'type': 'mrkdwn',
-                    'text': f'*{_date_label(day, today)}*\n{range_text}',
+                    'text': 'No existing reservations',
                 },
             }
         )
+    else:
+        for offset, (day, booked_ranges) in enumerate(booked_ranges_by_day.items()):
+            range_text = '\n'.join(
+                _format_booked_range(start, end) for start, end in booked_ranges
+            ) or 'No existing reservations'
+            blocks.append(
+                {
+                    'type': 'section',
+                    'block_id': f'reservation_booked_day_{offset}_block',
+                    'text': {
+                        'type': 'mrkdwn',
+                        'text': f'*{_date_label(day, today)}*\n{range_text}',
+                    },
+                }
+            )
 
     equipment_id = str(item['id'])
     blocks.extend([
+        {'type': 'divider'},
+        {
+            'type': 'header',
+            'block_id': 'reservation_details_header_block',
+            'text': {
+                'type': 'plain_text',
+                'text': 'Reservation Request',
+            },
+        },
+        {
+            'type': 'context',
+            'block_id': 'reservation_policy_context_block',
+            'elements': [
+                {
+                    'type': 'mrkdwn',
+                    'text': (
+                        '*Limits:* '
+                        f'{_format_duration(item["min_duration_minutes"])}-'
+                        f'{_format_duration(item["max_duration_minutes"])} reservations; '
+                        f'{_format_duration(item["min_advance_notice_minutes"])}-'
+                        f'{_format_duration(item["max_advance_notice_minutes"])} advance notice.'
+                    ),
+                },
+            ],
+        },
         {
             'type': 'input',
             'block_id': 'reservation_notes_block',
-            'optional': True,
             'element': {
                 'type': 'plain_text_input',
                 'action_id': 'reservation_notes',
                 'multiline': True,
-                'placeholder': {'type': 'plain_text', 'text': 'Optional notes'},
+                'placeholder': {'type': 'plain_text', 'text': 'Reservation note'},
             },
-            'label': {'type': 'plain_text', 'text': 'Notes'},
+            'label': {'type': 'plain_text', 'text': 'Note'},
         },
         {
             'type': 'input',
@@ -244,7 +285,7 @@ def build_reservation_availability_modal(item, availability_url=None, now=None):
                 'action_id': 'reservation_start_at',
                 'initial_date_time': initial_start_date_time,
             },
-            'label': {'type': 'plain_text', 'text': 'Requested start'},
+            'label': {'type': 'plain_text', 'text': 'Requested Start'},
         },
         {
             'type': 'input',
@@ -254,7 +295,7 @@ def build_reservation_availability_modal(item, availability_url=None, now=None):
                 'action_id': 'reservation_end_at',
                 'initial_date_time': initial_end_date_time,
             },
-            'label': {'type': 'plain_text', 'text': 'Requested end'},
+            'label': {'type': 'plain_text', 'text': 'Requested End'},
         },
     ])
 
@@ -283,7 +324,7 @@ def build_reservation_confirmation_modal(
         f'Time: {_format_datetime(starts_at)} to {_format_time(ends_at)}'
     )
     if notes:
-        text += f'\nNotes: {notes}'
+        text += f'\nNote: {notes}'
 
     return {
         'type': 'modal',
