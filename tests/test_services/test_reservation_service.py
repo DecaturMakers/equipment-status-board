@@ -88,6 +88,44 @@ class TestListReservableEquipment:
         assert archived not in equipment
 
 
+class TestPublicCalendarData:
+    def test_returns_columns_and_public_reservation_details(
+        self, app, make_area, make_equipment, staff_user,
+    ):
+        area = make_area(name='Calendar Area')
+        reservable = make_equipment(name='Laser Cutter', area=area)
+        ordinary = make_equipment(name='Ordinary Tool', area=area)
+        disabled = make_equipment(name='Disabled Tool', area=area)
+        _settings(reservable, slug='laser-calendar')
+        _settings(disabled, slug='disabled-calendar', enabled=False)
+        _reservation(
+            reservable,
+            staff_user,
+            starts_at=datetime(2026, 6, 15, 14, 0),
+            ends_at=datetime(2026, 6, 15, 15, 30),
+            notes='private member details',
+        )
+
+        data = reservation_service.get_public_calendar_data(
+            now=datetime(2026, 6, 15, 12, 0, tzinfo=UTC),
+        )
+
+        assert data['startDate'] == datetime(2026, 6, 15, 12, 0, tzinfo=UTC).astimezone().date().isoformat()
+        assert data['columns'] == [{'id': str(reservable.id), 'name': 'Laser Cutter'}]
+        assert len(data['events']) == 1
+        assert data['events'][0]['resource'] == str(reservable.id)
+        assert data['events'][0]['reservedBy'] == staff_user.display_name
+        assert data['events'][0]['note'] == 'private member details'
+        assert data['events'][0]['text'] == f'{staff_user.display_name}: private member details'
+        assert '2026-06-15T' in data['events'][0]['start']
+        assert '2026-06-15T' in data['events'][0]['end']
+        serialized = str(data)
+        assert staff_user.display_name in serialized
+        assert 'private member details' in serialized
+        assert ordinary.name not in serialized
+        assert disabled.name not in serialized
+
+
 class TestCreateReservation:
     def test_creates_reservation_and_stores_utc_naive_time(
         self, app, make_equipment, staff_user, monkeypatch,

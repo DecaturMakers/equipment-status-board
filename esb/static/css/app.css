@@ -59,6 +59,19 @@ th.sortable:hover {
     border-left: 3px solid var(--bs-warning);
 }
 
+/* Reservations calendar */
+.reservation-calendar {
+    min-height: 640px;
+}
+.reservation-date-input {
+    width: 11rem;
+}
+.calendar-message {
+    margin: 0;
+    padding: 1.5rem;
+    color: var(--bs-secondary-color);
+}
+
 /* Kiosk display */
 .kiosk-area-heading {
     font-size: 2.5rem;

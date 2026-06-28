@@ -43,6 +43,12 @@ class User(UserMixin, db.Model):
         lazy='dynamic',
     )
 
+    @property
+    def display_name(self):
+        """Human-friendly fallback display name derived from username."""
+        words = self.username.replace('_', ' ').replace('-', ' ').replace('.', ' ')
+        return ' '.join(word.capitalize() for word in words.split()) or self.username
+
     def set_password(self, password):
         """Hash and store the password using Werkzeug defaults (scrypt)."""
         self.password_hash = generate_password_hash(password)
