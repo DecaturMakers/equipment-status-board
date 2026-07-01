@@ -4,16 +4,12 @@ Single source of truth for computing equipment operational status
 from open repair records.
 """
 
-from datetime import UTC, datetime, timedelta
-
 from sqlalchemy.orm import joinedload
 
 from esb.extensions import db
 from esb.models.area import Area
 from esb.models.equipment import Equipment
-from esb.models.equipment_reservation_settings import EquipmentReservationSettings
 from esb.models.repair_record import RepairRecord
-from esb.models.reservation import Reservation
 from esb.services.repair_service import CLOSED_STATUSES
 from esb.utils.exceptions import AreaArchived, AreaNotFound, EquipmentNotFound
 
@@ -166,95 +162,6 @@ def compute_equipment_status(equipment_id: int) -> dict:
     return _derive_status_from_records(_get_open_records(equipment_id))
 
 
-def _get_dashboard_reservation_summaries(
-    equipment_ids: list[int],
-    now: datetime | None = None,
-) -> dict[int, dict]:
-    """Build compact public-dashboard reservation labels by equipment id."""
-    if not equipment_ids:
-        return {}
-
-    now = now or datetime.now(UTC).replace(tzinfo=None, second=0, microsecond=0)
-
-    def format_time(value):
-        text = value.replace(tzinfo=UTC).astimezone().strftime('%I:%M %p')
-        return text.lstrip('0')
-
-    def format_next_time(value):
-        local_value = value.replace(tzinfo=UTC).astimezone()
-        local_date = local_value.date()
-        today = now.replace(tzinfo=UTC).astimezone().date()
-        if local_date == today:
-            return f'today at {format_time(value)}'
-        if local_date == today + timedelta(days=1):
-            return f'tomorrow at {format_time(value)}'
-        return f'{local_value.strftime("%b")} {local_value.day} at {format_time(value)}'
-
-    settings = (
-        db.session.execute(
-            db.select(EquipmentReservationSettings)
-            .filter(EquipmentReservationSettings.equipment_id.in_(equipment_ids))
-        )
-        .scalars()
-        .all()
-    )
-    enabled_equipment_ids = {
-        item.equipment_id for item in settings if item.reservations_enabled
-    }
-    if not enabled_equipment_ids:
-        return {}
-
-    reservations = (
-        db.session.execute(
-            db.select(Reservation)
-            .filter(
-                Reservation.equipment_id.in_(enabled_equipment_ids),
-                Reservation.status == 'active',
-                Reservation.ends_at > now,
-            )
-            .order_by(Reservation.starts_at, Reservation.id)
-        )
-        .scalars()
-        .all()
-    )
-    reservations_by_equipment: dict[int, list[Reservation]] = {}
-    for reservation in reservations:
-        reservations_by_equipment.setdefault(reservation.equipment_id, []).append(reservation)
-
-    summaries: dict[int, dict] = {}
-    for equipment_id in enabled_equipment_ids:
-        equipment_reservations = reservations_by_equipment.get(equipment_id, [])
-        current_reservations = [
-            reservation for reservation in equipment_reservations
-            if reservation.starts_at <= now < reservation.ends_at
-        ]
-        if current_reservations:
-            ends_at = min(reservation.ends_at for reservation in current_reservations)
-            summaries[equipment_id] = {
-                'label': f'Reserved until {format_time(ends_at)}',
-                'state': 'reserved',
-            }
-            continue
-
-        next_reservation = next(
-            (
-                reservation for reservation in equipment_reservations
-                if reservation.starts_at > now
-            ),
-            None,
-        )
-        label = 'Available now'
-        if next_reservation is not None:
-            next_time = format_next_time(next_reservation.starts_at)
-            label += f' · Next reservation {next_time}'
-        summaries[equipment_id] = {
-            'label': label,
-            'state': 'available',
-        }
-
-    return summaries
-
-
 def get_equipment_status_detail(equipment_id: int) -> dict:
     """Get equipment status with repair detail for Slack status bot.
 
@@ -328,10 +235,6 @@ def get_area_status_dashboard() -> list[dict]:
     for equip in all_equipment:
         equipment_by_area.setdefault(equip.area_id, []).append(equip)
 
-    reservation_summaries = _get_dashboard_reservation_summaries(
-        [equip.id for equip in all_equipment]
-    )
-
     # Prefetch all open repair records for non-archived equipment in one query.
     # Eager-load assignee so dashboard rendering does not lazy-fire one
     # query per non-green item when it reads ``best_record.assignee.username``.
@@ -372,7 +275,6 @@ def get_area_status_dashboard() -> list[dict]:
                 'equipment': equip,
                 'status': status,
                 'open_records': open_records_sorted,
-                'reservation': reservation_summaries.get(equip.id),
             })
 
         result.append({

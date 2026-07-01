@@ -1,55 +1,9 @@
 """Tests for status_service module."""
 
-from datetime import UTC, datetime, timedelta
-
 import pytest
 
-from esb.extensions import db as _db
-from esb.models.equipment_reservation_settings import EquipmentReservationSettings
-from esb.models.reservation import Reservation
 from esb.services import status_service
 from esb.utils.exceptions import AreaArchived, AreaNotFound, EquipmentNotFound
-from tests.conftest import _create_user
-
-
-def _settings(equipment, *, enabled=True):
-    settings = EquipmentReservationSettings(
-        equipment_id=equipment.id,
-        reservation_slug=f'{equipment.id}-reservable',
-        reservations_enabled=enabled,
-        min_advance_notice_minutes=120,
-        max_advance_notice_minutes=14 * 24 * 60,
-        min_duration_minutes=30,
-        max_duration_minutes=120,
-        slot_granularity_minutes=30,
-    )
-    _db.session.add(settings)
-    _db.session.commit()
-    return settings
-
-
-def _reservation(equipment, *, starts_at, ends_at):
-    username = (
-        f'reservation_user_{equipment.id}_'
-        f'{starts_at:%Y%m%d%H%M}_{ends_at:%Y%m%d%H%M}'
-    )
-    user = _create_user('member', username=username)
-    reservation = Reservation(
-        equipment_id=equipment.id,
-        user_id=user.id,
-        starts_at=starts_at,
-        ends_at=ends_at,
-        status='active',
-        notes='dashboard reservation',
-        created_via='slack',
-    )
-    _db.session.add(reservation)
-    _db.session.commit()
-    return reservation
-
-
-def _local_time_label(value):
-    return value.replace(tzinfo=UTC).astimezone().strftime('%I:%M %p').lstrip('0')
 
 
 class TestComputeEquipmentStatus:
@@ -406,89 +360,15 @@ class TestGetAreaStatusDashboard:
         result = status_service.get_area_status_dashboard()
         assert result[0]['equipment'][0]['open_records'] == []
 
-    def test_non_reservable_equipment_has_no_reservation_summary(
+    def test_dashboard_payload_has_no_reservation_summary(
         self, app, make_area, make_equipment,
     ):
         area = make_area(name='Shop')
-        make_equipment(name='Ordinary Tool', area=area)
+        make_equipment(name='Tool', area=area)
 
         result = status_service.get_area_status_dashboard()
 
-        assert result[0]['equipment'][0]['reservation'] is None
-
-    def test_disabled_reservations_have_no_dashboard_summary(
-        self, app, make_area, make_equipment,
-    ):
-        area = make_area(name='Shop')
-        equipment = make_equipment(name='Disabled Reservation Tool', area=area)
-        _settings(equipment, enabled=False)
-
-        result = status_service.get_area_status_dashboard()
-
-        assert result[0]['equipment'][0]['reservation'] is None
-
-    def test_reservation_dashboard_summary_available_now(
-        self, app, make_area, make_equipment,
-    ):
-        area = make_area(name='Shop')
-        equipment = make_equipment(name='Reservable Tool', area=area)
-        _settings(equipment)
-
-        result = status_service.get_area_status_dashboard()
-
-        assert result[0]['equipment'][0]['reservation'] == {
-            'label': 'Available now',
-            'state': 'available',
-        }
-
-    def test_reservation_dashboard_summary_current_reservation(
-        self, app, make_area, make_equipment,
-    ):
-        now = datetime(2026, 6, 27, 12, 0)
-        area = make_area(name='Shop')
-        equipment = make_equipment(name='Reserved Tool', area=area)
-        _settings(equipment)
-        _reservation(
-            equipment,
-            starts_at=now - timedelta(minutes=30),
-            ends_at=now + timedelta(hours=1),
-        )
-
-        summaries = status_service._get_dashboard_reservation_summaries(
-            [equipment.id],
-            now=now,
-        )
-
-        expected_time = _local_time_label(now + timedelta(hours=1))
-        assert summaries[equipment.id] == {
-            'label': f'Reserved until {expected_time}',
-            'state': 'reserved',
-        }
-
-    def test_reservation_dashboard_summary_next_reservation(
-        self, app, make_area, make_equipment,
-    ):
-        now = datetime(2026, 6, 27, 12, 0)
-        area = make_area(name='Shop')
-        equipment = make_equipment(name='Reserved Later Tool', area=area)
-        _settings(equipment)
-        _reservation(
-            equipment,
-            starts_at=now + timedelta(hours=3),
-            ends_at=now + timedelta(hours=4),
-        )
-
-        summaries = status_service._get_dashboard_reservation_summaries(
-            [equipment.id],
-            now=now,
-        )
-
-        starts_at = now + timedelta(hours=3)
-        expected_time = _local_time_label(starts_at)
-        assert summaries[equipment.id] == {
-            'label': f'Available now · Next reservation today at {expected_time}',
-            'state': 'available',
-        }
+        assert 'reservation' not in result[0]['equipment'][0]
 
 
 class TestGetEquipmentStatusDetail:

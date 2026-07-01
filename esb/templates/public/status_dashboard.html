@@ -60,9 +60,6 @@
               {% if item.status.eta %}
               <p class="card-text text-muted small mt-1 mb-0">ETA: {{ item.status.eta|format_date }}</p>
               {% endif %}
-              {% if item.reservation %}
-              <p class="card-text text-muted small mt-1 mb-0">{{ item.reservation.label }}</p>
-              {% endif %}
             </div>
           </div>
         </a>
