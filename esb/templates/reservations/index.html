@@ -40,13 +40,20 @@
     const dateInput = document.getElementById('reservation-date');
     const fallback = document.getElementById('reservation-calendar-fallback');
 
+    const formatLocalDate = (value) => {
+        const year = value.getFullYear();
+        const month = String(value.getMonth() + 1).padStart(2, '0');
+        const day = String(value.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
     const changeDate = (days) => {
         if (!dateInput) {
             return;
         }
         const current = new Date(`${dateInput.value}T00:00:00`);
         current.setDate(current.getDate() + days);
-        dateInput.value = current.toISOString().slice(0, 10);
+        dateInput.value = formatLocalDate(current);
         if (window.reservationCalendar) {
             window.reservationCalendar.update({ startDate: dateInput.value });
         }

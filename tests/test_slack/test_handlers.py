@@ -198,6 +198,30 @@ class TestEsbReserveCommand:
         assert member_actions['elements'][0]['text']['text'] == 'My reservations'
         assert member_actions['elements'][0]['action_id'] == 'reservation_view_mine'
 
+    def test_reserve_landing_hides_availability_buttons_without_public_url(self):
+        """/esb-reserve omits inert Availability buttons when no URL is configured."""
+        self.app.config['STATIC_PAGE_PUBLIC_URL'] = ''
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'trigger_id': 'T123',
+            'user_id': 'U123',
+            'channel_id': 'C123',
+        }
+
+        self.handlers['command:/esb-reserve'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        modal = client.views_open.call_args.kwargs['view']
+        action_blocks = [
+            block for block in modal['blocks']
+            if block.get('block_id', '').startswith('reservation_tool_')
+            and block.get('type') == 'actions'
+        ]
+        assert action_blocks
+        for block in action_blocks:
+            assert [element['text']['text'] for element in block['elements']] == ['Reserve']
+
     def test_reserve_button_updates_to_one_tool_availability_modal(self):
         """Flow 2: clicking Reserve updates to the selected tool availability modal."""
         ack = MagicMock()

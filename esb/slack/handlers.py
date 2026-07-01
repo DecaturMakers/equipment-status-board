@@ -60,16 +60,6 @@ def _resolve_esb_user(client, slack_user_id):
         return None
 
 
-def _get_user_reservation(reservation_id, user_id):
-    """Return a reservation only when it belongs to the resolved Slack user."""
-    from esb.extensions import db
-    from esb.models.reservation import Reservation
-
-    return db.session.execute(
-        db.select(Reservation).filter_by(id=reservation_id, user_id=user_id)
-    ).scalar_one_or_none()
-
-
 def _update_reservation_error_modal(client, body, message):
     from esb.slack.reservation_forms import build_reservation_error_modal
 
@@ -132,7 +122,6 @@ def register_handlers(bolt_app, app):
                 view_id=body['view']['id'],
                 view=build_reservation_availability_modal(
                     selected,
-                    availability_url=app.config.get('STATIC_PAGE_PUBLIC_URL', ''),
                     now=now,
                 ),
             )
@@ -142,9 +131,7 @@ def register_handlers(bolt_app, app):
         with _ensure_app_context(app):
             from datetime import UTC, datetime
 
-            from esb.extensions import db
-            from esb.models.equipment import Equipment
-            from esb.services import reservation_service
+            from esb.services import equipment_service, reservation_service
             from esb.slack.reservation_forms import (
                 build_reservation_confirmation_modal,
                 build_reservation_unavailable_modal,
@@ -173,8 +160,7 @@ def register_handlers(bolt_app, app):
                 })
                 return
 
-            equipment = db.session.get(Equipment, equipment_id)
-            equipment_name = equipment.name if equipment else f'ID {equipment_id}'
+            equipment_name = equipment_service.get_equipment_display_name(equipment_id)
 
             try:
                 reservation = reservation_service.create_reservation(
@@ -250,7 +236,6 @@ def register_handlers(bolt_app, app):
                 view_id=body['view']['id'],
                 view=build_reservation_availability_modal(
                     selected,
-                    availability_url=app.config.get('STATIC_PAGE_PUBLIC_URL', ''),
                     now=now,
                 ),
             )
@@ -301,6 +286,7 @@ def register_handlers(bolt_app, app):
     def handle_reservation_cancel_start(ack, body, client):
         ack()
         with _ensure_app_context(app):
+            from esb.services import reservation_service
             from esb.slack.reservation_forms import build_cancel_reservation_modal
 
             esb_user = _resolve_esb_user(client, body['user']['id'])
@@ -313,7 +299,7 @@ def register_handlers(bolt_app, app):
                 return
 
             reservation_id = int(body['actions'][0]['value'])
-            reservation = _get_user_reservation(reservation_id, esb_user.id)
+            reservation = reservation_service.get_user_reservation(reservation_id, esb_user.id)
             if reservation is None or reservation.status != 'active':
                 _update_reservation_error_modal(
                     client,
@@ -367,7 +353,7 @@ def register_handlers(bolt_app, app):
                 return
 
             reservation_id = int(body['actions'][0]['value'])
-            reservation = _get_user_reservation(reservation_id, esb_user.id)
+            reservation = reservation_service.get_user_reservation(reservation_id, esb_user.id)
             if reservation is None:
                 _update_reservation_error_modal(
                     client,
@@ -459,10 +445,8 @@ def register_handlers(bolt_app, app):
 
             ack()
 
-            from esb.extensions import db
-            from esb.models.equipment import Equipment
-            equipment = db.session.get(Equipment, equipment_id)
-            equipment_name = equipment.name if equipment else f'ID {equipment_id}'
+            from esb.services import equipment_service
+            equipment_name = equipment_service.get_equipment_display_name(equipment_id)
 
             client.chat_postEphemeral(
                 channel=body['user']['id'],
@@ -593,10 +577,8 @@ def register_handlers(bolt_app, app):
 
             ack()
 
-            from esb.extensions import db
-            from esb.models.equipment import Equipment
-            equipment = db.session.get(Equipment, equipment_id)
-            equipment_name = equipment.name if equipment else f'ID {equipment_id}'
+            from esb.services import equipment_service
+            equipment_name = equipment_service.get_equipment_display_name(equipment_id)
 
             client.chat_postEphemeral(
                 channel=body['user']['id'],

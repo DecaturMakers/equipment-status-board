@@ -131,14 +131,15 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
                 style='primary',
             )
         ]
-        elements.append(
-            _button(
-                'Availability',
-                'reservation_view_availability',
-                equipment_id,
-                url=availability_url,
+        if availability_url:
+            elements.append(
+                _button(
+                    'Availability',
+                    'reservation_view_availability',
+                    equipment_id,
+                    url=availability_url,
+                )
             )
-        )
         blocks.append(
             {
                 'type': 'actions',
@@ -184,7 +185,7 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
     }
 
 
-def build_reservation_availability_modal(item, availability_url=None, now=None):
+def build_reservation_availability_modal(item, now=None):
     """Build the Flow 2 one-tool reservation modal."""
     now = now or datetime.now(UTC)
     today = now.astimezone().date()

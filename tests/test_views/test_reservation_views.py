@@ -66,8 +66,9 @@ class TestReservationCalendarView:
         assert 'daypilot-javascript.min.js' in html
         assert 'reservation-calendar-data' in html
         assert 'Laser Cutter' in html
-        assert staff_user.display_name in html
-        assert 'private note' in html
+        assert 'Reserved' in html
+        assert staff_user.display_name not in html
+        assert 'private note' not in html
         assert ordinary.name not in html
 
     def test_nav_links_to_reservations(self, staff_client):
@@ -81,3 +82,11 @@ class TestReservationCalendarView:
 
         assert response.status_code == 200
         assert b'No reservable tools are configured yet.' in response.data
+
+    def test_day_navigation_uses_local_date_formatting(self, client):
+        response = client.get('/reservations/')
+
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert 'formatLocalDate(current)' in html
+        assert 'toISOString().slice(0, 10)' not in html

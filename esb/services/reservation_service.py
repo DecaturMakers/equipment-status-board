@@ -75,7 +75,7 @@ def get_public_availability(now=None) -> dict:
 
 
 def get_public_calendar_data(now=None) -> dict:
-    """Build public reservation calendar data with reserver and note details."""
+    """Build privacy-safe public reservation calendar data."""
     now_utc = _to_utc_naive(now) if now is not None else _utc_now()
     local_now = now_utc.replace(tzinfo=UTC).astimezone()
 
@@ -88,7 +88,6 @@ def get_public_calendar_data(now=None) -> dict:
             equipment.id,
             now_utc,
             window_end,
-            include_user=True,
         )
         resource_id = str(equipment.id)
         columns.append({
@@ -98,17 +97,12 @@ def get_public_calendar_data(now=None) -> dict:
         for reservation in reservations:
             starts_at = reservation.starts_at.replace(tzinfo=UTC).astimezone().replace(tzinfo=None)
             ends_at = reservation.ends_at.replace(tzinfo=UTC).astimezone().replace(tzinfo=None)
-            reserved_by = reservation.user.display_name if reservation.user else "Unknown"
-            note = _truncate_calendar_note(reservation.notes)
-            text = reserved_by if not note else f"{reserved_by}: {note}"
             events.append({
                 "id": str(reservation.id),
                 "resource": resource_id,
                 "start": starts_at.isoformat(timespec="seconds"),
                 "end": ends_at.isoformat(timespec="seconds"),
-                "text": text,
-                "reservedBy": reserved_by,
-                "note": note,
+                "text": "Reserved",
                 "backColor": "#2f6f73",
                 "barColor": "#164e52",
                 "fontColor": "#ffffff",
@@ -121,11 +115,11 @@ def get_public_calendar_data(now=None) -> dict:
     }
 
 
-def _truncate_calendar_note(note: str | None, max_length: int = 80) -> str:
-    text = " ".join((note or "").split())
-    if len(text) <= max_length:
-        return text
-    return f"{text[:max_length - 3].rstrip()}..."
+def get_user_reservation(reservation_id: int, user_id: int) -> Reservation | None:
+    """Return a reservation only when it belongs to the given user."""
+    return db.session.execute(
+        db.select(Reservation).filter_by(id=reservation_id, user_id=user_id)
+    ).scalar_one_or_none()
 
 
 def create_reservation(

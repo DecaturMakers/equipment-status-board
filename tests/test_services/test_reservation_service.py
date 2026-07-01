@@ -89,7 +89,7 @@ class TestListReservableEquipment:
 
 
 class TestPublicCalendarData:
-    def test_returns_columns_and_public_reservation_details(
+    def test_returns_columns_and_anonymized_reservation_details(
         self, app, make_area, make_equipment, staff_user,
     ):
         area = make_area(name='Calendar Area')
@@ -114,14 +114,14 @@ class TestPublicCalendarData:
         assert data['columns'] == [{'id': str(reservable.id), 'name': 'Laser Cutter'}]
         assert len(data['events']) == 1
         assert data['events'][0]['resource'] == str(reservable.id)
-        assert data['events'][0]['reservedBy'] == staff_user.display_name
-        assert data['events'][0]['note'] == 'private member details'
-        assert data['events'][0]['text'] == f'{staff_user.display_name}: private member details'
+        assert data['events'][0]['text'] == 'Reserved'
+        assert 'reservedBy' not in data['events'][0]
+        assert 'note' not in data['events'][0]
         assert '2026-06-15T' in data['events'][0]['start']
         assert '2026-06-15T' in data['events'][0]['end']
         serialized = str(data)
-        assert staff_user.display_name in serialized
-        assert 'private member details' in serialized
+        assert staff_user.display_name not in serialized
+        assert 'private member details' not in serialized
         assert ordinary.name not in serialized
         assert disabled.name not in serialized
 
@@ -498,6 +498,35 @@ class TestListUserUpcomingReservations:
         reservations = reservation_service.list_user_upcoming_reservations(staff_user.id)
 
         assert reservations == [future]
+
+
+class TestGetUserReservation:
+    def test_returns_reservation_owned_by_user(self, app, make_equipment, staff_user):
+        equipment = make_equipment(name='Owned Reservation Tool')
+        reservation = _reservation(
+            equipment,
+            staff_user,
+            starts_at=datetime(2026, 6, 15, 13, 0),
+        )
+
+        result = reservation_service.get_user_reservation(reservation.id, staff_user.id)
+
+        assert result == reservation
+
+    def test_returns_none_for_other_user_reservation(
+        self, app, make_equipment, staff_user,
+    ):
+        other_user = _create_user('member', username='other_reservation_owner')
+        equipment = make_equipment(name='Other User Reservation Tool')
+        reservation = _reservation(
+            equipment,
+            other_user,
+            starts_at=datetime(2026, 6, 15, 13, 0),
+        )
+
+        result = reservation_service.get_user_reservation(reservation.id, staff_user.id)
+
+        assert result is None
 
 
 class TestPublicAvailability:
