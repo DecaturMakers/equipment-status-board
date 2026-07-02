@@ -6,6 +6,7 @@
 <div class="d-flex justify-content-end align-items-center gap-2 mb-3">
     <div class="d-flex align-items-center gap-2">
         <button class="btn btn-outline-secondary btn-sm" type="button" id="reservation-prev-day">Previous</button>
+        <label class="visually-hidden" for="reservation-date">Reservation date</label>
         <input class="form-control form-control-sm reservation-date-input" type="date" id="reservation-date" value="{{ calendar_data.startDate }}">
         <button class="btn btn-outline-secondary btn-sm" type="button" id="reservation-next-day">Next</button>
     </div>
@@ -28,7 +29,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="https://cdn.jsdelivr.net/npm/@daypilot/daypilot-lite-javascript@5.8.0/daypilot-javascript.min.js"></script>
+<script src="{{ url_for('static', filename='js/daypilot-javascript.min.js') }}"></script>
 <script>
 (() => {
     const dataElement = document.getElementById('reservation-calendar-data');

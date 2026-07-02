@@ -433,10 +433,11 @@ class TestEsbReserveCommand:
         start_timestamp, end_timestamp = self._future_aligned_window()
         ack = MagicMock()
         client = MagicMock()
-        client.users_info.return_value = {
-            'user': {'profile': {'email': self.user.email}},
-        }
-        body = {'user': {'id': 'U123'}}
+        def users_info_side_effect(user):
+            assert ack.called
+            return {'user': {'profile': {'email': self.user.email}}}
+        client.users_info.side_effect = users_info_side_effect
+        body = {'user': {'id': 'U123'}, 'view': {'id': 'V123'}}
         view = self._reservation_submission_view(self.laser.id, start_timestamp, end_timestamp)
 
         self.handlers['view:reservation_availability'](ack=ack, body=body, client=client, view=view)
@@ -444,7 +445,10 @@ class TestEsbReserveCommand:
         ack.assert_called_once()
         kwargs = ack.call_args.kwargs
         assert kwargs['response_action'] == 'update'
-        modal = kwargs['view']
+        assert kwargs['view']['callback_id'] == 'reservation_processing'
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
         assert modal['callback_id'] == 'reservation_confirmation'
         rendered_text = modal['blocks'][0]['text']['text']
         assert '*Reservation confirmed*' in rendered_text
@@ -483,7 +487,7 @@ class TestEsbReserveCommand:
         client.users_info.return_value = {
             'user': {'profile': {'email': self.user.email}},
         }
-        body = {'user': {'id': 'U123'}}
+        body = {'user': {'id': 'U123'}, 'view': {'id': 'V123'}}
         view = self._reservation_submission_view(self.laser.id, start_timestamp, end_timestamp)
 
         self.handlers['view:reservation_availability'](ack=ack, body=body, client=client, view=view)
@@ -491,7 +495,10 @@ class TestEsbReserveCommand:
         ack.assert_called_once()
         kwargs = ack.call_args.kwargs
         assert kwargs['response_action'] == 'update'
-        modal = kwargs['view']
+        assert kwargs['view']['callback_id'] == 'reservation_processing'
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
         assert modal['callback_id'] == 'reservation_unavailable'
         assert modal['private_metadata'] == str(self.laser.id)
         rendered_text = modal['blocks'][0]['text']['text']

@@ -46,6 +46,11 @@ def upgrade():
 
 
 def downgrade():
+    op.execute(
+        'UPDATE equipment_reservation_settings '
+        'SET max_advance_notice_minutes = 10080 '
+        'WHERE max_advance_notice_minutes = 20160'
+    )
     with op.batch_alter_table('equipment_reservation_settings', schema=None) as batch_op:
         batch_op.drop_column('min_advance_notice_minutes')
         batch_op.alter_column(

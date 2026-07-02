@@ -359,6 +359,23 @@ def build_reservation_confirmation_modal(
     }
 
 
+def build_reservation_processing_modal():
+    """Build a lightweight modal shown while Slack/DB work completes."""
+    return {
+        'type': 'modal',
+        'callback_id': 'reservation_processing',
+        'title': {'type': 'plain_text', 'text': 'Reserving'},
+        'close': {'type': 'plain_text', 'text': 'Close'},
+        'blocks': [
+            {
+                'type': 'section',
+                'block_id': 'reservation_processing_block',
+                'text': {'type': 'mrkdwn', 'text': 'Processing your reservation...'},
+            },
+        ],
+    }
+
+
 def _reservation_equipment_name(reservation):
     return reservation.equipment.name if reservation.equipment else f'ID {reservation.equipment_id}'
 

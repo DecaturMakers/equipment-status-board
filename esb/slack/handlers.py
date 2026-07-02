@@ -134,6 +134,8 @@ def register_handlers(bolt_app, app):
             from esb.services import equipment_service, reservation_service
             from esb.slack.reservation_forms import (
                 build_reservation_confirmation_modal,
+                build_reservation_error_modal,
+                build_reservation_processing_modal,
                 build_reservation_unavailable_modal,
             )
             from esb.utils.exceptions import ValidationError
@@ -153,11 +155,16 @@ def register_handlers(bolt_app, app):
                 })
                 return
 
+            ack(response_action='update', view=build_reservation_processing_modal())
+            view_id = body.get('view', view).get('id')
             esb_user = _resolve_esb_user(client, body['user']['id'])
             if esb_user is None:
-                ack(response_action='errors', errors={
-                    'reservation_start_at_block': 'Your Slack account is not linked to an ESB user.',
-                })
+                client.views_update(
+                    view_id=view_id,
+                    view=build_reservation_error_modal(
+                        'Your Slack account is not linked to an ESB user.'
+                    ),
+                )
                 return
 
             equipment_name = equipment_service.get_equipment_display_name(equipment_id)
@@ -172,8 +179,8 @@ def register_handlers(bolt_app, app):
                     created_via='slack',
                 )
             except ValidationError as e:
-                ack(
-                    response_action='update',
+                client.views_update(
+                    view_id=view_id,
                     view=build_reservation_unavailable_modal(
                         equipment_id,
                         equipment_name,
@@ -183,8 +190,8 @@ def register_handlers(bolt_app, app):
                 return
             except Exception:
                 logger.exception('Unexpected error in reservation submission')
-                ack(
-                    response_action='update',
+                client.views_update(
+                    view_id=view_id,
                     view=build_reservation_unavailable_modal(
                         equipment_id,
                         equipment_name,
@@ -193,8 +200,8 @@ def register_handlers(bolt_app, app):
                 )
                 return
 
-            ack(
-                response_action='update',
+            client.views_update(
+                view_id=view_id,
                 view=build_reservation_confirmation_modal(
                     reservation.id,
                     equipment_name,

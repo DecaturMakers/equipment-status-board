@@ -64,6 +64,8 @@ class TestReservationCalendarView:
         html = response.data.decode()
         assert 'Reservations' in html
         assert 'daypilot-javascript.min.js' in html
+        assert 'cdn.jsdelivr.net' not in html
+        assert '<label class="visually-hidden" for="reservation-date">Reservation date</label>' in html
         assert 'reservation-calendar-data' in html
         assert 'Laser Cutter' in html
         assert 'Reserved' in html
