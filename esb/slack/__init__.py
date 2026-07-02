@@ -2,6 +2,7 @@
 
 import atexit
 import logging
+import os
 import signal
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,13 @@ def init_slack(app):
     # Opt-in: only connect when SLACK_SOCKET_MODE_CONNECT is explicitly 'true'
     if app.config['SLACK_SOCKET_MODE_CONNECT'].lower() != 'true':
         logger.info('SLACK_SOCKET_MODE_CONNECT is not true, skipping Socket Mode connection')
+        return
+
+    # In Flask debug mode, Werkzeug starts a parent watcher process and a
+    # child serving process. Only the child should own a Slack Socket Mode
+    # connection, otherwise one local `flask run --debug` can connect twice.
+    if app.debug and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        logger.info('Werkzeug reloader parent, skipping Socket Mode connection')
         return
 
     # Unified Socket Mode setup: import, instantiation, and connect all live

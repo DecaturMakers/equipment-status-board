@@ -2,12 +2,13 @@ services:
   app:
     build: .
     ports:
-      - "5000:5000"
+      - "${ESB_HOST_PORT:-5000}:5000"
     depends_on:
       db:
         condition: service_healthy
     env_file: .env
     environment:
+      - DATABASE_URL=mysql+pymysql://root:${MARIADB_ROOT_PASSWORD:-esb_dev_password}@db/esb
       - SLACK_SOCKET_MODE_CONNECT=true
       # Force unbuffered stdout/stderr so log lines reach journald/Loki
       # immediately rather than sitting in Python's block buffer when stdout
@@ -31,13 +32,15 @@ services:
 
   db:
     image: mariadb:12.2.2
+    ports:
+      - "127.0.0.1:${ESB_DB_HOST_PORT:-3306}:3306"
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-esb_dev_password}
       MARIADB_DATABASE: esb
     volumes:
       - mariadb_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -uroot -p$${MARIADB_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,6 +54,7 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
+      - DATABASE_URL=mysql+pymysql://root:${MARIADB_ROOT_PASSWORD:-esb_dev_password}@db/esb
       # Force unbuffered stdout/stderr so log lines reach journald immediately
       # instead of sitting in Python's block buffer when stdout is not a TTY.
       - PYTHONUNBUFFERED=1

@@ -105,6 +105,7 @@ class TestSlackEnabled:
         command_calls = [call[0][0] for call in self.mock_bolt_app.command.call_args_list]
         assert '/esb-report' in command_calls
         assert '/esb-repair' in command_calls
+        assert '/esb-reserve' in command_calls
         assert '/esb-status' in command_calls
         assert '/esb-update' not in command_calls
 

@@ -1,0 +1,106 @@
+{% extends "base_public.html" %}
+
+{% block title %}Reservations - Equipment Status Board{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-end align-items-center gap-2 mb-3">
+    <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-secondary btn-sm" type="button" id="reservation-prev-day">Previous</button>
+        <label class="visually-hidden" for="reservation-date">Reservation date</label>
+        <input class="form-control form-control-sm reservation-date-input" type="date" id="reservation-date" value="{{ calendar_data.startDate }}">
+        <button class="btn btn-outline-secondary btn-sm" type="button" id="reservation-next-day">Next</button>
+    </div>
+</div>
+
+{% if calendar_data.columns %}
+<div class="card mb-3">
+    <div class="card-body p-2">
+        <div id="reservation-calendar" class="reservation-calendar" aria-label="Reservation calendar"></div>
+        <div id="reservation-calendar-fallback" class="alert alert-warning m-2 d-none" role="status">
+            Calendar controls are unavailable.
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info" role="status">No reservable tools are configured yet.</div>
+{% endif %}
+
+<script type="application/json" id="reservation-calendar-data">{{ calendar_data|tojson }}</script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/daypilot-javascript.min.js') }}"></script>
+<script>
+(() => {
+    const dataElement = document.getElementById('reservation-calendar-data');
+    if (!dataElement) {
+        return;
+    }
+
+    const data = JSON.parse(dataElement.textContent);
+    const dateInput = document.getElementById('reservation-date');
+    const fallback = document.getElementById('reservation-calendar-fallback');
+
+    const formatLocalDate = (value) => {
+        const year = value.getFullYear();
+        const month = String(value.getMonth() + 1).padStart(2, '0');
+        const day = String(value.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
+    const changeDate = (days) => {
+        if (!dateInput) {
+            return;
+        }
+        const current = new Date(`${dateInput.value}T00:00:00`);
+        current.setDate(current.getDate() + days);
+        dateInput.value = formatLocalDate(current);
+        if (window.reservationCalendar) {
+            window.reservationCalendar.update({ startDate: dateInput.value });
+        }
+    };
+
+    if (!window.DayPilot || !data.columns.length) {
+        const calendarElement = document.getElementById('reservation-calendar');
+        if (calendarElement) {
+            calendarElement.innerHTML = '<p class="calendar-message">Calendar view unavailable.</p>';
+        }
+        fallback?.classList.remove('d-none');
+        return;
+    }
+
+    const calendarElement = document.getElementById('reservation-calendar');
+    calendarElement.textContent = '';
+
+    const calendar = new DayPilot.Calendar('reservation-calendar', {
+        viewType: 'Resources',
+        startDate: data.startDate,
+        columns: data.columns,
+        events: data.events,
+        eventMoveHandling: 'Disabled',
+        eventResizeHandling: 'Disabled',
+        timeRangeSelectedHandling: 'Disabled',
+        eventClickHandling: 'Disabled',
+        eventDeleteHandling: 'Disabled',
+        durationBarVisible: false,
+        cellHeight: 28,
+        businessBeginsHour: 7,
+        businessEndsHour: 23,
+        showNonBusiness: false,
+        headerHeight: 34,
+    });
+    calendar.init();
+    window.reservationCalendar = calendar;
+
+    dateInput?.addEventListener('change', () => {
+        calendar.update({ startDate: dateInput.value });
+    });
+    document.getElementById('reservation-prev-day')?.addEventListener('click', () => {
+        changeDate(-1);
+    });
+    document.getElementById('reservation-next-day')?.addEventListener('click', () => {
+        changeDate(1);
+    });
+})();
+</script>
+{% endblock %}

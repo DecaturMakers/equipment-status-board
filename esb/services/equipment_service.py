@@ -224,6 +224,12 @@ def get_equipment(equipment_id: int) -> Equipment:
     return equipment
 
 
+def get_equipment_display_name(equipment_id: int) -> str:
+    """Return an equipment name for user-facing messages, with an ID fallback."""
+    equipment = db.session.get(Equipment, equipment_id)
+    return equipment.name if equipment else f'ID {equipment_id}'
+
+
 def create_equipment(
     name: str,
     manufacturer: str,
