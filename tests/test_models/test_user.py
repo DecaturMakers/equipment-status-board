@@ -59,6 +59,23 @@ class TestUserCreation:
         user = User(username='frank', email='frank@example.com', password_hash='x')
         assert repr(user) == "<User 'frank'>"
 
+    @pytest.mark.parametrize(
+        ('username', 'display_name'),
+        [
+            ('alex_higgins', 'Alex Higgins'),
+            ('jane.doe', 'Jane Doe'),
+            ('sam-smith', 'Sam Smith'),
+            ('alice', 'Alice'),
+        ],
+    )
+    def test_display_name_formats_username(self, username, display_name):
+        user = User(
+            username=username,
+            email=f'{username}@example.com',
+            password_hash='x',
+        )
+        assert user.display_name == display_name
+
 
 class TestUserUniqueConstraints:
     """Tests for unique constraints on User model."""
@@ -84,7 +101,6 @@ class TestUserUniqueConstraints:
         with pytest.raises(Exception):
             _db.session.commit()
         _db.session.rollback()
-
 
 class TestUserPassword:
     """Tests for password hashing and verification."""

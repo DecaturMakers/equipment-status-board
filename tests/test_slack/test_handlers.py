@@ -1,9 +1,12 @@
 """Tests for Slack command and view submission handlers (esb/slack/handlers.py)."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
+from esb.models.equipment_reservation_settings import EquipmentReservationSettings
+from esb.models.reservation import Reservation
 from tests.conftest import _create_area, _create_equipment, _create_repair_record, _create_user
 
 
@@ -25,9 +28,16 @@ def _register_and_capture(app):
             return fn
         return decorator
 
+    def capture_action(action_id):
+        def decorator(fn):
+            handlers[f'action:{action_id}'] = fn
+            return fn
+        return decorator
+
     bolt_app = MagicMock()
     bolt_app.command = capture_command
     bolt_app.view = capture_view
+    bolt_app.action = capture_action
     register_handlers(bolt_app, app)
     return handlers
 
@@ -78,6 +88,703 @@ class TestEsbReportCommand:
         client.chat_postEphemeral.assert_called_once()
         assert 'No equipment' in client.chat_postEphemeral.call_args.kwargs['text']
         client.views_open.assert_not_called()
+
+
+class TestEsbReserveCommand:
+    """Tests for /esb-reserve command handler."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, app, db):
+        self.app = app
+        self.db = db
+        self.area = _create_area(name='Reservation Lab', slack_channel='#reservations')
+        self.laser = _create_equipment(name='Laser Cutter', area=self.area)
+        self.cnc = _create_equipment(name='CNC Router', area=self.area)
+        self.disabled = _create_equipment(name='3D Printer', area=self.area)
+        self.ordinary = _create_equipment(name='Bench Tool', area=self.area)
+        self.user = _create_user('member', username='reserve_member')
+        self._settings(self.laser, slug='laser-cutter')
+        self._settings(self.cnc, slug='cnc-router')
+        self._settings(self.disabled, slug='3d-printer', enabled=False)
+        now = datetime.now(UTC).replace(second=0, microsecond=0)
+        self.cnc_reservation_ends_at = now + timedelta(minutes=45)
+        reservation = Reservation(
+            equipment_id=self.cnc.id,
+            user_id=self.user.id,
+            starts_at=(now - timedelta(minutes=15)).replace(tzinfo=None),
+            ends_at=self.cnc_reservation_ends_at.replace(tzinfo=None),
+            status='active',
+            notes='private note',
+            created_via='slack',
+        )
+        self.db.session.add(reservation)
+        self.db.session.commit()
+        self.app.config['STATIC_PAGE_PUBLIC_URL'] = 'https://status.example.com/reservations/'
+        self.handlers = _register_and_capture(app)
+
+    def _settings(self, equipment, *, slug, enabled=True):
+        settings = EquipmentReservationSettings(
+            equipment_id=equipment.id,
+            reservation_slug=slug,
+            reservations_enabled=enabled,
+            min_advance_notice_minutes=2 * 60,
+            max_advance_notice_minutes=14 * 24 * 60,
+            min_duration_minutes=30,
+            max_duration_minutes=120,
+            slot_granularity_minutes=30,
+        )
+        self.db.session.add(settings)
+        self.db.session.commit()
+        return settings
+
+    def test_reserve_command_calls_ack_and_opens_landing_modal(self):
+        """/esb-reserve opens Flow 1 populated from reservation database data."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'trigger_id': 'T123',
+            'user_id': 'U123',
+            'channel_id': 'C123',
+        }
+
+        self.handlers['command:/esb-reserve'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_open.assert_called_once()
+        modal = client.views_open.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_landing'
+        assert modal['title']['text'] == 'Makerspace Tools'
+        assert 'submit' not in modal
+
+        block_ids = [block['block_id'] for block in modal['blocks'] if 'block_id' in block]
+        assert 'reservation_intro_block' in block_ids
+        assert f'reservation_tool_{self.laser.id}_status_block' in block_ids
+        assert f'reservation_tool_{self.cnc.id}_status_block' in block_ids
+        assert f'reservation_tool_{self.disabled.id}_status_block' not in block_ids
+        assert f'reservation_tool_{self.ordinary.id}_status_block' not in block_ids
+        assert 'reservation_member_actions_block' in block_ids
+
+        rendered_text = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'section'
+        )
+        assert 'Choose a tool to view availability or start a reservation.' in rendered_text
+        assert '*Laser Cutter*\nStatus: Available now' in rendered_text
+        assert '*CNC Router*\nStatus: Reserved until ' in rendered_text
+        assert '3D Printer' not in rendered_text
+        assert 'Bench Tool' not in rendered_text
+
+        laser_actions = [
+            block for block in modal['blocks']
+            if block.get('block_id') == f'reservation_tool_{self.laser.id}_actions_block'
+        ][0]
+        assert [element['text']['text'] for element in laser_actions['elements']] == ['Reserve', 'Availability']
+        assert laser_actions['elements'][0]['value'] == str(self.laser.id)
+        assert laser_actions['elements'][1]['url'] == 'https://status.example.com/reservations/'
+
+        cnc_actions = [
+            block for block in modal['blocks']
+            if block.get('block_id') == f'reservation_tool_{self.cnc.id}_actions_block'
+        ][0]
+        assert [element['text']['text'] for element in cnc_actions['elements']] == ['Reserve', 'Availability']
+        assert cnc_actions['elements'][0]['value'] == str(self.cnc.id)
+        assert cnc_actions['elements'][1]['url'] == 'https://status.example.com/reservations/'
+
+        member_actions = [
+            block for block in modal['blocks']
+            if block.get('block_id') == 'reservation_member_actions_block'
+        ][0]
+        assert member_actions['elements'][0]['text']['text'] == 'My reservations'
+        assert member_actions['elements'][0]['action_id'] == 'reservation_view_mine'
+
+    def test_reserve_landing_hides_availability_buttons_without_public_url(self):
+        """/esb-reserve omits inert Availability buttons when no URL is configured."""
+        self.app.config['STATIC_PAGE_PUBLIC_URL'] = ''
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'trigger_id': 'T123',
+            'user_id': 'U123',
+            'channel_id': 'C123',
+        }
+
+        self.handlers['command:/esb-reserve'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        modal = client.views_open.call_args.kwargs['view']
+        action_blocks = [
+            block for block in modal['blocks']
+            if block.get('block_id', '').startswith('reservation_tool_')
+            and block.get('type') == 'actions'
+        ]
+        assert action_blocks
+        for block in action_blocks:
+            assert [element['text']['text'] for element in block['elements']] == ['Reserve']
+
+    def test_reserve_button_updates_to_one_tool_availability_modal(self):
+        """Flow 2: clicking Reserve updates to the selected tool availability modal."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'trigger_id': 'T456',
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': str(self.cnc.id)}],
+        }
+
+        self.handlers['action:reservation_start_reserve'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_availability'
+        assert modal['title']['text'] == 'Reserve CNC Router'
+        assert modal['submit']['text'] == 'Reserve'
+        assert modal['private_metadata'] == str(self.cnc.id)
+
+        rendered_text = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'section'
+        )
+        rendered_context = '\n'.join(
+            element['text']
+            for block in modal['blocks']
+            if block.get('type') == 'context'
+            for element in block.get('elements', [])
+        )
+        rendered_headers = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'header'
+        )
+        assert '*Limits:* 30 min-2 hours reservations; 2 hours-14 days advance notice.' in rendered_context
+        assert 'Existing Reservations' in rendered_headers
+        assert 'Reservation Request' in rendered_headers
+        assert '*Today*' in rendered_text
+        assert '*Tomorrow*' in rendered_text
+        assert 'No existing reservations' in rendered_text
+        assert 'Unavailable: ' in rendered_text
+
+        today_block = [
+            block for block in modal['blocks']
+            if block.get('block_id') == 'reservation_booked_day_0_block'
+        ][0]
+        assert 'No existing reservations' not in today_block['text']['text']
+
+        input_blocks = {
+            block['block_id']: block
+            for block in modal['blocks']
+            if block.get('type') == 'input'
+        }
+        input_block_ids = [
+            block['block_id']
+            for block in modal['blocks']
+            if block.get('type') == 'input'
+        ]
+        assert input_block_ids == [
+            'reservation_notes_block',
+            'reservation_start_at_block',
+            'reservation_end_at_block',
+        ]
+        assert sorted(input_blocks) == [
+            'reservation_end_at_block',
+            'reservation_notes_block',
+            'reservation_start_at_block',
+        ]
+        assert input_blocks['reservation_start_at_block']['element']['type'] == 'datetimepicker'
+        assert input_blocks['reservation_start_at_block']['element']['action_id'] == 'reservation_start_at'
+        assert 'initial_date_time' in input_blocks['reservation_start_at_block']['element']
+        assert input_blocks['reservation_start_at_block']['label']['text'] == 'Requested Start'
+        assert input_blocks['reservation_end_at_block']['element']['type'] == 'datetimepicker'
+        assert input_blocks['reservation_end_at_block']['element']['action_id'] == 'reservation_end_at'
+        start_initial = input_blocks['reservation_start_at_block']['element']['initial_date_time']
+        end_initial = input_blocks['reservation_end_at_block']['element']['initial_date_time']
+        assert (
+            end_initial
+            - start_initial
+            == 30 * 60
+        )
+        assert datetime.fromtimestamp(start_initial, UTC).minute in (0, 30)
+        assert datetime.fromtimestamp(end_initial, UTC).minute in (0, 30)
+        assert input_blocks['reservation_end_at_block']['label']['text'] == 'Requested End'
+        assert 'optional' not in input_blocks['reservation_notes_block']
+        assert input_blocks['reservation_notes_block']['element']['type'] == 'plain_text_input'
+        assert input_blocks['reservation_notes_block']['element']['multiline'] is True
+        assert input_blocks['reservation_notes_block']['label']['text'] == 'Note'
+
+    def test_availability_modal_groups_bookings_by_start_day(self):
+        """Flow 2: midnight-crossing reservations appear only on their start day."""
+        from esb.slack.reservation_forms import build_reservation_availability_modal
+
+        now = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+        local_tz = now.astimezone().tzinfo
+        local_midnight = datetime.combine(
+            now.astimezone().date() + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=local_tz,
+        )
+        starts_at = local_midnight - timedelta(minutes=30)
+        ends_at = local_midnight + timedelta(minutes=30)
+        item = {
+            'id': self.laser.id,
+            'name': self.laser.name,
+            'min_advance_notice_minutes': 120,
+            'max_advance_notice_minutes': 14 * 24 * 60,
+            'min_duration_minutes': 30,
+            'max_duration_minutes': 120,
+            'slot_granularity_minutes': 30,
+            'reservations': [
+                {
+                    'starts_at': starts_at.astimezone(UTC).isoformat(),
+                    'ends_at': ends_at.astimezone(UTC).isoformat(),
+                },
+            ],
+        }
+
+        modal = build_reservation_availability_modal(
+            item,
+            now=now,
+        )
+
+        today_block = [
+            block for block in modal['blocks']
+            if block.get('block_id') == 'reservation_booked_day_0_block'
+        ][0]
+        tomorrow_block = [
+            block for block in modal['blocks']
+            if block.get('block_id') == 'reservation_booked_day_1_block'
+        ][0]
+        assert 'Unavailable: 11:30 PM-12:30 AM' in today_block['text']['text']
+        assert 'Unavailable: 11:30 PM-12:30 AM' not in tomorrow_block['text']['text']
+        assert 'No existing reservations' in tomorrow_block['text']['text']
+
+    def test_availability_modal_defaults_follow_reservation_settings(self):
+        """Flow 2: default picker times align to the tool's configured policy."""
+        from esb.slack.reservation_forms import build_reservation_availability_modal
+
+        item = {
+            'id': self.laser.id,
+            'name': self.laser.name,
+            'min_advance_notice_minutes': 180,
+            'max_advance_notice_minutes': 14 * 24 * 60,
+            'min_duration_minutes': 120,
+            'max_duration_minutes': 240,
+            'slot_granularity_minutes': 60,
+            'reservations': [],
+        }
+
+        modal = build_reservation_availability_modal(
+            item,
+            now=datetime(2026, 6, 20, 12, 45, tzinfo=UTC),
+        )
+        booked_blocks = [
+            block for block in modal['blocks']
+            if block.get('block_id', '').startswith('reservation_booked_')
+        ]
+        assert [block['block_id'] for block in booked_blocks] == [
+            'reservation_booked_empty_block',
+        ]
+        assert booked_blocks[0]['text']['text'] == 'No existing reservations'
+
+        input_blocks = {
+            block['block_id']: block
+            for block in modal['blocks']
+            if block.get('type') == 'input'
+        }
+        start_initial = input_blocks['reservation_start_at_block']['element']['initial_date_time']
+        end_initial = input_blocks['reservation_end_at_block']['element']['initial_date_time']
+
+        start = datetime.fromtimestamp(start_initial, UTC)
+        end = datetime.fromtimestamp(end_initial, UTC)
+        assert start.minute == 0
+        assert start.hour == 16
+        assert end - start == timedelta(minutes=120)
+
+    def _future_aligned_window(self, *, hours_from_now=2, duration_minutes=60):
+        now = datetime.now(UTC).replace(second=0, microsecond=0)
+        minutes_to_next_half_hour = (30 - (now.minute % 30)) % 30
+        starts_at = now + timedelta(minutes=minutes_to_next_half_hour, hours=hours_from_now)
+        ends_at = starts_at + timedelta(minutes=duration_minutes)
+        return int(starts_at.timestamp()), int(ends_at.timestamp())
+
+    def _reservation_submission_view(self, equipment_id, start_timestamp, end_timestamp, notes='Table saw checkout'):
+        return {
+            'private_metadata': str(equipment_id),
+            'state': {
+                'values': {
+                    'reservation_notes_block': {
+                        'reservation_notes': {'value': notes},
+                    },
+                    'reservation_start_at_block': {
+                        'reservation_start_at': {'selected_date_time': start_timestamp},
+                    },
+                    'reservation_end_at_block': {
+                        'reservation_end_at': {'selected_date_time': end_timestamp},
+                    },
+                },
+            },
+        }
+
+    def test_reservation_submission_updates_modal_to_confirmation(self):
+        """Flow 3: successful reservation submit updates the modal to confirmation."""
+        start_timestamp, end_timestamp = self._future_aligned_window()
+        ack = MagicMock()
+        client = MagicMock()
+        def users_info_side_effect(user):
+            assert ack.called
+            return {'user': {'profile': {'email': self.user.email}}}
+        client.users_info.side_effect = users_info_side_effect
+        body = {'user': {'id': 'U123'}, 'view': {'id': 'V123'}}
+        view = self._reservation_submission_view(self.laser.id, start_timestamp, end_timestamp)
+
+        self.handlers['view:reservation_availability'](ack=ack, body=body, client=client, view=view)
+
+        ack.assert_called_once()
+        kwargs = ack.call_args.kwargs
+        assert kwargs['response_action'] == 'update'
+        assert kwargs['view']['callback_id'] == 'reservation_processing'
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_confirmation'
+        rendered_text = modal['blocks'][0]['text']['text']
+        assert '*Reservation confirmed*' in rendered_text
+        assert 'Tool: Laser Cutter' in rendered_text
+        assert 'Note: Table saw checkout' in rendered_text
+        actions = modal['blocks'][1]['elements']
+        assert actions[0]['text']['text'] == 'Cancel reservation'
+        assert actions[0]['action_id'] == 'reservation_cancel_start'
+        assert actions[1]['text']['text'] == 'View my reservations'
+        assert actions[1]['action_id'] == 'reservation_view_mine'
+
+        from esb.models.reservation import Reservation
+        reservations = Reservation.query.filter_by(equipment_id=self.laser.id).all()
+        assert len(reservations) == 1
+        assert reservations[0].user_id == self.user.id
+        assert reservations[0].notes == 'Table saw checkout'
+        assert reservations[0].created_via == 'slack'
+        assert actions[0]['value'] == str(reservations[0].id)
+
+    def test_reservation_submission_updates_modal_to_unavailable_on_conflict(self):
+        """Flow 3: conflicting reservation submit shows retry modal."""
+        start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=4)
+        existing = Reservation(
+            equipment_id=self.laser.id,
+            user_id=self.user.id,
+            starts_at=datetime.fromtimestamp(start_timestamp, UTC).replace(tzinfo=None),
+            ends_at=datetime.fromtimestamp(end_timestamp, UTC).replace(tzinfo=None),
+            status='active',
+            notes='future conflict',
+            created_via='slack',
+        )
+        self.db.session.add(existing)
+        self.db.session.commit()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {'user': {'id': 'U123'}, 'view': {'id': 'V123'}}
+        view = self._reservation_submission_view(self.laser.id, start_timestamp, end_timestamp)
+
+        self.handlers['view:reservation_availability'](ack=ack, body=body, client=client, view=view)
+
+        ack.assert_called_once()
+        kwargs = ack.call_args.kwargs
+        assert kwargs['response_action'] == 'update'
+        assert kwargs['view']['callback_id'] == 'reservation_processing'
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_unavailable'
+        assert modal['private_metadata'] == str(self.laser.id)
+        rendered_text = modal['blocks'][0]['text']['text']
+        assert '*That time is no longer available*' in rendered_text
+        assert 'Reservation overlaps an existing reservation' in rendered_text
+        retry_actions = modal['blocks'][1]['elements']
+        assert retry_actions[0]['text']['text'] == 'Choose another time'
+        assert retry_actions[0]['action_id'] == 'reservation_choose_another_time'
+
+    def test_choose_another_time_updates_error_modal_back_to_time_picker(self):
+        """Unavailable modal retry button returns to Flow 2 for the selected tool."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': str(self.cnc.id)}],
+        }
+
+        self.handlers['action:reservation_choose_another_time'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_availability'
+        rendered_headers = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'header'
+        )
+        assert 'Reservation Request' in rendered_headers
+
+    def test_view_my_reservations_pushes_upcoming_reservations_modal(self):
+        """Flow 4: shared View my reservations action lists the user's future reservations."""
+        start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=5)
+        future = Reservation(
+            equipment_id=self.laser.id,
+            user_id=self.user.id,
+            starts_at=datetime.fromtimestamp(start_timestamp, UTC).replace(tzinfo=None),
+            ends_at=datetime.fromtimestamp(end_timestamp, UTC).replace(tzinfo=None),
+            status='active',
+            notes='future reservation',
+            created_via='slack',
+        )
+        self.db.session.add(future)
+        self.db.session.commit()
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'trigger_id': 'T789',
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': 'stub-my-reservations'}],
+        }
+
+        self.handlers['action:reservation_view_mine'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_mine'
+        assert modal['title']['text'] == 'My Reservations'
+        rendered_text = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'section'
+        )
+        assert '*Laser Cutter*' in rendered_text
+        assert 'future reservation' not in rendered_text
+        actions = [
+            block for block in modal['blocks']
+            if block.get('block_id') == f'reservation_{future.id}_actions_block'
+        ][0]
+        assert actions['elements'][0]['text']['text'] == 'Cancel'
+        assert actions['elements'][0]['action_id'] == 'reservation_cancel_start'
+
+        footer_actions = [
+            block for block in modal['blocks']
+            if block.get('block_id') == 'reservation_mine_actions_block'
+        ][0]
+        assert footer_actions['elements'][0]['text']['text'] == 'Reserve another tool'
+        assert footer_actions['elements'][0]['action_id'] == 'reservation_reserve_another'
+
+    def test_view_my_reservations_unlinked_user_updates_to_error_modal(self):
+        """Flow 4: modal action errors do not require a Slack channel."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': 'missing@example.test'}},
+        }
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': 'stub-my-reservations'}],
+        }
+
+        self.handlers['action:reservation_view_mine'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.chat_postEphemeral.assert_not_called()
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_error'
+        assert 'Your Slack account is not linked to an ESB user.' in modal['blocks'][0]['text']['text']
+
+    def test_reserve_another_tool_updates_to_landing_modal(self):
+        """Flow 4 footer action returns to Flow 1 tool selection."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': 'reserve-another-tool'}],
+        }
+
+        self.handlers['action:reservation_reserve_another'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        assert client.views_update.call_args.kwargs['view_id'] == 'V123'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_landing'
+        assert modal['title']['text'] == 'Makerspace Tools'
+        rendered_text = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'section'
+        )
+        assert '*Laser Cutter*' in rendered_text
+        assert '*CNC Router*' in rendered_text
+
+    def test_cancel_button_updates_to_cancel_confirmation_modal(self):
+        """Flow 5: clicking Cancel asks for confirmation before canceling."""
+        start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=5)
+        future = Reservation(
+            equipment_id=self.laser.id,
+            user_id=self.user.id,
+            starts_at=datetime.fromtimestamp(start_timestamp, UTC).replace(tzinfo=None),
+            ends_at=datetime.fromtimestamp(end_timestamp, UTC).replace(tzinfo=None),
+            status='active',
+            notes='future reservation',
+            created_via='slack',
+        )
+        self.db.session.add(future)
+        self.db.session.commit()
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': str(future.id)}],
+        }
+
+        self.handlers['action:reservation_cancel_start'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_cancel_confirm'
+        assert modal['private_metadata'] == str(future.id)
+        assert modal['title']['text'] == 'Cancel reservation?'
+        rendered_text = modal['blocks'][0]['text']['text']
+        assert '*Laser Cutter*' in rendered_text
+        assert 'This will make the time available to other members.' in rendered_text
+        actions = modal['blocks'][1]['elements']
+        assert actions[0]['text']['text'] == 'Keep reservation'
+        assert actions[0]['action_id'] == 'reservation_cancel_keep'
+        assert actions[1]['text']['text'] == 'Cancel it'
+        assert actions[1]['action_id'] == 'reservation_cancel_confirm'
+
+    def test_cancel_stale_reservation_updates_to_error_modal(self):
+        """Flow 5: stale cancel buttons update the modal instead of posting ephemerally."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': '999999'}],
+        }
+
+        self.handlers['action:reservation_cancel_start'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.chat_postEphemeral.assert_not_called()
+        client.views_update.assert_called_once()
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_error'
+        assert 'That reservation is no longer available to cancel.' in modal['blocks'][0]['text']['text']
+
+    def test_keep_reservation_returns_to_my_reservations(self):
+        """Flow 5: keeping a reservation returns to the user's reservation list."""
+        start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=5)
+        future = Reservation(
+            equipment_id=self.laser.id,
+            user_id=self.user.id,
+            starts_at=datetime.fromtimestamp(start_timestamp, UTC).replace(tzinfo=None),
+            ends_at=datetime.fromtimestamp(end_timestamp, UTC).replace(tzinfo=None),
+            status='active',
+            notes='future reservation',
+            created_via='slack',
+        )
+        self.db.session.add(future)
+        self.db.session.commit()
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': str(future.id)}],
+        }
+
+        self.handlers['action:reservation_cancel_keep'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_mine'
+        rendered_text = '\n'.join(
+            block['text']['text']
+            for block in modal['blocks']
+            if block.get('type') == 'section'
+        )
+        assert '*Laser Cutter*' in rendered_text
+
+    def test_cancel_confirmation_cancels_reservation_and_shows_result(self):
+        """Flow 5: confirming cancellation marks the reservation canceled."""
+        self.app.config['STATIC_PAGE_PUBLIC_URL'] = 'http://example.test/status'
+        start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=5)
+        future = Reservation(
+            equipment_id=self.laser.id,
+            user_id=self.user.id,
+            starts_at=datetime.fromtimestamp(start_timestamp, UTC).replace(tzinfo=None),
+            ends_at=datetime.fromtimestamp(end_timestamp, UTC).replace(tzinfo=None),
+            status='active',
+            notes='future reservation',
+            created_via='slack',
+        )
+        self.db.session.add(future)
+        self.db.session.commit()
+
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': str(future.id)}],
+        }
+
+        self.handlers['action:reservation_cancel_confirm'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        self.db.session.refresh(future)
+        assert future.status == 'canceled'
+        assert future.canceled_by_user_id == self.user.id
+        client.views_update.assert_called_once()
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_canceled'
+        rendered_text = modal['blocks'][0]['text']['text']
+        assert '*Reservation canceled*' in rendered_text
+        assert 'Laser Cutter is no longer reserved for' in rendered_text
+        actions = modal['blocks'][1]['elements']
+        assert actions[0]['text']['text'] == 'Reserve another tool'
+        assert actions[0]['action_id'] == 'reservation_reserve_another'
+        assert actions[1]['text']['text'] == 'View availability'
+        assert actions[1]['url'] == 'http://example.test/status'
 
 
 class TestProblemReportSubmission:

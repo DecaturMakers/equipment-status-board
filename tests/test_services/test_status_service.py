@@ -360,6 +360,16 @@ class TestGetAreaStatusDashboard:
         result = status_service.get_area_status_dashboard()
         assert result[0]['equipment'][0]['open_records'] == []
 
+    def test_dashboard_payload_has_no_reservation_summary(
+        self, app, make_area, make_equipment,
+    ):
+        area = make_area(name='Shop')
+        make_equipment(name='Tool', area=area)
+
+        result = status_service.get_area_status_dashboard()
+
+        assert 'reservation' not in result[0]['equipment'][0]
+
 
 class TestGetEquipmentStatusDetail:
     """Tests for get_equipment_status_detail()."""

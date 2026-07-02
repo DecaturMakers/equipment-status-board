@@ -422,6 +422,43 @@ class TestStatusDashboardView:
         )
         assert section_headings == ['Area B', 'Area C', 'Area A']
 
+    def test_dashboard_omits_reservation_summary_for_reservable_equipment(
+        self, client, make_area, make_equipment,
+    ):
+        from esb.extensions import db
+        from esb.models.equipment_reservation_settings import EquipmentReservationSettings
+
+        area = make_area(name='Shop')
+        equipment = make_equipment(name='Reservable Tool', area=area)
+        db.session.add(EquipmentReservationSettings(
+            equipment_id=equipment.id,
+            reservation_slug=f'{equipment.id}-dashboard',
+            reservations_enabled=True,
+            min_advance_notice_minutes=120,
+            max_advance_notice_minutes=14 * 24 * 60,
+            min_duration_minutes=30,
+            max_duration_minutes=120,
+            slot_granularity_minutes=30,
+        ))
+        db.session.commit()
+
+        response = client.get('/public/')
+
+        assert b'Reservable Tool' in response.data
+        assert b'Available now' not in response.data
+        assert b'Reserved until' not in response.data
+        assert b'Next reservation' not in response.data
+
+    def test_dashboard_omits_reservation_summary_for_non_reservable_equipment(
+        self, client, make_area, make_equipment,
+    ):
+        area = make_area(name='Shop')
+        make_equipment(name='Ordinary Tool', area=area)
+
+        response = client.get('/public/')
+
+        assert b'Available now' not in response.data
+
 
 class TestKioskView:
     """Tests for the kiosk display route."""
