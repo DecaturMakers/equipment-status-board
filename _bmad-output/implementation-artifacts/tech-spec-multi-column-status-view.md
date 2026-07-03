@@ -2,7 +2,7 @@
 title: 'Multi-Column Kiosk Status Views'
 slug: 'multi-column-status-view'
 created: '2026-07-02'
-status: 'ready-for-dev'
+status: 'Completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['Python 3.14', 'Flask', 'Flask blueprints', 'Jinja2', 'Bootstrap 5', 'vanilla JS', 'pytest']
 files_to_modify: ['esb/views/public.py', 'esb/templates/public/kiosk_dense.html (new)', 'esb/static/css/app.css', 'esb/templates/public/status_dashboard.html', 'tests/test_views/test_public_views.py']
@@ -142,7 +142,7 @@ on `/public/`.
 
 ### Tasks
 
-- [ ] **Task 1: Add the `kiosk_dense` route to the public blueprint.**
+- [x] **Task 1: Add the `kiosk_dense` route to the public blueprint.**
   - File: `esb/views/public.py`
   - Action: Add a new route right after `kiosk_area` (line 54):
     ```python
@@ -169,7 +169,7 @@ on `/public/`.
     is a string, so this never collides with the existing
     `/kiosk/<int:area_id>` route.
 
-- [ ] **Task 2: Create the dense kiosk template.**
+- [x] **Task 2: Create the dense kiosk template.**
   - File: `esb/templates/public/kiosk_dense.html` (new)
   - Action: Extend `base_kiosk.html`, wrap all content in
     `<div id="kiosk-scale-content" class="kiosk-scale-wrapper">` so the existing
@@ -229,7 +229,7 @@ on `/public/`.
     `static_page.html:65-66` to preserve identical semantics. Do not put anything
     other than the scale wrapper on `#kiosk-scale-content`.
 
-- [ ] **Task 3: Add dense-kiosk CSS.**
+- [x] **Task 3: Add dense-kiosk CSS.**
   - File: `esb/static/css/app.css`
   - Action: Add the following near the existing "Kiosk display" block (after
     line 97). Status colors use Bootstrap CSS variables (`--bs-success` etc.);
@@ -293,7 +293,7 @@ on `/public/`.
     unbroken equipment name can't overflow its `1fr` cell and force uniform
     down-scaling.
 
-- [ ] **Task 4: Add the two dropdown entries.**
+- [x] **Task 4: Add the two dropdown entries.**
   - File: `esb/templates/public/status_dashboard.html`
   - Action: Immediately after the "All Equipment" list item (line 19), add:
     ```jinja
@@ -310,7 +310,7 @@ on `/public/`.
     requires a digit immediately after `/kiosk/`, which `/public/kiosk/dense/2`
     does not match. Covered explicitly by the new empty-board dropdown test (AC 11).
 
-- [ ] **Task 5: Add tests for the new route and dropdown.**
+- [x] **Task 5: Add tests for the new route and dropdown.**
   - File: `tests/test_views/test_public_views.py`
   - Action: Add tests (see Testing Strategy for the full list) covering: 2-col
     and 3-col render 200 and include equipment/area/record content; invalid
@@ -442,3 +442,33 @@ records, and that the 2-col vs 3-col grids differ.
 - **Future consideration:** per-area dense variants (like the existing per-area
   kiosk entries) could be added later by parameterizing the route with an area id;
   not requested now.
+
+## Review Notes
+
+- Adversarial review completed (13 findings).
+- Resolution approach: auto-fix "real" findings.
+- Findings: 13 total, 3 fixed, 10 skipped.
+  - **Fixed:**
+    - **F3** (Medium/real): restored the "revisit red/yellow/gray mapping when
+      `REPAIR_SEVERITIES` changes" warning comment in `kiosk_dense.html`.
+    - **F5** (Medium/real): added `test_dense_null_severity_record_gray_no_badge`
+      covering the null/unknown-severity branch (gray border, hidden badge,
+      yellow dot).
+    - **F7** (Low/real): simplified the dead guard
+      `item.status.color != 'green' and item.open_records` → `item.open_records`
+      (non-empty open_records always implies non-green).
+  - **Skipped (real, but intentional / out-of-scope):**
+    - **F1** (High/real, duplication): the only true dedup shares logic with
+      `static_page.html`, which is frozen out-of-scope and byte-for-byte
+      guarded by AC 10; factoring it would violate that AC. Left as-is.
+    - **F8** (Low): duplicate ETA (summary line vs. top record) is intentional
+      parity with `static_page.html`.
+    - **F9** (Low): `.kiosk-dense-record-gray` kept for red/yellow/gray symmetry
+      and to pin gray independent of the default border color.
+    - **F10** (Low): generic `record-*` class names are already scoped under
+      `.kiosk-dense-grid` (no runtime clash); renaming would reduce intentional
+      parity with the source template.
+  - **Skipped (undecided/noise or accepted trade-off already documented above):**
+    F2 (over-shrink), F4 (gray-vs-yellow, now test-documented), F6 (row-major
+    grid), F11 (tests framework behavior), F12 (inline-style CSP), F13
+    ("Operational" label density).

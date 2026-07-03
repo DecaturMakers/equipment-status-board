@@ -96,6 +96,46 @@ th.sortable:hover {
     transform-origin: top left;
 }
 
+/* Multi-column dense kiosk (static-page style) */
+.kiosk-dense-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--kiosk-dense-cols), 1fr);
+    gap: 1rem 1.5rem;
+    align-items: start;
+}
+.kiosk-dense-grid .kiosk-dense-area-heading {
+    font-size: 1.5rem;
+    border-bottom: 2px solid var(--bs-border-color, #dee2e6);
+    padding-bottom: 0.25rem;
+    margin-bottom: 0.4rem;
+}
+.kiosk-dense-grid .kiosk-dense-list { list-style: none; padding-left: 0; margin: 0; }
+.kiosk-dense-grid .kiosk-dense-item { padding: 0.15rem 0; }
+.kiosk-dense-grid .kiosk-dense-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.kiosk-dense-grid .status-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+}
+.kiosk-dense-grid .status-dot.status-green { background-color: var(--bs-success); }
+.kiosk-dense-grid .status-dot.status-yellow { background-color: var(--bs-warning); }
+.kiosk-dense-grid .status-dot.status-red { background-color: var(--bs-danger); }
+.kiosk-dense-grid .kiosk-dense-name { font-weight: 600; overflow-wrap: anywhere; }
+.kiosk-dense-grid .kiosk-dense-status,
+.kiosk-dense-grid .kiosk-dense-eta { color: var(--bs-secondary-color, #6c757d); font-size: 0.9rem; }
+.kiosk-dense-grid .kiosk-dense-records { list-style: none; margin: 0.2rem 0 0.3rem 1.5rem; padding-left: 0; }
+.kiosk-dense-grid .kiosk-dense-record {
+    font-size: 0.85rem; padding: 0.15rem 0.4rem; margin-bottom: 0.15rem;
+    border-left: 3px solid var(--bs-secondary-color, #6c757d);
+    background: var(--bs-body-bg, #fff);
+}
+.kiosk-dense-grid .kiosk-dense-record-red { border-left-color: var(--bs-danger); }
+.kiosk-dense-grid .kiosk-dense-record-yellow { border-left-color: var(--bs-warning); }
+.kiosk-dense-grid .kiosk-dense-record-gray { border-left-color: var(--bs-secondary-color, #6c757d); }
+.kiosk-dense-grid .kiosk-dense-record .record-status { font-weight: 600; }
+.kiosk-dense-grid .kiosk-dense-record .record-severity,
+.kiosk-dense-grid .kiosk-dense-record .record-eta { color: var(--bs-secondary-color, #6c757d); }
+.kiosk-dense-grid .kiosk-dense-record .record-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* QR code equipment page */
 .qr-page-hero {
     max-width: 600px;
