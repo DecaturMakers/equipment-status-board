@@ -9,6 +9,12 @@ _STATUS_EMOJI = {
 
 _NON_GREEN_DESC_TRUNCATE = 80
 
+# Slack Block Kit hard-caps a section's text at 3000 characters; exceeding it
+# makes views_open/views_update fail with invalid_blocks. Repair descriptions
+# are unbounded (db.Text), so a single verbose record can blow past this — clamp
+# every modal section's mrkdwn to this limit.
+_SECTION_TEXT_LIMIT = 3000
+
 
 def _truncate(text: str, limit: int) -> str:
     """Truncate text to limit, appending an ellipsis when shortened."""
@@ -148,7 +154,7 @@ def build_status_summary_modal(dashboard_data):
         modal['blocks'].append({
             'type': 'section',
             'block_id': f'esb_status_area_{area.id}_block',
-            'text': {'type': 'mrkdwn', 'text': _area_summary_mrkdwn(area_data)},
+            'text': {'type': 'mrkdwn', 'text': _truncate(_area_summary_mrkdwn(area_data), _SECTION_TEXT_LIMIT)},
             'accessory': {
                 'type': 'button',
                 'text': {'type': 'plain_text', 'text': 'View details'},
@@ -181,7 +187,10 @@ def build_area_status_modal(area_data):
         'blocks': [
             {
                 'type': 'section',
-                'text': {'type': 'mrkdwn', 'text': format_area_status_detail(area_data)},
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': _truncate(format_area_status_detail(area_data), _SECTION_TEXT_LIMIT),
+                },
             },
             {'type': 'divider'},
             {

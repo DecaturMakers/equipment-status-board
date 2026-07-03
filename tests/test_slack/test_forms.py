@@ -662,6 +662,23 @@ class TestBuildStatusSummaryModal:
         assert len(modal['blocks']) == 1
         assert 'No equipment has been registered yet.' in modal['blocks'][0]['text']['text']
 
+    def test_oversized_area_section_truncated_to_3000(self, app, make_area, make_equipment, make_repair_record):
+        """A verbose repair description cannot push a section past Slack's 3000-char cap."""
+        from esb.services import status_service
+        from esb.slack.forms import build_status_summary_modal
+
+        area = make_area('Woodshop', '#wood')
+        eq_down = make_equipment('SawStop', 'SawStop', 'PCS', area=area)
+        make_repair_record(equipment=eq_down, status='New', severity='Down', description='X' * 5000)
+
+        dashboard = status_service.get_area_status_dashboard()
+        modal = build_status_summary_modal(dashboard)
+
+        area_sections = [b for b in modal['blocks'] if b.get('block_id', '').startswith('esb_status_area_')]
+        assert area_sections
+        for section in area_sections:
+            assert len(section['text']['text']) <= 3000
+
 
 class TestBuildAreaStatusModal:
     """Tests for build_area_status_modal()."""
@@ -712,3 +729,19 @@ class TestBuildAreaStatusModal:
         area_data = status_service.get_single_area_status_dashboard(area.id)
         modal = build_area_status_modal(area_data)
         assert len(modal['title']['text']) == 24
+
+    def test_oversized_detail_section_truncated_to_3000(self, app, make_area, make_equipment, make_repair_record):
+        """A verbose repair description cannot push the detail section past 3000 chars."""
+        from esb.services import status_service
+        from esb.slack.forms import build_area_status_modal
+
+        area = make_area('Woodshop', '#wood')
+        eq_down = make_equipment('SawStop', 'SawStop', 'PCS', area=area)
+        make_repair_record(equipment=eq_down, status='New', severity='Down', description='X' * 5000)
+
+        area_data = status_service.get_single_area_status_dashboard(area.id)
+        modal = build_area_status_modal(area_data)
+
+        for block in modal['blocks']:
+            if block['type'] == 'section':
+                assert len(block['text']['text']) <= 3000
