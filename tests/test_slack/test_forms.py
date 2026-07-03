@@ -258,162 +258,6 @@ class TestBuildRepairCreateModal:
         assert 'assignee_block' not in block_ids
 
 
-class TestFormatStatusSummary:
-    """Tests for format_status_summary()."""
-
-    def test_multiple_areas(self, app, make_area, make_equipment, make_repair_record):
-        """Formats all areas with correct counts."""
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area1 = make_area('Woodshop', '#wood')
-        area2 = make_area('Metal Shop', '#metal')
-        make_equipment('SawStop', 'SawStop', 'PCS', area=area1)
-        eq2 = make_equipment('Band Saw', 'Jet', 'JWBS', area=area1)
-        make_repair_record(equipment=eq2, status='New', severity='Degraded', description='Belt issue')
-        make_equipment('Welder', 'Lincoln', '210MP', area=area2)
-
-        dashboard = status_service.get_area_status_dashboard()
-        result = format_status_summary(dashboard)
-
-        assert 'Equipment Status Summary' in result
-        assert 'Woodshop' in result
-        assert 'Metal Shop' in result
-        assert '1 :white_check_mark: operational' in result
-        assert '1 :warning: degraded' in result
-
-    def test_empty(self, app):
-        """Returns 'No equipment' for empty dashboard."""
-        from esb.slack.forms import format_status_summary
-
-        result = format_status_summary([])
-        assert result == 'No equipment has been registered yet.'
-
-    def test_all_green(self, app, make_area, make_equipment):
-        """All counts show 0 for degraded/down when all green."""
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area = make_area('Lab', '#lab')
-        make_equipment('Scope', 'Tek', 'TDS', area=area)
-        make_equipment('DMM', 'Fluke', '87V', area=area)
-
-        dashboard = status_service.get_area_status_dashboard()
-        result = format_status_summary(dashboard)
-
-        assert '2 :white_check_mark: operational' in result
-        assert '0 :warning: degraded' in result
-        assert '0 :x: down' in result
-
-    def test_non_green_items_listed_under_area(self, app, make_area, make_equipment, make_repair_record):
-        """AC 7: each non-green equipment is listed as a bullet under its area's count line."""
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area = make_area('Woodshop', '#wood')
-        eq_down = make_equipment('SawStop', 'SawStop', 'PCS', area=area)
-        eq_degraded = make_equipment('Band Saw', 'Jet', 'JWBS', area=area)
-        make_equipment('Drill Press', 'Jet', 'DP', area=area)  # green
-        make_repair_record(equipment=eq_down, status='New', severity='Down', description='Motor burned out')
-        make_repair_record(equipment=eq_degraded, status='New', severity='Degraded', description='Belt slipping')
-
-        dashboard = status_service.get_area_status_dashboard()
-        result = format_status_summary(dashboard)
-
-        # Bullets for each non-green item appear under the area count line.
-        assert ':x: *SawStop*' in result
-        assert ':warning: *Band Saw*' in result
-        assert 'Motor burned out' in result
-        assert 'Belt slipping' in result
-        # Green item does not get a bullet.
-        assert '*Drill Press*' not in result
-
-    def test_truncates_long_description_at_80(self, app, make_area, make_equipment, make_repair_record):
-        """Descriptions longer than 80 chars are truncated with an ellipsis."""
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area = make_area('Lab', '#lab')
-        eq = make_equipment('Tool', 'TC', 'TM', area=area)
-        long_desc = 'X' * 200
-        make_repair_record(equipment=eq, status='New', severity='Down', description=long_desc)
-
-        dashboard = status_service.get_area_status_dashboard()
-        result = format_status_summary(dashboard)
-
-        # Should not contain the full 200 X's but should contain a truncated form.
-        assert 'X' * 200 not in result
-        assert '\u2026' in result  # ellipsis
-
-    def test_eta_shown_when_present(self, app, make_area, make_equipment, make_repair_record):
-        """ETA is shown when present in status."""
-        from datetime import date
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area = make_area('Shop', '#shop')
-        eq = make_equipment('Lathe', 'X', 'M', area=area)
-        make_repair_record(equipment=eq, status='New', severity='Down', description='broken', eta=date(2026, 6, 15))
-
-        dashboard = status_service.get_area_status_dashboard()
-        result = format_status_summary(dashboard)
-        assert 'Jun 15, 2026' in result
-
-    def test_footer_hint_present(self, app, make_area, make_equipment):
-        """AC 8: footer hint appears at the end of the summary."""
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area = make_area('Lab', '#lab')
-        make_equipment('Scope', 'Tek', 'TDS', area=area)
-        dashboard = status_service.get_area_status_dashboard()
-        result = format_status_summary(dashboard)
-        assert '/esb-status <area name>' in result
-        assert 'full details on one area' in result
-
-    def test_all_green_area_no_equipment_bullets(self, app, make_area, make_equipment):
-        """AC 36: area with all-green equipment shows count line, no bullets beneath."""
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area = make_area('Lab', '#lab')
-        make_equipment('Scope', 'Tek', 'TDS', area=area)
-        make_equipment('DMM', 'Fluke', '87V', area=area)
-        dashboard = status_service.get_area_status_dashboard()
-        result = format_status_summary(dashboard)
-        # The count line is present.
-        assert 'Lab' in result
-        # And no equipment item is rendered as a bullet (no per-item lines).
-        assert '*Scope*' not in result
-        assert '*DMM*' not in result
-
-    def test_empty_returns_unchanged_text(self, app):
-        """AC 7 empty-state preservation."""
-        from esb.slack.forms import format_status_summary
-        assert format_status_summary([]) == 'No equipment has been registered yet.'
-
-    def test_format_status_summary_respects_area_sort_order(
-        self, app, make_area, make_equipment,
-    ):
-        """Per-area lines follow (sort_order, name) ordering."""
-        from esb.services import status_service
-        from esb.slack.forms import format_status_summary
-
-        area_a = make_area('Area A', '#a', sort_order=10)
-        area_b = make_area('Area B', '#b', sort_order=5)
-        area_c = make_area('Area C', '#c', sort_order=5)
-        make_equipment('Tool A', 'X', 'M', area=area_a)
-        make_equipment('Tool B', 'X', 'M', area=area_b)
-        make_equipment('Tool C', 'X', 'M', area=area_c)
-
-        summary = format_status_summary(status_service.get_area_status_dashboard())
-        pos_b = summary.find('Area B')
-        pos_c = summary.find('Area C')
-        pos_a = summary.find('Area A')
-        assert pos_b >= 0 and pos_c >= 0 and pos_a >= 0, summary
-        assert pos_b < pos_c < pos_a
-
-
 class TestFormatAreaStatusDetail:
     """Tests for format_area_status_detail()."""
 
@@ -743,76 +587,128 @@ class TestRepairCreateModalStatusFilter:
         assert 'Closed - Duplicate' not in values
 
 
-class TestFormatEquipmentStatusDetail:
-    """Tests for format_equipment_status_detail()."""
+class TestBuildStatusSummaryModal:
+    """Tests for build_status_summary_modal()."""
 
-    def test_green(self, app, make_equipment):
-        """Green shows emoji + name + Operational, no issue block."""
-        from esb.slack.forms import format_equipment_status_detail
+    def test_modal_structure_and_area_buttons(self, app, make_area, make_equipment, make_repair_record):
+        """Summary modal has one section per non-empty area with a 'View details' button."""
+        from esb.services import status_service
+        from esb.slack.forms import build_status_summary_modal
 
-        equip = make_equipment('SawStop #1', 'SawStop', 'PCS')
-        detail = {
-            'color': 'green', 'label': 'Operational',
-            'issue_description': None, 'severity': None,
-            'eta': None, 'assignee_name': None,
-        }
-        result = format_equipment_status_detail(equip, detail)
-        assert ':white_check_mark:' in result
-        assert 'SawStop #1' in result
-        assert 'Operational' in result
-        assert '>' not in result  # No blockquote lines
+        area1 = make_area('Woodshop', '#wood')
+        area2 = make_area('Metal Shop', '#metal')
+        make_equipment('SawStop', 'SawStop', 'PCS', area=area1)  # green
+        eq_down = make_equipment('Band Saw', 'Jet', 'JWBS', area=area1)
+        make_repair_record(equipment=eq_down, status='New', severity='Down', description='Motor dead')
+        make_equipment('Welder', 'Lincoln', '210MP', area=area2)  # green
 
-    def test_down_with_details(self, app, make_equipment):
-        """Down shows description, ETA, assignee."""
-        from datetime import date
-        from esb.slack.forms import format_equipment_status_detail
+        dashboard = status_service.get_area_status_dashboard()
+        modal = build_status_summary_modal(dashboard)
 
-        equip = make_equipment('SawStop #1', 'SawStop', 'PCS')
-        detail = {
-            'color': 'red', 'label': 'Down',
-            'issue_description': 'Motor makes grinding noise',
-            'severity': 'Down',
-            'eta': date(2026, 2, 20),
-            'assignee_name': 'Marcus',
-        }
-        result = format_equipment_status_detail(equip, detail)
-        assert ':x:' in result
-        assert 'Down' in result
-        assert '> Motor makes grinding noise' in result
-        assert '> ETA: Feb 20, 2026' in result
-        assert '> Assigned to: Marcus' in result
+        assert modal['type'] == 'modal'
+        assert modal['callback_id'] == 'esb_status_summary'
+        assert modal['title']['text'] == 'Equipment Status'
+        assert 'submit' not in modal
 
-    def test_degraded_no_eta(self, app, make_equipment):
-        """Degraded shows description but no ETA line."""
-        from esb.slack.forms import format_equipment_status_detail
+        # First block is the header section.
+        assert 'Equipment Status Summary' in modal['blocks'][0]['text']['text']
 
-        equip = make_equipment('Band Saw', 'Jet', 'JWBS')
-        detail = {
-            'color': 'yellow', 'label': 'Degraded',
-            'issue_description': 'Belt slipping',
-            'severity': 'Degraded',
-            'eta': None, 'assignee_name': None,
-        }
-        result = format_equipment_status_detail(equip, detail)
-        assert ':warning:' in result
-        assert 'Degraded' in result
-        assert '> Belt slipping' in result
-        assert 'ETA' not in result
+        # Each area section carries a distinct block_id and a View details button.
+        area_sections = [b for b in modal['blocks'] if b.get('block_id', '').startswith('esb_status_area_')]
+        assert len(area_sections) == 2
+        for section in area_sections:
+            accessory = section['accessory']
+            assert accessory['type'] == 'button'
+            assert accessory['action_id'] == 'esb_status_view_area'
+            assert accessory['text']['text'] == 'View details'
+
+        # The value of each button is the corresponding area id.
+        values = {s['accessory']['value'] for s in area_sections}
+        assert values == {str(area1.id), str(area2.id)}
+
+        # Non-green item name is present in the summary text.
+        assert any('Band Saw' in b['text']['text'] for b in area_sections)
+
+        # Block Kit limits (F9): modals allow ≤100 blocks and ≤3000 chars per
+        # section text.
+        assert len(modal['blocks']) <= 100
+        for block in modal['blocks']:
+            if block['type'] == 'section':
+                assert len(block['text']['text']) <= 3000
+
+    def test_empty_areas_skipped(self, app, make_area, make_equipment):
+        """Areas with no equipment produce no section."""
+        from esb.services import status_service
+        from esb.slack.forms import build_status_summary_modal
+
+        area1 = make_area('Lab', '#lab')
+        make_area('Empty', '#empty')  # no equipment
+        make_equipment('Scope', 'Tek', 'TDS', area=area1)
+
+        dashboard = status_service.get_area_status_dashboard()
+        modal = build_status_summary_modal(dashboard)
+
+        block_ids = {b.get('block_id') for b in modal['blocks']}
+        assert f'esb_status_area_{area1.id}_block' in block_ids
+        area_sections = [b for b in modal['blocks'] if b.get('block_id', '').startswith('esb_status_area_')]
+        assert len(area_sections) == 1
+
+    def test_empty_dashboard(self, app):
+        """Empty dashboard renders a single 'No equipment' section."""
+        from esb.slack.forms import build_status_summary_modal
+
+        modal = build_status_summary_modal([])
+        assert modal['callback_id'] == 'esb_status_summary'
+        assert len(modal['blocks']) == 1
+        assert 'No equipment has been registered yet.' in modal['blocks'][0]['text']['text']
 
 
-class TestFormatEquipmentList:
-    """Tests for format_equipment_list()."""
+class TestBuildAreaStatusModal:
+    """Tests for build_area_status_modal()."""
 
-    def test_lists_matches(self, app, make_area, make_equipment):
-        """Lists matching equipment with area names."""
-        from esb.slack.forms import format_equipment_list
+    def test_area_detail_modal(self, app, make_area, make_equipment, make_repair_record):
+        """Area modal title, detail text, and back button are correct."""
+        from esb.services import status_service
+        from esb.slack.forms import build_area_status_modal, format_area_status_detail
 
         area = make_area('Woodshop', '#wood')
-        eq1 = make_equipment('Band Saw', 'Jet', 'JWBS', area=area)
-        eq2 = make_equipment('SawStop #1', 'SawStop', 'PCS', area=area)
+        eq_down = make_equipment('SawStop', 'SawStop', 'PCS', area=area)
+        make_repair_record(equipment=eq_down, status='New', severity='Down', description='Motor dead')
 
-        result = format_equipment_list([eq1, eq2], 'saw')
-        assert 'Multiple equipment items match "saw"' in result
-        assert 'Band Saw (Woodshop)' in result
-        assert 'SawStop #1 (Woodshop)' in result
-        assert '/esb-status' in result
+        area_data = status_service.get_single_area_status_dashboard(area.id)
+        modal = build_area_status_modal(area_data)
+
+        assert modal['type'] == 'modal'
+        assert modal['callback_id'] == 'esb_status_area_detail'
+        assert modal['title']['text'] == 'Woodshop'
+        assert len(modal['title']['text']) <= 24
+
+        # Detail section reuses the existing formatter (byte-identical).
+        assert modal['blocks'][0]['text']['text'] == format_area_status_detail(area_data)
+
+        # Block Kit limits (F9): ≤100 blocks, ≤3000 chars per section text.
+        assert len(modal['blocks']) <= 100
+        for block in modal['blocks']:
+            if block['type'] == 'section':
+                assert len(block['text']['text']) <= 3000
+
+        # A 'Back to summary' button is present.
+        buttons = [
+            el
+            for b in modal['blocks']
+            if b['type'] == 'actions'
+            for el in b['elements']
+        ]
+        assert any(btn['action_id'] == 'esb_status_back_to_summary' for btn in buttons)
+
+    def test_long_area_name_truncated_to_24(self, app, make_area, make_equipment):
+        """Area names longer than 24 chars are truncated in the modal title."""
+        from esb.services import status_service
+        from esb.slack.forms import build_area_status_modal
+
+        area = make_area('A' * 40, '#long')
+        make_equipment('Tool', 'TC', 'TM', area=area)
+
+        area_data = status_service.get_single_area_status_dashboard(area.id)
+        modal = build_area_status_modal(area_data)
+        assert len(modal['title']['text']) == 24

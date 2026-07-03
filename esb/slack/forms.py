@@ -17,64 +17,51 @@ def _truncate(text: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + '\u2026'
 
 
-def format_status_summary(dashboard_data):
-    """Format area status dashboard data as Slack mrkdwn text.
+def _area_summary_mrkdwn(area_data):
+    """Build the per-area summary block (count line + non-green bullets) as mrkdwn.
 
-    Each non-archived area that has at least one piece of equipment
-    renders one count line; areas with no equipment at all are skipped
-    to avoid cluttering the summary with empty "0 / 0 / 0" rows. Areas
-    with non-green equipment also list those items as bullets (severity
-    emoji + name + truncated description + optional ETA). The message
-    ends with a hint pointing users at ``/esb-status <area name>`` for
-    one-area detail.
+    Used by ``build_status_summary_modal`` to render one section per area:
+    the count line for the area followed, on their own lines, by one bullet per
+    non-green equipment item. Callers must skip areas whose equipment list is
+    empty; this helper assumes at least one item.
 
     Args:
-        dashboard_data: List of dicts from status_service.get_area_status_dashboard().
+        area_data: One element of the dashboard list, shape
+            ``{'area': Area, 'equipment': [{'equipment': Equipment, 'status': {...}}, ...]}``.
 
     Returns:
-        Formatted mrkdwn string for ephemeral Slack message.
+        Multi-line mrkdwn string for one area.
     """
-    if not dashboard_data or all(not area_data['equipment'] for area_data in dashboard_data):
-        return 'No equipment has been registered yet.'
+    area = area_data['area']
+    equipment_list = area_data['equipment']
 
-    lines = [':bar_chart: *Equipment Status Summary*\n']
+    counts = {'green': 0, 'yellow': 0, 'red': 0}
+    for equip_data in equipment_list:
+        color = equip_data['status']['color']
+        counts[color] = counts.get(color, 0) + 1
 
-    for area_data in dashboard_data:
-        area = area_data['area']
-        equipment_list = area_data['equipment']
-        if not equipment_list:
+    lines = [
+        f"*{area.name}* — "
+        f"{counts['green']} :white_check_mark: operational, "
+        f"{counts['yellow']} :warning: degraded, "
+        f"{counts['red']} :x: down"
+    ]
+
+    for equip_data in equipment_list:
+        status = equip_data['status']
+        color = status['color']
+        if color == 'green':
             continue
-
-        counts = {'green': 0, 'yellow': 0, 'red': 0}
-        for equip_data in equipment_list:
-            color = equip_data['status']['color']
-            counts[color] = counts.get(color, 0) + 1
-
-        lines.append(
-            f"*{area.name}* — "
-            f"{counts['green']} :white_check_mark: operational, "
-            f"{counts['yellow']} :warning: degraded, "
-            f"{counts['red']} :x: down"
-        )
-
-        for equip_data in equipment_list:
-            status = equip_data['status']
-            color = status['color']
-            if color == 'green':
-                continue
-            equip = equip_data['equipment']
-            emoji = _STATUS_EMOJI.get(color, ':grey_question:')
-            parts = [f'\u2022 {emoji} *{equip.name}*']
-            desc = status.get('issue_description')
-            if desc:
-                parts.append(f'\u2014 {_truncate(desc, _NON_GREEN_DESC_TRUNCATE)}')
-            eta = status.get('eta')
-            if eta:
-                parts.append(f'(ETA: {eta.strftime("%b %d, %Y")})')
-            lines.append(' '.join(parts))
-
-    lines.append('')
-    lines.append('_Tip: try `/esb-status <area name>` for full details on one area._')
+        equip = equip_data['equipment']
+        emoji = _STATUS_EMOJI.get(color, ':grey_question:')
+        parts = [f'\u2022 {emoji} *{equip.name}*']
+        desc = status.get('issue_description')
+        if desc:
+            parts.append(f'\u2014 {_truncate(desc, _NON_GREEN_DESC_TRUNCATE)}')
+        eta = status.get('eta')
+        if eta:
+            parts.append(f'(ETA: {eta.strftime("%b %d, %Y")})')
+        lines.append(' '.join(parts))
 
     return '\n'.join(lines)
 
@@ -119,47 +106,97 @@ def format_area_status_detail(area_data):
     return '\n'.join(lines)
 
 
-def format_equipment_status_detail(equipment, status_detail):
-    """Format single equipment status detail as Slack mrkdwn text.
+def build_status_summary_modal(dashboard_data):
+    """Build the navigation-only equipment status summary modal.
+
+    Renders one ``section`` per non-empty area (count line + non-green bullets,
+    via :func:`_area_summary_mrkdwn`) with a "View details" button accessory that
+    deep-links to that area's detail view. This modal has no ``submit`` — it is
+    navigation-only.
 
     Args:
-        equipment: Equipment model instance.
-        status_detail: Dict from status_service.get_equipment_status_detail().
+        dashboard_data: List of dicts from
+            ``status_service.get_area_status_dashboard()``.
 
     Returns:
-        Formatted mrkdwn string.
+        A Block Kit modal view dict (``callback_id: esb_status_summary``).
     """
-    emoji = _STATUS_EMOJI.get(status_detail['color'], ':grey_question:')
-    area_name = equipment.area.name if equipment.area else 'No Area'
-    text = f"{emoji} *{equipment.name}* ({area_name}) — {status_detail['label']}"
+    modal = {
+        'type': 'modal',
+        'callback_id': 'esb_status_summary',
+        'title': {'type': 'plain_text', 'text': 'Equipment Status'},
+        'close': {'type': 'plain_text', 'text': 'Close'},
+        'blocks': [],
+    }
 
-    if status_detail['color'] != 'green':
-        if status_detail.get('issue_description'):
-            text += f"\n> {status_detail['issue_description']}"
-        if status_detail.get('eta'):
-            text += f"\n> ETA: {status_detail['eta'].strftime('%b %d, %Y')}"
-        if status_detail.get('assignee_name'):
-            text += f"\n> Assigned to: {status_detail['assignee_name']}"
+    if not dashboard_data or all(not area_data['equipment'] for area_data in dashboard_data):
+        modal['blocks'].append({
+            'type': 'section',
+            'text': {'type': 'mrkdwn', 'text': 'No equipment has been registered yet.'},
+        })
+        return modal
 
-    return text
+    modal['blocks'].append({
+        'type': 'section',
+        'text': {'type': 'mrkdwn', 'text': ':bar_chart: *Equipment Status Summary*'},
+    })
+
+    for area_data in dashboard_data:
+        if not area_data['equipment']:
+            continue
+        area = area_data['area']
+        modal['blocks'].append({
+            'type': 'section',
+            'block_id': f'esb_status_area_{area.id}_block',
+            'text': {'type': 'mrkdwn', 'text': _area_summary_mrkdwn(area_data)},
+            'accessory': {
+                'type': 'button',
+                'text': {'type': 'plain_text', 'text': 'View details'},
+                'action_id': 'esb_status_view_area',
+                'value': str(area.id),
+            },
+        })
+
+    return modal
 
 
-def format_equipment_list(matches, search_term):
-    """Format a list of matching equipment for disambiguation.
+def build_area_status_modal(area_data):
+    """Build the area-detail modal reached from the summary's "View details" button.
 
     Args:
-        matches: List of Equipment model instances.
-        search_term: Original search string from the user.
+        area_data: One entry of the dashboard list (shape returned by
+            ``status_service.get_single_area_status_dashboard()``):
+            ``{'area': Area, 'equipment': [...]}``.
 
     Returns:
-        Formatted mrkdwn string.
+        A Block Kit modal view dict (``callback_id: esb_status_area_detail``)
+        with a "Back to summary" button.
     """
-    lines = [f'Multiple equipment items match "{search_term}":']
-    for equip in matches:
-        area_name = equip.area.name if equip.area else 'No Area'
-        lines.append(f'\u2022 {equip.name} ({area_name})')
-    lines.append('\nPlease be more specific. Try `/esb-status [full name]`')
-    return '\n'.join(lines)
+    area = area_data['area']
+    return {
+        'type': 'modal',
+        'callback_id': 'esb_status_area_detail',
+        'title': {'type': 'plain_text', 'text': area.name[:24]},
+        'close': {'type': 'plain_text', 'text': 'Close'},
+        'blocks': [
+            {
+                'type': 'section',
+                'text': {'type': 'mrkdwn', 'text': format_area_status_detail(area_data)},
+            },
+            {'type': 'divider'},
+            {
+                'type': 'actions',
+                'elements': [
+                    {
+                        'type': 'button',
+                        'text': {'type': 'plain_text', 'text': '⬅ Back to summary'},
+                        'action_id': 'esb_status_back_to_summary',
+                        'value': 'summary',
+                    },
+                ],
+            },
+        ],
+    }
 
 
 def build_equipment_options():

@@ -593,50 +593,124 @@ def register_handlers(bolt_app, app):
                 text=f':white_check_mark: Repair record #{record.id} created for *{equipment_name}*',
             )
 
+    def _update_esb_status_error_modal(client, body):
+        """Swap the open /esb-status modal to a close-only error view.
+
+        Used by the button action handlers so a failed re-query never leaves a
+        stale view open. Posting an ephemeral instead is avoided on purpose: the
+        whole point of this feature is that the bot may not be a channel member.
+        """
+        client.views_update(
+            view_id=body['view']['id'],
+            view={
+                'type': 'modal',
+                'callback_id': 'esb_status_error',
+                'title': {'type': 'plain_text', 'text': 'Equipment Status'},
+                'close': {'type': 'plain_text', 'text': 'Close'},
+                'blocks': [
+                    {
+                        'type': 'section',
+                        'text': {
+                            'type': 'mrkdwn',
+                            'text': ':x: Could not load equipment status. Please try again.',
+                        },
+                    },
+                ],
+            },
+        )
+
     @bolt_app.command('/esb-status')
-    def handle_esb_status(ack, body, client):
+    def handle_esb_status(ack, body, client, respond):
         ack()
         search_term = body.get('text', '').strip()
 
         with _ensure_app_context(app):
             try:
-                if not search_term:
-                    from esb.services import status_service
-                    dashboard = status_service.get_area_status_dashboard()
-                    from esb.slack.forms import format_status_summary
-                    text = format_status_summary(dashboard)
-                else:
-                    from esb.services import equipment_service, status_service
+                from esb.services import equipment_service, status_service
+                from esb.slack.forms import build_area_status_modal, build_status_summary_modal
+                from esb.utils.exceptions import AreaNotFound
 
+                if not search_term:
+                    view = build_status_summary_modal(status_service.get_area_status_dashboard())
+                else:
+                    # Resolve the deep-link target area id (area name takes
+                    # precedence over equipment search), then share ONE guarded
+                    # dashboard lookup so both branches handle archived areas
+                    # identically (fall back to summary, not an error).
+                    target_area_id = None
                     area = equipment_service.get_area_by_name(search_term)
                     if area is not None:
-                        from esb.slack.forms import format_area_status_detail
-                        area_data = status_service.get_single_area_status_dashboard(area.id)
-                        text = format_area_status_detail(area_data)
+                        target_area_id = area.id
                     else:
                         matches = equipment_service.search_equipment_by_name(search_term)
-                        if len(matches) == 0:
-                            text = (
-                                f':mag: Equipment not found: "{search_term}"\n'
-                                'Check the spelling or use the full equipment name. '
-                                'Try `/esb-status` with no arguments to see all equipment.'
-                            )
-                        elif len(matches) == 1:
-                            detail = status_service.get_equipment_status_detail(matches[0].id)
-                            from esb.slack.forms import format_equipment_status_detail
-                            text = format_equipment_status_detail(matches[0], detail)
-                        else:
-                            from esb.slack.forms import format_equipment_list
-                            text = format_equipment_list(matches, search_term)
+                        if len(matches) == 1 and matches[0].area_id is not None:
+                            target_area_id = matches[0].area_id
+
+                    if target_area_id is not None:
+                        try:
+                            area_data = status_service.get_single_area_status_dashboard(target_area_id)
+                            view = build_area_status_modal(area_data)
+                        except AreaNotFound:
+                            # Matched tool/area is valid but its area is archived
+                            # (AreaArchived subclasses AreaNotFound). Summary is
+                            # the safe landing, not an error.
+                            view = build_status_summary_modal(status_service.get_area_status_dashboard())
+                    else:
+                        # No area match; zero, multiple, or area-less equipment
+                        # matches all fall back to the summary view.
+                        view = build_status_summary_modal(status_service.get_area_status_dashboard())
+
+                client.views_open(trigger_id=body['trigger_id'], view=view)
             except Exception:
                 logger.warning('Error processing /esb-status command', exc_info=True)
-                text = ':x: An error occurred while checking equipment status. Please try again.'
+                # Reply via the slash command's response_url (Bolt's `respond`),
+                # NOT chat_postEphemeral into a channel: response_url is a
+                # temporary webhook that works even when the bot is not a member
+                # of the invoking channel — exactly the limitation this feature
+                # fixes. Guard the reply itself so a secondary failure (e.g.
+                # expired response_url) does not escape the handler.
+                try:
+                    respond(
+                        response_type='ephemeral',
+                        text=':x: An error occurred while checking equipment status. Please try again.',
+                    )
+                except Exception:
+                    logger.warning('Failed to deliver /esb-status error response', exc_info=True)
 
-            client.chat_postEphemeral(
-                channel=body['channel_id'],
-                user=body['user_id'],
-                text=text,
-            )
+    @bolt_app.action('esb_status_view_area')
+    def handle_esb_status_view_area(ack, body, client):
+        ack()
+        with _ensure_app_context(app):
+            try:
+                from esb.services import status_service
+                from esb.slack.forms import build_area_status_modal
+
+                area_id = int(body['actions'][0]['value'])
+                area_data = status_service.get_single_area_status_dashboard(area_id)
+                client.views_update(
+                    view_id=body['view']['id'],
+                    view=build_area_status_modal(area_data),
+                )
+            except Exception:
+                logger.warning('Error processing esb_status_view_area action', exc_info=True)
+                _update_esb_status_error_modal(client, body)
+
+    @bolt_app.action('esb_status_back_to_summary')
+    def handle_esb_status_back_to_summary(ack, body, client):
+        ack()
+        with _ensure_app_context(app):
+            try:
+                from esb.services import status_service
+                from esb.slack.forms import build_status_summary_modal
+
+                dashboard = status_service.get_area_status_dashboard()
+                client.views_update(
+                    view_id=body['view']['id'],
+                    view=build_status_summary_modal(dashboard),
+                )
+            except Exception:
+                logger.warning('Error processing esb_status_back_to_summary action', exc_info=True)
+                _update_esb_status_error_modal(client, body)
 
     # Dispatch path verified in Task 0: push_via_ack (slack-bolt 1.27.0
     # accepts ack(response_action='push', view=...) for view submissions).

@@ -2,8 +2,8 @@
 title: '/esb-status Modal with Per-Area Detail'
 slug: 'esb-status-modal'
 created: '2026-07-03'
-status: 'ready-for-dev'
-stepsCompleted: [1, 2, 3, 4]
+status: 'completed'
+stepsCompleted: [1, 2, 3, 4, 5, 6]
 tech_stack: [Python 3.14, Flask, slack-bolt 1.27, Block Kit, pytest]
 files_to_modify: [esb/slack/handlers.py, esb/slack/forms.py, tests/test_slack/test_handlers.py, tests/test_slack/test_forms.py]
 code_patterns: [views_open on command ack, views_update on button action, _ensure_app_context wrapper, Block Kit builders in forms.py]
@@ -167,7 +167,7 @@ detailed status, which includes a **"Back to summary"** button.
 Do the tasks in order. Tasks 1-2 are pure additive builders (no behavior change
 until Task 3 wires them in), so the suite stays green between commits.
 
-- [ ] **Task 1: Add `build_status_summary_modal(dashboard_data)` to `esb/slack/forms.py`**
+- [x] **Task 1: Add `build_status_summary_modal(dashboard_data)` to `esb/slack/forms.py`**
   - File: `esb/slack/forms.py`
   - Action: Add a builder that returns a Block Kit **modal** view dict for the
     equipment status summary.
@@ -209,7 +209,7 @@ until Task 3 wires them in), so the suite stays green between commits.
   - Notes: Section mrkdwn cap is 3000 chars; makerspace areas stay well under.
     Modal block cap is 100; one section per non-empty area is safe.
 
-- [ ] **Task 2: Add `build_area_status_modal(area_data)` to `esb/slack/forms.py`**
+- [x] **Task 2: Add `build_area_status_modal(area_data)` to `esb/slack/forms.py`**
   - File: `esb/slack/forms.py`
   - Action: Add a builder returning the area-detail **modal** view dict.
   - Details:
@@ -230,7 +230,7 @@ until Task 3 wires them in), so the suite stays green between commits.
     (`_No equipment in this area._`). Single-section detail text is under the
     3000-char cap at makerspace scale.
 
-- [ ] **Task 3: Rewrite `handle_esb_status` in `esb/slack/handlers.py` to open a modal**
+- [x] **Task 3: Rewrite `handle_esb_status` in `esb/slack/handlers.py` to open a modal**
   - File: `esb/slack/handlers.py` (replace body of `handle_esb_status`, 596-639)
   - Action: `ack()` first, then resolve the text arg, then `client.views_open`
     with the appropriate modal. Fall back to an ephemeral error on exception.
@@ -281,7 +281,7 @@ until Task 3 wires them in), so the suite stays green between commits.
     trigger_id expiry). Catch `AreaNotFound` (the parent class) to cover both it
     and `AreaArchived`.
 
-- [ ] **Task 4: Add the two `@bolt_app.action` handlers in `esb/slack/handlers.py`**
+- [x] **Task 4: Add the two `@bolt_app.action` handlers in `esb/slack/handlers.py`**
   - File: `esb/slack/handlers.py` (add inside `register_handlers`, near the
     `/esb-status` command handler)
   - Action: Handle the "View details" and "Back to summary" buttons with
@@ -318,7 +318,7 @@ until Task 3 wires them in), so the suite stays green between commits.
     and the current view id under `body['view']['id']` (see
     `reservation_start_reserve`, `handlers.py:106,121-122`).
 
-- [ ] **Task 5: Rewrite `TestEsbStatusCommand` and add action-handler tests in `tests/test_slack/test_handlers.py`**
+- [x] **Task 5: Rewrite `TestEsbStatusCommand` and add action-handler tests in `tests/test_slack/test_handlers.py`**
   - File: `tests/test_slack/test_handlers.py` (`TestEsbStatusCommand`, 1143-1361)
   - Action: Replace `chat_postEphemeral`-text assertions with `views_open`/
     `views_update` view assertions; add tests for the two action handlers.
@@ -369,7 +369,7 @@ until Task 3 wires them in), so the suite stays green between commits.
       `client.views_update` called with the error modal.
     - All handlers call `ack()` first.
 
-- [ ] **Task 6: Add modal-builder unit tests in `tests/test_slack/test_forms.py`**
+- [x] **Task 6: Add modal-builder unit tests in `tests/test_slack/test_forms.py`**
   - File: `tests/test_slack/test_forms.py`
   - Action: Add `TestBuildStatusSummaryModal` and `TestBuildAreaStatusModal`.
   - Details:
@@ -386,7 +386,7 @@ until Task 3 wires them in), so the suite stays green between commits.
     - Verify `format_status_summary` output is unchanged (existing tests cover
       this; run them).
 
-- [ ] **Task 7: Run lint + full test suite**
+- [x] **Task 7: Run lint + full test suite**
   - Action: `make lint` and `make test`. Fix any ruff (120-col) issues.
   - Notes: All existing `TestEsbStatusCommand` assertions are replaced in Task 5;
     ensure no other test references the old ephemeral behavior.
@@ -494,3 +494,56 @@ until Task 3 wires them in), so the suite stays green between commits.
 - **Version bump:** this is a user-facing feature — bump the `version` minor in
   `pyproject.toml` when merging (per CLAUDE.md release process). Not part of the
   code tasks above; do it at PR time.
+
+## Review Notes
+
+- Adversarial review completed (step 5) via an isolated subagent seeing only the diff.
+- Findings: 14 total, 7 fixed, 7 skipped. Resolution approach: auto-fix real items + F3.
+- **Fixed:**
+  - **F3 (error delivery):** the error fallback now replies via the slash
+    command's `response_url` (Bolt's `respond(response_type='ephemeral', ...)`)
+    instead of `chat_postEphemeral(channel=user_id, ...)`. `response_url` is a
+    temporary webhook that works even when the bot is not a member of the
+    invoking channel — the exact limitation this feature fixes — and is more
+    robust than posting an ephemeral to a user-id-as-channel. **This supersedes
+    the AC 10 / "Error fallback (F1/F2)" decision above**, which called for a DM
+    via `chat_postEphemeral`.
+  - **F4 (dead code):** removed the now-unreferenced `format_status_summary`,
+    `format_equipment_status_detail`, and `format_equipment_list` from
+    `forms.py` plus their tests. `format_area_status_detail` and the extracted
+    `_area_summary_mrkdwn` are retained (used by the builders).
+    `status_service.get_equipment_status_detail` was left as-is (out of scope).
+  - **F8 (test gap):** added a test for the `views_open`-itself-fails path
+    (asserts the `respond` fallback still fires).
+  - **F9 (test gap):** builder tests now assert Block Kit limits (≤100 blocks,
+    ≤3000 chars per section text).
+  - **F12 (swallowed secondary failure):** the command `except` now wraps the
+    fallback `respond` in its own try/except so a secondary delivery failure is
+    logged, not propagated.
+  - **F13 (docstring):** `_area_summary_mrkdwn` docstring no longer references
+    the removed `format_status_summary`.
+  - **F14 (brittle test):** the archived-area deep-link test now pins the
+    mechanism (asserts the matched equipment's `area_id` is the archived area).
+- **Skipped:**
+  - **F1 / F2 (Block Kit section 3000-char / 100-block caps):** real but the
+    spec explicitly accepted them at makerspace scale; builder tests now guard
+    against a regression at the tested scale (F9).
+  - **F5 (loss of not-found feedback):** intended per AC 6 / AC 7 (summary is
+    the safe landing).
+  - **F6 (equipment with `area_id is None`):** not reproducible — `equipment.area_id`
+    is `NOT NULL` at the schema level, so the branch is unreachable defensive
+    code; the guard is kept as harmless defense.
+  - **F7 (`trigger_id` expiry race):** inherent to the `views_open` flow and
+    already acknowledged in Notes; mirrors `/esb-reserve`.
+  - **F10 (command DMs vs actions update-in-place):** necessary asymmetry — the
+    command has no open modal yet (must reply out-of-band), while the action
+    handlers have a live view to `views_update`.
+  - **F11 (shared `action_id` across area buttons):** valid Block Kit — button
+    action_id uniqueness is per-block, and each area section carries a distinct
+    `block_id`.
+
+## Post-Implementation Verification
+
+- `make lint` — clean.
+- `make test` — 1805 passed (dead-formatter tests removed with their functions).
+- `venv/bin/python -m pytest tests/test_slack/ -v` — all green.
