@@ -1,0 +1,54 @@
+{% extends "base_kiosk.html" %}
+
+{% block title %}Equipment Status - Kiosk ({{ columns }}-Column){% endblock %}
+
+{% block content %}
+<h1 class="visually-hidden">Equipment Status</h1>
+<div id="kiosk-scale-content" class="kiosk-scale-wrapper">
+{% set populated_areas = areas | selectattr('equipment') | list %}
+{% if not populated_areas %}
+  <div class="text-center py-5">
+    <p class="fs-3 text-muted">No equipment registered yet.</p>
+  </div>
+{% else %}
+  <div class="kiosk-dense-grid" style="--kiosk-dense-cols: {{ columns }};">
+    {% for area_data in populated_areas %}
+    <section class="kiosk-dense-area">
+      <h2 class="kiosk-dense-area-heading">{{ area_data.area.name }}</h2>
+      <ul class="kiosk-dense-list">
+        {% for item in area_data.equipment %}
+        <li class="kiosk-dense-item">
+          <div class="kiosk-dense-row">
+            <span class="status-dot status-{{ item.status.color }}" aria-hidden="true"></span>
+            <span class="kiosk-dense-name">{{ item.equipment.name }}</span>
+            <span class="kiosk-dense-status">{{ item.status.label }}</span>
+            {% if item.status.eta %}<span class="kiosk-dense-eta">ETA: {{ item.status.eta|format_date }}</span>{% endif %}
+          </div>
+          {# Non-empty open_records implies a non-green status (green is only
+             derived when there are zero open records), so gating on
+             `item.open_records` alone is sufficient. #}
+          {% if item.open_records %}
+          {# The color chain below is intentionally hardcoded against the three
+             canonical severities, NOT derived from `repair_severities`: color is
+             a per-severity semantic decision (red/yellow/gray) that must be made
+             deliberately when a new severity is added to REPAIR_SEVERITIES. The
+             badge guard `rec.severity in repair_severities` is auto-derived for
+             the same reason -- text surfacing is safe to extend automatically,
+             color isn't. Kept in sync with static_page.html:56-62. #}
+          <ul class="kiosk-dense-records">
+            {% for rec in item.open_records %}
+            <li class="kiosk-dense-record kiosk-dense-record-{{ 'red' if rec.severity == 'Down' else 'yellow' if rec.severity in ('Degraded', 'Not Sure') else 'gray' }}">
+              <span class="record-status">{{ rec.status }}</span>{% if rec.severity in repair_severities %} <span class="record-severity">[{{ rec.severity }}]</span>{% endif %} <span class="record-description">{{ rec.description }}</span>{% if rec.eta %} <span class="record-eta">ETA: {{ rec.eta|format_date }}</span>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+  </div>
+{% endif %}
+</div>
+{% endblock %}

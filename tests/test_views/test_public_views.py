@@ -6,6 +6,8 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from esb.models.repair_record import RepairRecord
 
 
@@ -778,6 +780,138 @@ class TestKioskView:
             resp.data.decode(),
         )
         assert section_headings == ['Area B', 'Area C', 'Area A']
+
+
+class TestKioskDenseView:
+    """Tests for the multi-column dense kiosk view (public.kiosk_dense)."""
+
+    def test_dense_2col_renders_200_unauthenticated(
+        self, client, make_area, make_equipment,
+    ):
+        """2-column dense view renders 200 with area/equipment content (AC 1)."""
+        area = make_area(name='Wood Shop')
+        make_equipment(name='Table Saw', area=area)
+
+        response = client.get('/public/kiosk/dense/2')
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert 'Wood Shop' in html
+        assert 'Table Saw' in html
+        assert '--kiosk-dense-cols: 2' in html
+
+    def test_dense_3col_renders(self, client, make_area, make_equipment):
+        """3-column dense view renders 200 with the grid container (AC 2)."""
+        area = make_area(name='Metal Shop')
+        make_equipment(name='Lathe', area=area)
+
+        response = client.get('/public/kiosk/dense/3')
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert '--kiosk-dense-cols: 3' in html
+        assert 'kiosk-dense-grid' in html
+
+    def test_dense_shows_open_records(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        """Non-green equipment shows its open-record description inline (AC 3, F6)."""
+        area = make_area(name='Shop')
+        equip = make_equipment(name='CNC Mill', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity='Down',
+            description='ZZZ-broken-belt-9137',
+        )
+
+        response = client.get('/public/kiosk/dense/2')
+        assert response.status_code == 200
+        assert b'ZZZ-broken-belt-9137' in response.data
+
+    def test_dense_green_item_has_no_records_list(
+        self, client, make_area, make_equipment,
+    ):
+        """Green equipment (no open records) emits no records list (AC 4)."""
+        area = make_area(name='Shop')
+        make_equipment(name='Good Tool', area=area)
+
+        response = client.get('/public/kiosk/dense/2')
+        assert response.status_code == 200
+        assert b'kiosk-dense-records' not in response.data
+
+    def test_dense_null_severity_record_gray_no_badge(
+        self, client, make_area, make_equipment, make_repair_record,
+    ):
+        """A record with no/unknown severity renders the gray record variant
+        and no severity badge, while its equipment dot is yellow (Degraded).
+
+        Documents the current (inherited) behavior where an unrecognized
+        severity maps to a gray record border even though status derivation
+        folds it to a yellow equipment dot -- see status_service."""
+        area = make_area(name='Shop')
+        equip = make_equipment(name='Mystery Tool', area=area)
+        make_repair_record(
+            equipment=equip, status='New', severity=None,
+            description='YYY-unknown-severity-4242',
+        )
+
+        response = client.get('/public/kiosk/dense/2')
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Record is shown, in the gray variant, with no severity badge.
+        assert 'YYY-unknown-severity-4242' in html
+        assert 'kiosk-dense-record-gray' in html
+        assert '[None]' not in html
+        # Equipment dot is yellow (unknown severity -> Degraded).
+        assert 'status-dot status-yellow' in html
+
+    @pytest.mark.parametrize('columns', [0, 1, 4, 99])
+    def test_dense_invalid_columns_404(self, client, columns):
+        """Column counts other than 2 or 3 return 404 (AC 5)."""
+        response = client.get(f'/public/kiosk/dense/{columns}')
+        assert response.status_code == 404
+
+    def test_dense_nonint_columns_404(self, client):
+        """Non-integer column segment does not match the int route (AC 6)."""
+        response = client.get('/public/kiosk/dense/foo')
+        assert response.status_code == 404
+
+    def test_dense_empty_state(self, client):
+        """Empty board shows empty-state copy and no grid (AC 7)."""
+        response = client.get('/public/kiosk/dense/2')
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert 'No equipment registered yet.' in html
+        assert 'kiosk-dense-grid' not in html
+
+    def test_dense_wraps_in_scale_content(
+        self, client, make_area, make_equipment,
+    ):
+        """Dense content is wrapped in the kiosk auto-scale element (AC 8)."""
+        area = make_area(name='Shop')
+        make_equipment(name='Drill', area=area)
+
+        response = client.get('/public/kiosk/dense/2')
+        assert response.status_code == 200
+        assert b'id="kiosk-scale-content"' in response.data
+
+    def test_dashboard_dropdown_contains_dense_2col_and_3col_links(
+        self, client, make_area, make_equipment,
+    ):
+        """Dashboard Kiosk View dropdown links to both dense routes (AC 9)."""
+        area = make_area(name='Shop')
+        make_equipment(name='Drill', area=area)
+
+        response = client.get('/public/')
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert 'href="/public/kiosk/dense/2"' in html
+        assert 'href="/public/kiosk/dense/3"' in html
+
+    def test_dashboard_dropdown_has_dense_links_when_no_equipment(self, client):
+        """Dense dropdown links render even on an empty board (AC 11, F3)."""
+        response = client.get('/public/')
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert 'href="/public/kiosk/dense/2"' in html
+        assert 'href="/public/kiosk/dense/3"' in html
 
 
 class TestPerAreaKioskView:

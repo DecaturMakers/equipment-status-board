@@ -54,6 +54,24 @@ def kiosk_area(area_id):
     )
 
 
+@public_bp.route('/kiosk/dense/<int:columns>')
+def kiosk_dense(columns):
+    """Multi-column dense kiosk display -- concise static-page-style
+    status for wall-mounted / small displays, in a 2- or 3-column grid."""
+    if columns not in (2, 3):
+        abort(404)
+    from esb.models.repair_record import REPAIR_SEVERITIES
+    from esb.services import status_service
+
+    areas = status_service.get_area_status_dashboard()
+    return render_template(
+        'public/kiosk_dense.html',
+        areas=areas,
+        columns=columns,
+        repair_severities=REPAIR_SEVERITIES,
+    )
+
+
 def _build_equipment_page_context(equipment_id):
     """Build shared context for equipment page rendering.
 

@@ -17,6 +17,8 @@
     </button>
     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="kioskDropdown">
       <li><a class="dropdown-item" href="{{ url_for('public.kiosk') }}">All Equipment</a></li>
+      <li><a class="dropdown-item" href="{{ url_for('public.kiosk_dense', columns=2) }}">All Equipment (2-Column)</a></li>
+      <li><a class="dropdown-item" href="{{ url_for('public.kiosk_dense', columns=3) }}">All Equipment (3-Column)</a></li>
       {% set populated_areas = areas | selectattr('equipment') | list %}
       {% if populated_areas %}
       <li><hr class="dropdown-divider"></li>
