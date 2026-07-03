@@ -1140,8 +1140,18 @@ class TestResolveEsbUser:
         assert user is None
 
 
+def _section_texts(view):
+    """Collect all section mrkdwn/plain_text strings from a modal view dict."""
+    texts = []
+    for block in view.get('blocks', []):
+        text = block.get('text')
+        if isinstance(text, dict) and 'text' in text:
+            texts.append(text['text'])
+    return texts
+
+
 class TestEsbStatusCommand:
-    """Tests for /esb-status command handler."""
+    """Tests for /esb-status command handler (modal rework, issue #70)."""
 
     @pytest.fixture(autouse=True)
     def setup(self, app, db):
@@ -1155,209 +1165,274 @@ class TestEsbStatusCommand:
         """Verify /esb-status is registered on bolt_app."""
         assert 'command:/esb-status' in self.handlers
 
-    def test_no_args_shows_summary(self):
-        """/esb-status with no args shows area summary."""
+    def test_no_args_opens_summary_modal(self):
+        """AC 1: /esb-status with no args opens the summary modal (no ephemeral)."""
         ack = MagicMock()
         client = MagicMock()
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': '',
-        }
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': ''}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
         ack.assert_called_once()
-        client.chat_postEphemeral.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        assert 'Equipment Status Summary' in response_text
+        client.views_open.assert_called_once()
+        client.chat_postEphemeral.assert_not_called()
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_summary'
+        assert any('Equipment Status Summary' in t for t in _section_texts(view))
 
-    def test_exact_match_shows_detail(self):
-        """Single match shows equipment detail."""
+    def test_single_equipment_opens_area_detail_modal(self):
+        """AC 6: single equipment match opens that equipment's area-detail modal."""
         ack = MagicMock()
         client = MagicMock()
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': 'SawStop',
-        }
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': 'SawStop'}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
-        ack.assert_called_once()
-        client.chat_postEphemeral.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        assert 'SawStop' in response_text
-        assert 'Operational' in response_text
+        client.views_open.assert_called_once()
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_area_detail'
+        assert view['title']['text'] == 'Woodshop'
 
-    def test_no_match_shows_error(self):
-        """Posts 'Equipment not found' for no matches."""
+    def test_no_match_opens_summary_modal(self):
+        """AC 7: no match falls back to the summary modal (no error text)."""
         ack = MagicMock()
         client = MagicMock()
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': 'NonexistentThing',
-        }
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': 'NonexistentThing'}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
-        ack.assert_called_once()
-        client.chat_postEphemeral.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        assert 'Equipment not found' in response_text
+        client.views_open.assert_called_once()
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_summary'
 
-    def test_multiple_matches_shows_list(self):
-        """Posts disambiguation list for multiple matches."""
+    def test_multiple_matches_opens_summary_modal(self):
+        """AC 7: multiple matches fall back to the summary modal, not a list."""
         _create_equipment(name='Band Saw', area=self.area)
 
         ack = MagicMock()
         client = MagicMock()
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': 'Saw',
-        }
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': 'Saw'}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
-        ack.assert_called_once()
-        client.chat_postEphemeral.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        assert 'Multiple equipment items match' in response_text
-        assert 'Band Saw' in response_text
-        assert 'SawStop' in response_text
+        client.views_open.assert_called_once()
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_summary'
+        client.chat_postEphemeral.assert_not_called()
 
-    def test_partial_match_single(self):
-        """Partial name with one match shows detail."""
-        ack = MagicMock()
-        client = MagicMock()
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': 'Stop',
-        }
-
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
-
-        ack.assert_called_once()
-        client.chat_postEphemeral.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        assert 'SawStop' in response_text
-
-    def test_ack_called_before_response(self):
-        """ack() is called before chat_postEphemeral."""
+    def test_ack_called_before_views_open(self):
+        """AC 9: ack() is called before views_open (trigger_id used promptly)."""
         call_order = []
         ack = MagicMock(side_effect=lambda: call_order.append('ack'))
         client = MagicMock()
-        client.chat_postEphemeral = MagicMock(
-            side_effect=lambda **kwargs: call_order.append('chat_postEphemeral'),
-        )
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': '',
-        }
+        client.views_open = MagicMock(side_effect=lambda **kwargs: call_order.append('views_open'))
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': ''}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
         assert call_order[0] == 'ack'
-        assert 'chat_postEphemeral' in call_order
+        assert 'views_open' in call_order
 
-    def test_service_error_returns_ephemeral_error(self):
-        """Service exception returns friendly error message."""
+    def test_service_error_responds_via_response_url_and_no_modal(self):
+        """AC 10: an unexpected service error replies via response_url and opens no modal.
+
+        Bolt's ``respond`` posts to the slash command's response_url, which works
+        even when the bot is not a member of the invoking channel — the exact
+        limitation this feature fixes. No channel ephemeral is posted.
+        """
         from unittest.mock import patch
 
         ack = MagicMock()
         client = MagicMock()
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': 'SawStop',
-        }
+        respond = MagicMock()
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': 'SawStop'}
 
         with patch(
             'esb.services.equipment_service.search_equipment_by_name',
             side_effect=Exception('DB error'),
         ):
-            self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+            self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=respond)
 
         ack.assert_called_once()
-        client.chat_postEphemeral.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        assert 'error occurred' in response_text.lower()
+        client.views_open.assert_not_called()
+        client.chat_postEphemeral.assert_not_called()
+        respond.assert_called_once()
+        kwargs = respond.call_args.kwargs
+        assert 'error occurred' in kwargs['text'].lower()
+        assert kwargs['response_type'] == 'ephemeral'
 
-    def test_empty_dashboard(self):
-        """No equipment returns appropriate message."""
+    def test_views_open_failure_responds_via_response_url(self):
+        """F8: if views_open itself rejects the view, the error reply still fires."""
+        ack = MagicMock()
+        client = MagicMock()
+        client.views_open = MagicMock(side_effect=Exception('invalid_blocks'))
+        respond = MagicMock()
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': ''}
+
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=respond)
+
+        respond.assert_called_once()
+        assert 'error occurred' in respond.call_args.kwargs['text'].lower()
+
+    def test_empty_dashboard_opens_summary_modal(self):
+        """AC 8: no equipment registered → summary modal with a 'No equipment' section."""
         from esb.models.equipment import Equipment
         Equipment.query.delete()
         self.db.session.commit()
 
         ack = MagicMock()
         client = MagicMock()
-        body = {
-            'trigger_id': 'T123',
-            'user_id': 'U123',
-            'channel_id': 'C123',
-            'text': '',
-        }
+        body = {'trigger_id': 'T123', 'user_id': 'U123', 'channel_id': 'C123', 'text': ''}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
-        ack.assert_called_once()
-        client.chat_postEphemeral.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        assert 'No equipment' in response_text
+        client.views_open.assert_called_once()
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_summary'
+        assert any('No equipment' in t for t in _section_texts(view))
 
-    def test_area_name_match_shows_area_detail(self):
-        """AC 9: exact case-insensitive area name shows the area-detail view."""
+    def test_area_name_opens_area_detail_modal(self):
+        """AC 4: exact case-insensitive area name opens the area-detail modal."""
         ack = MagicMock()
         client = MagicMock()
         body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'woodshop'}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        # Area-detail formatter starts with :bar_chart: *<area>*
-        assert ':bar_chart:' in response_text
-        assert '*Woodshop*' in response_text
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_area_detail'
+        assert view['title']['text'] == 'Woodshop'
 
     def test_area_name_takes_precedence_over_equipment(self):
-        """AC 10: when an area and equipment share a substring, area wins by exact-name match."""
-        # The setup creates area 'Woodshop' and equipment 'SawStop'. Create an
-        # equipment whose name CONTAINS 'Woodshop' to force the precedence test.
+        """AC 5: area name match wins over an equipment name containing the same substring."""
         _create_equipment(name='Woodshop Helper', area=self.area)
 
         ack = MagicMock()
         client = MagicMock()
         body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'Woodshop'}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        # Area-detail header is rendered (not the multi-match list).
-        assert ':bar_chart:' in response_text
-        assert 'Multiple equipment items match' not in response_text
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_area_detail'
+        assert view['title']['text'] == 'Woodshop'
 
-    def test_no_area_match_falls_back_to_equipment_search(self):
-        """AC 11: a non-matching area name falls through to equipment search."""
+    def test_archived_area_deep_link_falls_back_to_summary(self):
+        """AC 12: equipment whose area is archived deep-links to the summary, not an error."""
+        from esb.services import equipment_service
+
+        equipment_service.archive_area(self.area.id, archived_by='tester')
+        # Pin the mechanism (F14): the equipment is still resolvable by name and
+        # its area_id points at the now-archived area — so resolution reaches the
+        # AreaArchived branch, not merely "no match".
+        matches = equipment_service.search_equipment_by_name('SawStop')
+        assert len(matches) == 1
+        assert matches[0].area_id == self.area.id
+
         ack = MagicMock()
         client = MagicMock()
         body = {'trigger_id': 'T', 'user_id': 'U', 'channel_id': 'C', 'text': 'SawStop'}
 
-        self.handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        self.handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
 
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
-        # Existing single-equipment detail formatter is used.
-        assert 'SawStop' in response_text
-        assert 'Operational' in response_text
+        client.views_open.assert_called_once()
+        view = client.views_open.call_args.kwargs['view']
+        assert view['callback_id'] == 'esb_status_summary'
+        client.chat_postEphemeral.assert_not_called()
+
+
+
+class TestEsbStatusActions:
+    """Tests for the /esb-status modal button action handlers."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, app, db):
+        self.app = app
+        self.db = db
+        self.area = _create_area(name='Woodshop', slack_channel='#woodshop')
+        self.equipment = _create_equipment(name='SawStop', area=self.area)
+        self.handlers = _register_and_capture(app)
+
+    def test_action_handlers_registered(self):
+        assert 'action:esb_status_view_area' in self.handlers
+        assert 'action:esb_status_back_to_summary' in self.handlers
+
+    def test_view_area_updates_to_area_detail(self):
+        """AC 2: clicking 'View details' updates the modal to that area's detail."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'actions': [{'value': str(self.area.id)}],
+            'view': {'id': 'V1'},
+            'user': {'id': 'U1'},
+            'channel': {'id': 'C1'},
+        }
+
+        self.handlers['action:esb_status_view_area'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        kwargs = client.views_update.call_args.kwargs
+        assert kwargs['view_id'] == 'V1'
+        assert kwargs['view']['callback_id'] == 'esb_status_area_detail'
+        assert kwargs['view']['title']['text'] == 'Woodshop'
+
+    def test_view_area_error_shows_error_modal(self):
+        """AC 13: a failing 'View details' re-query updates to a close-only error modal."""
+        from unittest.mock import patch
+
+        ack = MagicMock()
+        client = MagicMock()
+        body = {
+            'actions': [{'value': str(self.area.id)}],
+            'view': {'id': 'V1'},
+            'user': {'id': 'U1'},
+            'channel': {'id': 'C1'},
+        }
+
+        with patch(
+            'esb.services.status_service.get_single_area_status_dashboard',
+            side_effect=Exception('DB error'),
+        ):
+            self.handlers['action:esb_status_view_area'](ack=ack, body=body, client=client)
+
+        client.views_update.assert_called_once()
+        view = client.views_update.call_args.kwargs['view']
+        assert any('Could not load' in t for t in _section_texts(view))
+        client.chat_postEphemeral.assert_not_called()
+
+    def test_back_to_summary_updates_to_summary(self):
+        """AC 3: clicking 'Back to summary' updates the modal to the summary view."""
+        ack = MagicMock()
+        client = MagicMock()
+        body = {'view': {'id': 'V1'}, 'user': {'id': 'U1'}, 'channel': {'id': 'C1'}}
+
+        self.handlers['action:esb_status_back_to_summary'](ack=ack, body=body, client=client)
+
+        ack.assert_called_once()
+        client.views_update.assert_called_once()
+        kwargs = client.views_update.call_args.kwargs
+        assert kwargs['view_id'] == 'V1'
+        assert kwargs['view']['callback_id'] == 'esb_status_summary'
+
+    def test_back_to_summary_error_shows_error_modal(self):
+        """AC 13 (F6): a failing 'Back to summary' re-query updates to the error modal."""
+        from unittest.mock import patch
+
+        ack = MagicMock()
+        client = MagicMock()
+        body = {'view': {'id': 'V1'}, 'user': {'id': 'U1'}, 'channel': {'id': 'C1'}}
+
+        with patch(
+            'esb.services.status_service.get_area_status_dashboard',
+            side_effect=Exception('DB error'),
+        ):
+            self.handlers['action:esb_status_back_to_summary'](ack=ack, body=body, client=client)
+
+        client.views_update.assert_called_once()
+        view = client.views_update.call_args.kwargs['view']
+        assert any('Could not load' in t for t in _section_texts(view))
+        client.chat_postEphemeral.assert_not_called()
 
 
 class TestEsbRepairDispatcher:
@@ -2189,11 +2264,16 @@ class TestHandlersOutsideAppContext:
         client = MagicMock()
         body = {'trigger_id': 'T1', 'user_id': 'U1', 'channel_id': 'C1', 'text': ''}
         # This would raise RuntimeError before the fix
-        handlers['command:/esb-status'](ack=ack, body=body, client=client)
+        handlers['command:/esb-status'](ack=ack, body=body, client=client, respond=MagicMock())
         ack.assert_called_once()
-        response_text = client.chat_postEphemeral.call_args.kwargs['text']
+        view = client.views_open.call_args.kwargs['view']
         # Check for specific data to make failures diagnostic
-        assert 'Woodshop' in response_text
+        section_texts = [
+            b['text']['text']
+            for b in view['blocks']
+            if isinstance(b.get('text'), dict) and 'text' in b['text']
+        ]
+        assert any('Woodshop' in t for t in section_texts)
         # Teardown
         with app.app_context():
             db.drop_all()
