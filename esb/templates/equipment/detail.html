@@ -348,4 +348,37 @@
         {% endif %}
     </div>
 </div>
+
+{# --- Notes Section --- #}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">Notes</h5>
+    </div>
+    <div class="card-body">
+        {% if can_edit_docs %}
+        <form method="post" action="{{ url_for('equipment.add_note', id=equipment.id) }}" class="mb-3">
+            {{ note_form.hidden_tag() }}
+            <label for="{{ note_form.content.id }}" class="form-label">Add a note</label>
+            {{ note_form.content(class="form-control", rows="2", placeholder="Add a note...") }}
+            {{ note_form.submit(class="btn btn-primary mt-2") }}
+        </form>
+        {% endif %}
+
+        {% if notes %}
+        <div class="list-group">
+            {% for note in notes %}
+            <div class="list-group-item">
+                <div style="white-space: pre-wrap;">{{ note.content }}</div>
+                <small class="text-muted">
+                    {{ note.author_name or 'Unknown' }}
+                    &middot; <span title="UTC">{{ note.created_at|format_datetime }} UTC</span>
+                </small>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted text-center mb-0">No notes yet.</p>
+        {% endif %}
+    </div>
+</div>
 {% endblock %}

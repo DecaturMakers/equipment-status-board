@@ -14,6 +14,7 @@ from sqlalchemy.orm import joinedload
 from esb.extensions import db
 from esb.models.area import Area
 from esb.models.equipment import Equipment
+from esb.models.equipment_note import EquipmentNote
 from esb.models.external_link import ExternalLink
 from esb.utils.exceptions import ValidationError
 from esb.utils.logging import log_mutation
@@ -468,6 +469,62 @@ def get_equipment_links(equipment_id: int) -> list[ExternalLink]:
             db.select(ExternalLink)
             .filter_by(equipment_id=equipment_id)
             .order_by(ExternalLink.created_at.desc())
+        ).scalars().all()
+    )
+
+
+# --- Equipment Notes ---
+
+# Max stored note length. The service (authoritative) rejects content whose
+# stripped length exceeds this; EquipmentNoteForm reuses this constant for a
+# friendly pre-check that measures the same stripped length. Keep in sync here.
+NOTE_MAX_LENGTH = 5000
+
+
+def add_equipment_note(
+    equipment_id: int, content: str, author_id: int | None, author_name: str | None,
+) -> EquipmentNote:
+    """Add an append-only free-form note to an equipment record.
+
+    Raises:
+        ValidationError: if equipment not found, content is empty/whitespace,
+            or content exceeds ``NOTE_MAX_LENGTH`` characters (after stripping).
+    """
+    equipment = db.session.get(Equipment, equipment_id)
+    if equipment is None:
+        raise ValidationError(f'Equipment with id {equipment_id} not found')
+
+    if not content or not content.strip():
+        raise ValidationError('Note content is required')
+
+    stripped = content.strip()
+    if len(stripped) > NOTE_MAX_LENGTH:
+        raise ValidationError(f'Note is too long (max {NOTE_MAX_LENGTH} characters)')
+
+    note = EquipmentNote(
+        equipment_id=equipment_id,
+        content=stripped,
+        author_id=author_id,
+        author_name=author_name,
+    )
+    db.session.add(note)
+    db.session.commit()
+
+    log_mutation('equipment_note.created', author_name or 'unknown', {
+        'id': note.id,
+        'equipment_id': note.equipment_id,
+    })
+
+    return note
+
+
+def get_equipment_notes(equipment_id: int) -> list[EquipmentNote]:
+    """Get all notes for an equipment item, newest-first with a stable id tiebreaker."""
+    return list(
+        db.session.execute(
+            db.select(EquipmentNote)
+            .filter_by(equipment_id=equipment_id)
+            .order_by(EquipmentNote.created_at.desc(), EquipmentNote.id.desc())
         ).scalars().all()
     )
 
