@@ -1,7 +1,7 @@
 """Tests for equipment service (area and equipment management)."""
 
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -1014,6 +1014,150 @@ class TestGetEquipmentLinks:
         eq = make_equipment()
         result = get_equipment_links(eq.id)
         assert result == []
+
+
+# --- Equipment Note Service Tests ---
+
+
+class TestAddEquipmentNote:
+    """Tests for equipment_service.add_equipment_note()."""
+
+    def test_add_note_success(self, app, make_equipment):
+        """add_equipment_note() creates note and returns it with fields set."""
+        from esb.services.equipment_service import add_equipment_note
+
+        eq = make_equipment('Laser', 'Epilog', 'Zing')
+        note = add_equipment_note(eq.id, 'Replaced the belt.', None, 'staffuser')
+        assert note.id is not None
+        assert note.equipment_id == eq.id
+        assert note.content == 'Replaced the belt.'
+        assert note.author_id is None
+        assert note.author_name == 'staffuser'
+
+    def test_add_note_strips_whitespace(self, app, make_equipment):
+        """add_equipment_note() strips content whitespace."""
+        from esb.services.equipment_service import add_equipment_note
+
+        eq = make_equipment()
+        note = add_equipment_note(eq.id, '  Some note  ', None, 'staffuser')
+        assert note.content == 'Some note'
+
+    def test_add_note_invalid_equipment_raises(self, app):
+        """add_equipment_note() raises ValidationError for invalid equipment_id."""
+        from esb.services.equipment_service import add_equipment_note
+
+        with pytest.raises(ValidationError, match='not found'):
+            add_equipment_note(99999, 'A note', None, 'staffuser')
+
+    def test_add_note_empty_content_raises(self, app, make_equipment):
+        """add_equipment_note() raises ValidationError when content is empty."""
+        from esb.services.equipment_service import add_equipment_note
+
+        eq = make_equipment()
+        with pytest.raises(ValidationError, match='Note content is required'):
+            add_equipment_note(eq.id, '', None, 'staffuser')
+
+    def test_add_note_whitespace_content_raises(self, app, make_equipment):
+        """add_equipment_note() raises ValidationError when content is whitespace-only."""
+        from esb.services.equipment_service import add_equipment_note
+
+        eq = make_equipment()
+        with pytest.raises(ValidationError, match='Note content is required'):
+            add_equipment_note(eq.id, '   \n\t  ', None, 'staffuser')
+
+    def test_add_note_over_length_raises(self, app, make_equipment):
+        """add_equipment_note() rejects content longer than NOTE_MAX_LENGTH."""
+        from esb.services.equipment_service import NOTE_MAX_LENGTH, add_equipment_note
+
+        eq = make_equipment()
+        with pytest.raises(ValidationError, match='too long'):
+            add_equipment_note(eq.id, 'x' * (NOTE_MAX_LENGTH + 1), None, 'staffuser')
+
+    def test_add_note_at_max_length_succeeds(self, app, make_equipment):
+        """add_equipment_note() accepts content exactly NOTE_MAX_LENGTH long."""
+        from esb.services.equipment_service import NOTE_MAX_LENGTH, add_equipment_note
+
+        eq = make_equipment()
+        note = add_equipment_note(eq.id, 'x' * NOTE_MAX_LENGTH, None, 'staffuser')
+        assert len(note.content) == NOTE_MAX_LENGTH
+
+    def test_add_note_logs_mutation(self, app, capture, make_equipment):
+        """add_equipment_note() logs an equipment_note.created mutation."""
+        from esb.services.equipment_service import add_equipment_note
+
+        eq = make_equipment()
+        capture.records.clear()
+        note = add_equipment_note(eq.id, 'Audit me', None, 'staffuser')
+        entries = [
+            json.loads(r.message) for r in capture.records
+            if 'equipment_note.created' in r.message
+        ]
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry['event'] == 'equipment_note.created'
+        assert entry['user'] == 'staffuser'
+        assert entry['data']['id'] == note.id
+        assert entry['data']['equipment_id'] == eq.id
+
+
+class TestGetEquipmentNotes:
+    """Tests for equipment_service.get_equipment_notes()."""
+
+    def test_returns_notes_newest_first(self, app, make_equipment):
+        """get_equipment_notes() returns notes ordered newest-first."""
+        from esb.services.equipment_service import add_equipment_note, get_equipment_notes
+
+        eq = make_equipment()
+        add_equipment_note(eq.id, 'First', None, 'staffuser')
+        add_equipment_note(eq.id, 'Second', None, 'staffuser')
+
+        result = get_equipment_notes(eq.id)
+        assert len(result) == 2
+        assert result[0].content == 'Second'
+        assert result[1].content == 'First'
+
+    def test_same_created_at_tiebreak_by_id_desc(self, app, make_equipment):
+        """Notes sharing a created_at are ordered by descending id (stable tiebreaker)."""
+        from esb.models.equipment_note import EquipmentNote
+        from esb.services.equipment_service import get_equipment_notes
+
+        eq = make_equipment()
+        shared_time = datetime(2026, 7, 3, 12, 0, 0)
+        note1 = EquipmentNote(
+            equipment_id=eq.id, content='Earlier id', author_name='staffuser',
+            created_at=shared_time,
+        )
+        note2 = EquipmentNote(
+            equipment_id=eq.id, content='Later id', author_name='staffuser',
+            created_at=shared_time,
+        )
+        _db.session.add_all([note1, note2])
+        _db.session.commit()
+
+        result = get_equipment_notes(eq.id)
+        assert result[0].id > result[1].id
+        assert result[0].content == 'Later id'
+
+    def test_does_not_return_other_equipment_notes(self, app, make_equipment, make_area):
+        """get_equipment_notes() only returns notes for the specified equipment."""
+        from esb.services.equipment_service import add_equipment_note, get_equipment_notes
+
+        area = make_area('Shop', '#shop')
+        eq1 = make_equipment('Eq1', 'Co', 'M', area=area)
+        eq2 = make_equipment('Eq2', 'Co', 'M', area=area)
+        add_equipment_note(eq1.id, 'Note 1', None, 'staffuser')
+        add_equipment_note(eq2.id, 'Note 2', None, 'staffuser')
+
+        result = get_equipment_notes(eq1.id)
+        assert len(result) == 1
+        assert result[0].content == 'Note 1'
+
+    def test_returns_empty_list_when_none(self, app, make_equipment):
+        """get_equipment_notes() returns empty list when no notes exist."""
+        from esb.services.equipment_service import get_equipment_notes
+
+        eq = make_equipment()
+        assert get_equipment_notes(eq.id) == []
 
 
 class TestSearchEquipmentByName:

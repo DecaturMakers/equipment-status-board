@@ -22,6 +22,7 @@ from esb.forms.equipment_forms import (
     DocumentUploadForm,
     EquipmentCreateForm,
     EquipmentEditForm,
+    EquipmentNoteForm,
     ExternalLinkForm,
     PhotoUploadForm,
     QRGenerateForm,
@@ -115,6 +116,39 @@ def create():
     )
 
 
+def _render_equipment_detail(eq, *, note_form=None):
+    """Render the equipment detail page for ``eq``.
+
+    Shared by ``detail()`` and ``add_note()`` so a failed note submission can
+    re-render with the entered content preserved (``note_form`` bound) instead
+    of redirecting and discarding the user's typed note.
+    """
+    documents = upload_service.get_documents('equipment_doc', eq.id)
+    photos = upload_service.get_documents('equipment_photo', eq.id)
+    links = equipment_service.get_equipment_links(eq.id)
+    notes = equipment_service.get_equipment_notes(eq.id)
+    repair_records = repair_service.list_repair_records(
+        equipment_id=eq.id, eager_load_assignee=True,
+    )
+    can_edit_docs = _can_edit_docs() and not eq.is_archived
+
+    return render_template(
+        'equipment/detail.html',
+        equipment=eq,
+        documents=documents,
+        photos=photos,
+        links=links,
+        notes=notes,
+        repair_records=repair_records,
+        closed_statuses=repair_service.CLOSED_STATUSES,
+        doc_form=DocumentUploadForm(),
+        photo_form=PhotoUploadForm(),
+        link_form=ExternalLinkForm(),
+        note_form=note_form or EquipmentNoteForm(),
+        can_edit_docs=can_edit_docs,
+    )
+
+
 @equipment_bp.route('/<int:id>')
 @login_required
 def detail(id):
@@ -124,30 +158,7 @@ def detail(id):
     except ValidationError:
         abort(404)
 
-    documents = upload_service.get_documents('equipment_doc', id)
-    photos = upload_service.get_documents('equipment_photo', id)
-    links = equipment_service.get_equipment_links(id)
-    repair_records = repair_service.list_repair_records(
-        equipment_id=id, eager_load_assignee=True,
-    )
-    doc_form = DocumentUploadForm()
-    photo_form = PhotoUploadForm()
-    link_form = ExternalLinkForm()
-    can_edit_docs = _can_edit_docs() and not eq.is_archived
-
-    return render_template(
-        'equipment/detail.html',
-        equipment=eq,
-        documents=documents,
-        photos=photos,
-        links=links,
-        repair_records=repair_records,
-        closed_statuses=repair_service.CLOSED_STATUSES,
-        doc_form=doc_form,
-        photo_form=photo_form,
-        link_form=link_form,
-        can_edit_docs=can_edit_docs,
-    )
+    return _render_equipment_detail(eq)
 
 
 @equipment_bp.route('/<int:id>/edit', methods=['GET', 'POST'])
@@ -641,6 +652,45 @@ def delete_link(id, link_id):
     except ValidationError as e:
         flash(str(e), 'danger')
     return redirect(url_for('equipment.detail', id=id))
+
+
+# --- Equipment note add ---
+
+
+@equipment_bp.route('/<int:id>/notes', methods=['POST'])
+@login_required
+def add_note(id):
+    """Add an append-only note to an equipment item."""
+    try:
+        eq = equipment_service.get_equipment(id)
+    except ValidationError:
+        abort(404)
+    _require_doc_edit()
+
+    if eq.is_archived:
+        flash('Cannot modify archived equipment.', 'danger')
+        return redirect(url_for('equipment.detail', id=id))
+
+    form = EquipmentNoteForm()
+    if form.validate_on_submit():
+        try:
+            equipment_service.add_equipment_note(
+                equipment_id=id,
+                content=form.content.data,
+                author_id=current_user.id,
+                author_name=current_user.username,
+            )
+            flash('Note added successfully.', 'success')
+        except ValidationError as e:
+            flash(str(e), 'danger')
+        return redirect(url_for('equipment.detail', id=id))
+
+    # Form validation failed: re-render the detail page with the entered note
+    # preserved (rather than redirecting and discarding a possibly-long note).
+    for field, errors in form.errors.items():
+        for error in errors:
+            flash(f'{error}', 'danger')
+    return _render_equipment_detail(eq, note_form=form)
 
 
 # --- File serving ---

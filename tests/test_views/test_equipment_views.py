@@ -8,6 +8,7 @@ from datetime import date, datetime
 from esb.extensions import db as _db
 from esb.models.document import Document
 from esb.models.equipment import Equipment
+from esb.models.equipment_note import EquipmentNote
 from esb.models.external_link import ExternalLink
 
 
@@ -1259,6 +1260,219 @@ class TestDeleteLink:
         )
         assert resp.status_code == 200
         assert db.session.get(ExternalLink, link.id) is not None
+
+
+# --- Equipment Note View Tests ---
+
+
+class TestAddNote:
+    """Tests for POST /equipment/<id>/notes."""
+
+    def test_staff_adds_note(self, staff_client, staff_user, make_equipment, db):
+        """Staff can add a note; it persists with author attribution."""
+        eq = make_equipment()
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': 'Replaced the belt.'},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'Note added successfully' in resp.data
+        note = db.session.execute(
+            db.select(EquipmentNote).filter_by(equipment_id=eq.id)
+        ).scalar_one_or_none()
+        assert note is not None
+        assert note.content == 'Replaced the belt.'
+        assert note.author_name == 'staffuser'
+        assert note.author_id == staff_user.id
+        # Rendered newest-first with author and UTC timestamp.
+        assert b'Replaced the belt.' in resp.data
+        assert b'staffuser' in resp.data
+        assert b'UTC' in resp.data
+
+    def test_technician_gets_403_when_disabled(self, tech_client, make_equipment, db):
+        """A technician without tech_doc_edit_enabled cannot add notes (403)."""
+        eq = make_equipment()
+        resp = tech_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': 'Nope'},
+        )
+        assert resp.status_code == 403
+        count = db.session.execute(
+            db.select(db.func.count()).select_from(EquipmentNote)
+        ).scalar_one()
+        assert count == 0
+
+    def test_technician_succeeds_when_enabled(self, tech_client, make_equipment, db):
+        """A technician with tech_doc_edit_enabled can add notes."""
+        from esb.services import config_service
+        config_service.set_config('tech_doc_edit_enabled', 'true', 'test')
+
+        eq = make_equipment()
+        resp = tech_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': 'Tech note'},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'Note added successfully' in resp.data
+
+    def test_ungated_technician_sees_no_add_form(self, tech_client, make_equipment):
+        """A non-privileged user (ungated tech) sees no add-note form on detail."""
+        eq = make_equipment()
+        resp = tech_client.get(f'/equipment/{eq.id}')
+        assert resp.status_code == 200
+        assert b'Add Note' not in resp.data
+        assert f'/equipment/{eq.id}/notes'.encode() not in resp.data
+
+    def test_404_for_nonexistent_equipment(self, staff_client):
+        """Add note to non-existent equipment returns 404."""
+        resp = staff_client.post(
+            '/equipment/99999/notes',
+            data={'content': 'Test'},
+        )
+        assert resp.status_code == 404
+
+    def test_validation_error_empty_content(self, staff_client, make_equipment, db):
+        """Empty content shows a validation error and creates no note."""
+        eq = make_equipment()
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': ''},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'This field is required' in resp.data
+        count = db.session.execute(
+            db.select(db.func.count()).select_from(EquipmentNote)
+        ).scalar_one()
+        assert count == 0
+
+    def test_over_length_rejected(self, staff_client, make_equipment, db):
+        """Content longer than NOTE_MAX_LENGTH is rejected; no note is created."""
+        from esb.services.equipment_service import NOTE_MAX_LENGTH
+
+        eq = make_equipment()
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': 'x' * (NOTE_MAX_LENGTH + 1)},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'too long' in resp.data
+        count = db.session.execute(
+            db.select(db.func.count()).select_from(EquipmentNote)
+        ).scalar_one()
+        assert count == 0
+
+    def test_whitespace_padded_within_limit_accepted(self, staff_client, make_equipment, db):
+        """A note whose stripped length is within the limit is accepted even if
+        the raw (untrimmed) length exceeds it -- form measures stripped length."""
+        from esb.services.equipment_service import NOTE_MAX_LENGTH
+
+        eq = make_equipment()
+        padded = 'x' * NOTE_MAX_LENGTH + ' ' * 20  # raw > max, stripped == max
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': padded},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'Note added successfully' in resp.data
+        note = db.session.execute(db.select(EquipmentNote)).scalar_one()
+        assert len(note.content) == NOTE_MAX_LENGTH
+
+    def test_invalid_submission_preserves_entered_content(self, staff_client, make_equipment):
+        """On validation failure the typed note body is preserved in the re-rendered form."""
+        from esb.services.equipment_service import NOTE_MAX_LENGTH
+
+        eq = make_equipment()
+        marker = 'UNIQUEMARKER'
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': marker + 'x' * NOTE_MAX_LENGTH},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'too long' in resp.data
+        # The rejected content is re-rendered in the textarea (not discarded).
+        assert marker.encode() in resp.data
+
+    def test_content_is_html_escaped(self, staff_client, make_equipment):
+        """Note content with HTML/script is escaped, not rendered raw (XSS-safe)."""
+        eq = make_equipment()
+        staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': '<script>alert(1)</script>'},
+            follow_redirects=True,
+        )
+        resp = staff_client.get(f'/equipment/{eq.id}')
+        assert b'&lt;script&gt;alert(1)&lt;/script&gt;' in resp.data
+        assert b'<script>alert(1)</script>' not in resp.data
+
+    def test_note_creation_logs_mutation(self, staff_client, make_equipment, capture):
+        """Adding a note logs an equipment_note.created mutation."""
+        eq = make_equipment()
+        capture.records.clear()
+        staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': 'Audit me'},
+            follow_redirects=True,
+        )
+        entries = [
+            json.loads(r.message) for r in capture.records
+            if 'equipment_note.created' in r.message
+        ]
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry['event'] == 'equipment_note.created'
+        assert entry['user'] == 'staffuser'
+        assert 'id' in entry['data']
+
+    def test_empty_state_rendered(self, staff_client, make_equipment):
+        """Detail page for equipment with no notes shows the empty-state string."""
+        eq = make_equipment()
+        resp = staff_client.get(f'/equipment/{eq.id}')
+        assert resp.status_code == 200
+        assert b'No notes yet.' in resp.data
+
+    def test_no_edit_or_delete_route_for_notes(self, app, make_equipment, staff_client):
+        """Notes are append-only: no edit/delete route or control exists."""
+        note_rules = [
+            r.rule for r in app.url_map.iter_rules()
+            if r.endpoint.startswith('equipment.') and '/notes' in r.rule
+        ]
+        # The only equipment-notes route is the add (POST) endpoint; no edit/delete variants.
+        assert note_rules == ['/equipment/<int:id>/notes']
+        assert not any('delete' in r or 'edit' in r for r in note_rules)
+
+        eq = make_equipment()
+        staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': 'A note'},
+            follow_redirects=True,
+        )
+        resp = staff_client.get(f'/equipment/{eq.id}')
+        # No delete control inside the rendered Notes list.
+        assert b'/notes/' not in resp.data
+
+    def test_archived_block_for_permitted_user(self, staff_client, make_equipment, db):
+        """A permitted user POSTing a note to archived equipment is blocked with a flash."""
+        eq = make_equipment()
+        eq.is_archived = True
+        _db.session.commit()
+
+        resp = staff_client.post(
+            f'/equipment/{eq.id}/notes',
+            data={'content': 'Nope'},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'Cannot modify archived equipment' in resp.data
+        count = db.session.execute(
+            db.select(db.func.count()).select_from(EquipmentNote)
+        ).scalar_one()
+        assert count == 0
 
 
 # --- File Serving View Tests ---

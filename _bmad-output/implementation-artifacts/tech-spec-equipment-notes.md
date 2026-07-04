@@ -2,7 +2,7 @@
 title: 'Notes on Equipment'
 slug: 'equipment-notes'
 created: '2026-07-03'
-status: 'ready-for-dev'
+status: 'completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack: [Python 3.14, Flask, Flask-SQLAlchemy, MariaDB, Alembic, Flask-WTF, Jinja2, pytest]
 files_to_modify: [esb/models/equipment_note.py (new), esb/models/__init__.py, esb/services/equipment_service.py, esb/forms/equipment_forms.py, esb/views/equipment.py, esb/templates/equipment/detail.html, migrations/versions/<rev>_add_equipment_notes.py (new), tests/test_models/test_equipment_note.py (new), tests/test_services/test_equipment_service.py, tests/test_views/test_equipment_views.py]
@@ -90,7 +90,7 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
 
 ### Tasks
 
-- [ ] **Task 1: Create the `EquipmentNote` model**
+- [x] **Task 1: Create the `EquipmentNote` model**
   - File: `esb/models/equipment_note.py` (new)
   - Action: Define `EquipmentNote(db.Model)` with `__tablename__ = 'equipment_notes'`. Columns:
     - `id = db.Column(db.Integer, primary_key=True)`
@@ -104,12 +104,12 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
     - `__repr__` returning `f'<EquipmentNote {self.id}>'`
   - Notes: Import `from datetime import UTC, datetime` and `from esb.extensions import db`. Mirror `esb/models/external_link.py` (child FK + `created_at` default) and `esb/models/repair_timeline_entry.py` (author_id + author_name + content). `author_id` is nullable to match `RepairTimelineEntry` (no `ondelete` clause). Attribution is preserved by the cached **`author_name`**, not by the nullable FK — see Technical Decisions F2/F12: `author_name` is a point-in-time snapshot that will not reflect later username changes, and the FK does not `SET NULL` on user delete.
 
-- [ ] **Task 2: Register the model for Alembic discovery**
+- [x] **Task 2: Register the model for Alembic discovery**
   - File: `esb/models/__init__.py`
   - Action: Add `from esb.models.equipment_note import EquipmentNote` **between** the `equipment` and `equipment_reservation_settings` imports (review F5: `equipment_note` sorts before `equipment_reservation_settings` because `n` < `r`) and add `'EquipmentNote'` to `__all__` in the corresponding position.
   - Notes: Required for `flask db migrate` autogenerate and app-wide import consistency.
 
-- [ ] **Task 3: Add service functions**
+- [x] **Task 3: Add service functions**
   - File: `esb/services/equipment_service.py`
   - Action: Define a module-level `NOTE_MAX_LENGTH = 5000` constant, then add a `# --- Equipment Notes ---` section with two functions (mirror `add_equipment_link`/`get_equipment_links`):
     - `add_equipment_note(equipment_id: int, content: str, author_id: int | None, author_name: str | None) -> EquipmentNote`:
@@ -122,12 +122,12 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
     - `get_equipment_notes(equipment_id: int) -> list[EquipmentNote]`: return all notes for the equipment ordered by `EquipmentNote.created_at.desc(), EquipmentNote.id.desc()` (newest-first, with a stable `id` tiebreaker — review F4).
   - Notes: Add `from esb.models.equipment_note import EquipmentNote` to the imports at the top. Import `NOTE_MAX_LENGTH` into `equipment_forms.py` (Task 4) so the form's `Length(max=...)` stays in sync with the service constant.
 
-- [ ] **Task 4: Add the note form**
+- [x] **Task 4: Add the note form**
   - File: `esb/forms/equipment_forms.py`
   - Action: Add `class EquipmentNoteForm(FlaskForm)` with `content = TextAreaField('Note', validators=[DataRequired(), Length(max=NOTE_MAX_LENGTH, message=f'Note is too long (max {NOTE_MAX_LENGTH} characters)')])` and `submit = SubmitField('Add Note')`. The explicit `message` (review R3-7) makes the over-length error a stable, assertable string instead of relying on WTForms' version-specific default.
   - Notes: `TextAreaField`, `DataRequired`, `Length`, `SubmitField` are already imported in this file. Import `NOTE_MAX_LENGTH` from `esb.services.equipment_service` so the form and service share the constant (review F6). **No circular import (review R2-7):** `equipment_forms.py` already imports from a service (`from esb.services.qr_service import ...`, line 18) and `equipment_service` imports only models/utils (never forms), so the graph is clean — keep the constant defined in the service, no fallback needed. Place the class near `ExternalLinkForm`.
 
-- [ ] **Task 5: Add the add-note route and wire notes into the detail view**
+- [x] **Task 5: Add the add-note route and wire notes into the detail view**
   - File: `esb/views/equipment.py`
   - Action:
     - Import `EquipmentNoteForm` in the `esb.forms.equipment_forms` import block.
@@ -165,7 +165,7 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
       ```
   - Notes: `_require_doc_edit()` enforces the staff/technician gate (403 for non-privileged users, i.e. ungated technicians); the archived check + validation-error flashing exactly match `add_link`.
 
-- [ ] **Task 6: Render the Notes section in the detail template**
+- [x] **Task 6: Render the Notes section in the detail template**
   - File: `esb/templates/equipment/detail.html`
   - Action: Add a new `<div class="card mb-4">` "Notes" section at the bottom (after the Links section, before `{% endblock %}`). Reuse the Links card's **card + card-header + card-body + `list-group`** structure, but **NOT** its `data-bs-toggle="collapse"` toggle button — the add-note form renders **inline and always-visible** at the top of the card body per the issue (review F9: this is a deliberate divergence from the Links card, whose form is collapsed behind a header button; the Notes card-header has a plain title only, no button).
     - Card header: `<h5 class="mb-0">Notes</h5>` (no button).
@@ -184,7 +184,7 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
     - **Newlines / XSS (review F3):** MUST use the `white-space: pre-wrap;` CSS approach with Jinja autoescaping left **on**. Do **NOT** introduce or use an `nl2br`/`|safe`/`Markup` filter — note content is untrusted free text and any unescaping path is a stored-XSS vector. (Confirmed: no `nl2br` filter is registered — only `format_date`, `format_datetime`, `relative_time`, `category_label`, `filesize` in `esb/utils/filters.py`.)
     - **Timestamp (review F7/R2-2):** `|format_datetime` renders naive UTC as `%Y-%m-%d %H:%M` with no TZ conversion; append a literal " UTC" (and/or `title="UTC"`) so the displayed time is unambiguous. This is a deliberate visible date+time (unlike the date-only Links/Docs lines and the tooltip-only use at `detail.html:259`) — see Technical Decisions R2-2.
 
-- [ ] **Task 7: Generate and apply the Alembic migration**
+- [x] **Task 7: Generate and apply the Alembic migration**
   - File: `migrations/versions/<rev>_add_equipment_notes.py` (new, autogenerated)
   - Action: With the DB container running, generate the migration and apply it:
     ```bash
@@ -196,17 +196,17 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
     ```
   - Notes: Review the autogenerated migration to confirm it only creates `equipment_notes` (table + FKs + index on `equipment_id`) and nothing spurious. Container IP changes each restart — inspect fresh. **This manual review is the only verification of the migration (review R2-3):** the pytest suite uses SQLite `create_all()` and never runs Alembic, so nothing else catches a wrong/empty migration — review it carefully and confirm `flask db upgrade` then `downgrade` both succeed against the container.
 
-- [ ] **Task 8: Model tests**
+- [x] **Task 8: Model tests**
   - File: `tests/test_models/test_equipment_note.py` (new)
   - Action: Mirror `tests/test_models/test_external_link.py`. Assert the model persists, defaults `created_at`, stores `content`/`author_id`/`author_name`, and the `equipment.notes` / `author.equipment_notes` backrefs resolve. Since the `notes` backref carries an `order_by=created_at.desc(), id.desc()` (Task 1, review R2-10), a test that adds two notes and reads `equipment.notes` should see newest-first order.
 
-- [ ] **Task 9: Service tests**
+- [x] **Task 9: Service tests**
   - File: `tests/test_services/test_equipment_service.py`
   - Action: Add `TestAddEquipmentNote` and `TestGetEquipmentNotes` classes mirroring the link test classes:
     - `add_equipment_note` success (returns note, sets fields), strips whitespace, invalid equipment raises `ValidationError`, empty/whitespace content raises `ValidationError` (**call the service directly** — via the web route `DataRequired` fires first with a different message, so the service's `'Note content is required'` message is only reachable here; review R2-8), **over-length content (`'x' * (NOTE_MAX_LENGTH + 1)`) raises `ValidationError` (review F6/F11)**, logs an `equipment_note.created` mutation — assert via `entry = json.loads(r.message)` that `entry['user']` equals the passed `author_name` and `entry['data']` contains `id` + `equipment_id` (**review R3-1: `capture.records` are `LogRecord`s; parse `r.message`, do not use `record.user`/`record.data`**; mirror `test_equipment_service.py:199-208`) (use `capture` fixture).
     - `get_equipment_notes` returns notes for the equipment newest-first, excludes other equipment's notes, returns `[]` when none. **Ordering/tiebreaker test (review F4/R3-2):** because `add_equipment_note` has no `created_at` parameter (it defaults to `now(UTC)`), construct two `EquipmentNote` rows **directly** with the *same* explicit `created_at` (and add via `_db.session`), then assert `get_equipment_notes` returns the higher-`id` row first. The service API cannot force equal timestamps, so this test must bypass it.
 
-- [ ] **Task 10: View tests**
+- [x] **Task 10: View tests**
   - File: `tests/test_views/test_equipment_views.py`
   - Action: Add `TestAddNote` class mirroring `TestAddLink`/permission tests:
     - `staff_client` adds a note (200 + 'Note added successfully' + row persisted).
@@ -220,23 +220,23 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
     - **Append-only (review R3-5/AC 10):** assert no edit/delete route exists for notes — e.g. `url_for` for such an endpoint raises / the endpoint is absent from `app.url_map`, and the rendered detail page contains no delete control inside the Notes card. (Complement to the code-review check noted in AC 10.)
     - **Archived block with a *permitted* user (review F10):** use `staff_client` (or a `tech_doc_edit_enabled` `tech_client`) POSTing to an archived item → 'Cannot modify archived equipment.' Do **not** assert this message for an ungated technician, who gets 403 first because `_require_doc_edit()` runs before the archived check.
 
-- [ ] **Task 11: Lint and run the suite**
+- [x] **Task 11: Lint and run the suite**
   - Action: `make lint` (ruff, 120-char) and `make test`. Fix any failures.
 
 ### Acceptance Criteria
 
-- [ ] **AC 1 (happy path — add):** Given a staff user viewing an active equipment's detail page, when they type text into the "Add note" box and submit, then the note is saved with their username as `author_name`, their id as `author_id`, the current UTC time as `created_at`, and the page reloads showing "Note added successfully." with the new note listed.
-- [ ] **AC 2 (display order):** Given an equipment with multiple notes, when the detail page renders, then all notes appear in a Notes section at the bottom in newest-to-oldest order (ties broken by descending `id` for a deterministic order — review F4), each showing its content, author name, and timestamp (displayed as UTC), with no pagination.
-- [ ] **AC 3 (empty state):** Given an equipment with no notes, when the detail page renders, then the Notes section shows "No notes yet."
-- [ ] **AC 4 (validation):** Given the add-note form, when submitted with empty or whitespace-only content, then no note is created and a validation error ("This field is required") is shown.
-- [ ] **AC 5 (permission — technician gated):** Given a technician user and `tech_doc_edit_enabled` unset/false, when they POST to `/equipment/<id>/notes`, then the response is 403 and no note is created; and when `tech_doc_edit_enabled` is 'true', the same POST succeeds.
-- [ ] **AC 6 (permission — non-privileged user):** Given a non-privileged user — i.e. a technician with `tech_doc_edit_enabled` unset (there is no `member` role in code; review R2-1) — when they view an equipment's detail page, then no "Add note" form is shown (`can_edit_docs` is false); and when they POST directly to `/equipment/<id>/notes`, then the response is 403 and no note is created — this holds even for an archived item, because `_require_doc_edit()` runs before the archived check (review F10).
-- [ ] **AC 7 (archived):** Given an archived equipment and a **permitted** user (staff, or a technician with `tech_doc_edit_enabled`), when they POST a note, then no note is created and "Cannot modify archived equipment." is flashed (review F10 — the archived flash is only reachable by permitted users).
-- [ ] **AC 8 (not found):** Given a nonexistent equipment id, when POSTing to its notes route, then the response is 404.
-- [ ] **AC 9 (audit):** Given a note is successfully added, when it is created, then an `equipment_note.created` mutation is logged as JSON where the parsed `event == 'equipment_note.created'`, the top-level `user` is the author's username, and `data` contains the note `id` and `equipment_id`. **Assertion mechanics (review R3-1):** `capture.records` are raw `logging.LogRecord`s — parse each with `json.loads(r.message)` and index the resulting dict (`entry['user']`, `entry['data']['id']`), exactly like the existing mutation-log tests (`tests/test_services/test_equipment_service.py:199-208`). Do **not** access `record.user` / `record.data` (no such attributes exist).
-- [ ] **AC 10 (append-only):** Given the feature as built, then there is no route, form, or UI control to edit or delete a note. *(Verified partly by test — assert no edit/delete URL is emitted and no such route resolves — and partly by code review, since "no edit/delete capability anywhere" is an absence property; review R2-9.)*
-- [ ] **AC 11 (length limit):** Given the add-note form or a direct service call, when content longer than `NOTE_MAX_LENGTH` (5000) characters is submitted, then no note is created and a length validation error is returned/flashed — enforced at both the form and the service layer (review F6/F11).
-- [ ] **AC 12 (no unescaping / XSS-safe):** Given a note whose content contains HTML/script-like text (e.g. `<script>` or `&`), when the detail page renders it, then the content is HTML-escaped (autoescape on) and newlines are preserved via `white-space: pre-wrap;`. *(The escaping/pre-wrap outcome is asserted by a view test (review F3); the stronger "no `nl2br`/`|safe`/`Markup` path is used anywhere" is an absence property enforced by code review — review R2-9.)*
+- [x] **AC 1 (happy path — add):** Given a staff user viewing an active equipment's detail page, when they type text into the "Add note" box and submit, then the note is saved with their username as `author_name`, their id as `author_id`, the current UTC time as `created_at`, and the page reloads showing "Note added successfully." with the new note listed.
+- [x] **AC 2 (display order):** Given an equipment with multiple notes, when the detail page renders, then all notes appear in a Notes section at the bottom in newest-to-oldest order (ties broken by descending `id` for a deterministic order — review F4), each showing its content, author name, and timestamp (displayed as UTC), with no pagination.
+- [x] **AC 3 (empty state):** Given an equipment with no notes, when the detail page renders, then the Notes section shows "No notes yet."
+- [x] **AC 4 (validation):** Given the add-note form, when submitted with empty or whitespace-only content, then no note is created and a validation error ("This field is required") is shown.
+- [x] **AC 5 (permission — technician gated):** Given a technician user and `tech_doc_edit_enabled` unset/false, when they POST to `/equipment/<id>/notes`, then the response is 403 and no note is created; and when `tech_doc_edit_enabled` is 'true', the same POST succeeds.
+- [x] **AC 6 (permission — non-privileged user):** Given a non-privileged user — i.e. a technician with `tech_doc_edit_enabled` unset (there is no `member` role in code; review R2-1) — when they view an equipment's detail page, then no "Add note" form is shown (`can_edit_docs` is false); and when they POST directly to `/equipment/<id>/notes`, then the response is 403 and no note is created — this holds even for an archived item, because `_require_doc_edit()` runs before the archived check (review F10).
+- [x] **AC 7 (archived):** Given an archived equipment and a **permitted** user (staff, or a technician with `tech_doc_edit_enabled`), when they POST a note, then no note is created and "Cannot modify archived equipment." is flashed (review F10 — the archived flash is only reachable by permitted users).
+- [x] **AC 8 (not found):** Given a nonexistent equipment id, when POSTing to its notes route, then the response is 404.
+- [x] **AC 9 (audit):** Given a note is successfully added, when it is created, then an `equipment_note.created` mutation is logged as JSON where the parsed `event == 'equipment_note.created'`, the top-level `user` is the author's username, and `data` contains the note `id` and `equipment_id`. **Assertion mechanics (review R3-1):** `capture.records` are raw `logging.LogRecord`s — parse each with `json.loads(r.message)` and index the resulting dict (`entry['user']`, `entry['data']['id']`), exactly like the existing mutation-log tests (`tests/test_services/test_equipment_service.py:199-208`). Do **not** access `record.user` / `record.data` (no such attributes exist).
+- [x] **AC 10 (append-only):** Given the feature as built, then there is no route, form, or UI control to edit or delete a note. *(Verified partly by test — assert no edit/delete URL is emitted and no such route resolves — and partly by code review, since "no edit/delete capability anywhere" is an absence property; review R2-9.)*
+- [x] **AC 11 (length limit):** Given the add-note form or a direct service call, when content longer than `NOTE_MAX_LENGTH` (5000) characters is submitted, then no note is created and a length validation error is returned/flashed — enforced at both the form and the service layer (review F6/F11).
+- [x] **AC 12 (no unescaping / XSS-safe):** Given a note whose content contains HTML/script-like text (e.g. `<script>` or `&`), when the detail page renders it, then the content is HTML-escaped (autoescape on) and newlines are preserved via `white-space: pre-wrap;`. *(The escaping/pre-wrap outcome is asserted by a view test (review F3); the stronger "no `nl2br`/`|safe`/`Markup` path is used anywhere" is an absence property enforced by code review — review R2-9.)*
 
 ## Additional Context
 
@@ -269,3 +269,16 @@ Author attribution uses the **RepairTimelineEntry** pattern (`esb/models/repair_
 - **CLAUDE.md vs. code discrepancy (review R2-1):** CLAUDE.md line 60 documents a `member` role, but the code implements only `technician` and `staff` (`user_service.VALID_ROLES`, `decorators.ROLE_HIERARCHY`). This spec follows the **code**. Reconciling the docs (or actually adding a `member` role) is a separate concern outside this feature — flagged here for the maintainer.
 - **Migration not covered by CI (review R2-3):** see Testing Strategy — the Alembic migration is verified only by manual review + smoke test, an accepted limitation of the SQLite-based suite.
 - **Future considerations:** if notes volume grows, add pagination and/or edit-delete with audit; consider surfacing notes on the public equipment page. All explicitly deferred.
+
+## Review Notes
+
+- Adversarial review completed (independent subagent, diff-only context).
+- Findings: 6 total (all Low; no Critical/High). 2 fixed, 4 acknowledged as intentional/out-of-scope.
+- Resolution approach: auto-fix of the two findings the user selected (F1, F2).
+  - **F1 (fixed):** `EquipmentNoteForm` now validates *stripped* content length via a `validate_content` method (shared `NOTE_MAX_LENGTH` + message), so the form never rejects a whitespace-padded note the authoritative service would store. Supersedes the earlier "deliberately not identical" raw-vs-stripped decision.
+  - **F2 (fixed):** `add_note` re-renders the detail page (via new `_render_equipment_detail` helper) on validation failure, preserving the user's typed note instead of redirecting and discarding it.
+  - **F3 (acknowledged):** "member-role denied" test — invalid premise; no `member` role exists in code (R2-1). Canonical non-privileged case (ungated technician) is already tested.
+  - **F4 (acknowledged):** minute-resolution timestamps — accepted per F7; ordering stays deterministic via `id DESC`.
+  - **F5 (acknowledged):** notes list visible to all authenticated users — by design (viewing needs only `@login_required`, matching docs/links).
+  - **F6 (acknowledged):** service re-fetches Equipment — by design, mirrors `add_equipment_link`.
+- Verification: `make lint` clean; full suite 1840 passed; migration upgrade↔downgrade verified against MariaDB container.
