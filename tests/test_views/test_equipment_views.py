@@ -1443,7 +1443,8 @@ class TestAddNote:
             if r.endpoint.startswith('equipment.') and '/notes' in r.rule
         ]
         # The only equipment-notes route is the add (POST) endpoint; no edit/delete variants.
-        assert note_rules == ['/equipment/<int:id>/notes']
+        # Compare order-independently -- app.url_map.iter_rules() iteration order is not guaranteed.
+        assert sorted(note_rules) == ['/equipment/<int:id>/notes']
         assert not any('delete' in r or 'edit' in r for r in note_rules)
 
         eq = make_equipment()
