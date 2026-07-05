@@ -67,6 +67,13 @@ class TestMacControls:
         resp = staff_client.post(f'/equipment/{eq.id}/mac/oops', follow_redirects=True)
         assert b'not linked to a MAC machine' in resp.data
 
+    def test_archived_equipment_blocked(self, staff_client, mac_url, make_equipment):
+        eq = make_equipment(mac_machine_name='planer', is_archived=True)
+        with patch('esb.services.mac_service.requests') as mock_req:
+            resp = staff_client.post(f'/equipment/{eq.id}/mac/oops', follow_redirects=True)
+            mock_req.request.assert_not_called()
+        assert b'archived' in resp.data
+
     def test_card_and_controls_shown_without_cached_status(self, staff_client, mac_url, make_equipment):
         # Linked but no MachineStatus cached yet (before first webhook/poll, or a
         # typo'd name): the card, controls, and activity button must still render

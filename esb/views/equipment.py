@@ -250,6 +250,11 @@ def _mac_control(id, action_fn, action_label):
     except ValidationError:
         abort(404)
 
+    # The UI hides the control buttons for archived equipment; enforce the same
+    # at the route so a direct POST can't oops/lockout/clear an archived machine.
+    if eq.is_archived:
+        flash('Cannot operate MAC controls on archived equipment.', 'danger')
+        return redirect(url_for('equipment.detail', id=id))
     if not mac_service.mac_enabled():
         flash('The MAC integration is not enabled on this deployment.', 'danger')
         return redirect(url_for('equipment.detail', id=id))
