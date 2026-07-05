@@ -135,3 +135,16 @@ class TestWebhookToken:
         app.config['MAC_WEBHOOK_TOKEN'] = ''
         assert client.post('/webhooks/mac', json=_payload()).status_code == 204
         assert client.post('/webhooks/mac/anything', json=_payload()).status_code == 204
+
+    def test_disabled_with_token_set_returns_204_not_403(self, client, app):
+        # Disabled integration is a documented 204 no-op regardless of a leftover
+        # token -- the enabled check runs before the token guard.
+        app.config['MAC_URL'] = ''
+        app.config['MAC_WEBHOOK_TOKEN'] = 'secret'
+        assert client.post('/webhooks/mac', json=_payload()).status_code == 204
+        assert client.post('/webhooks/mac/wrong', json=_payload()).status_code == 204
+
+    def test_whitespace_only_token_treated_as_unset(self, client, app):
+        app.config['MAC_URL'] = 'http://mac.test'
+        app.config['MAC_WEBHOOK_TOKEN'] = '   '
+        assert client.post('/webhooks/mac', json=_payload()).status_code == 204

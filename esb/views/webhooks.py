@@ -33,13 +33,20 @@ def mac_status(token=None):
         500 -- an internal/transient error occurred (so MAC retries).
     """
     # Token guard: only enforced when a token is configured. Constant-time
-    # comparison avoids leaking the secret via timing.
-    configured_token = current_app.config.get('MAC_WEBHOOK_TOKEN', '')
-    if configured_token and not hmac.compare_digest(token or '', configured_token):
-        return ('', 403)
-
+    # Check enabled FIRST: when the integration is disabled the endpoint is a
+    # documented 204 no-op regardless of any token, so a leftover
+    # MAC_WEBHOOK_TOKEN can't turn a disabled deployment's webhook into a 403
+    # (which MAC would retry). Nothing is written when disabled, so there is no
+    # security reason to authenticate here.
     if not mac_service.mac_enabled():
         return ('', 204)
+
+    # Token guard (only when enabled). Strip so a whitespace-only configured
+    # token behaves like "unset" (network-trusted). Constant-time comparison
+    # avoids leaking the secret via timing.
+    configured_token = current_app.config.get('MAC_WEBHOOK_TOKEN', '').strip()
+    if configured_token and not hmac.compare_digest(token or '', configured_token):
+        return ('', 403)
 
     payload = request.get_json(silent=True)
     # Validate required fields BEFORE any DB write so bad input is a clean 400
