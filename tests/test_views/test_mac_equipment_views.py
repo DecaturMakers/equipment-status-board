@@ -67,6 +67,23 @@ class TestMacControls:
         resp = staff_client.post(f'/equipment/{eq.id}/mac/oops', follow_redirects=True)
         assert b'not linked to a MAC machine' in resp.data
 
+    def test_card_and_controls_shown_without_cached_status(self, staff_client, mac_url, make_equipment):
+        # Linked but no MachineStatus cached yet (before first webhook/poll, or a
+        # typo'd name): the card, controls, and activity button must still render
+        # with a placeholder rather than vanishing silently.
+        eq = make_equipment(mac_machine_name='planer')
+        resp = staff_client.get(f'/equipment/{eq.id}')
+        assert resp.status_code == 200
+        assert b'MAC Machine Status' in resp.data
+        assert b'No status received from MAC yet' in resp.data
+        assert f'/equipment/{eq.id}/mac/oops'.encode() in resp.data
+        assert b'mac-activity-btn' in resp.data
+
+    def test_card_hidden_when_unlinked(self, staff_client, mac_url, make_equipment):
+        eq = make_equipment()  # MAC enabled but no machine name linked
+        resp = staff_client.get(f'/equipment/{eq.id}')
+        assert b'MAC Machine Status' not in resp.data
+
 
 class TestActivityJson:
     def test_returns_events_newest_first(self, tech_client, mac_url, make_equipment):

@@ -36,6 +36,17 @@ class TestDashboardInjection:
         data = status_service.get_single_area_status_dashboard(area.id)
         assert data['equipment'][0]['machine_status'].status == 'oops'
 
+    def test_case_insensitive_badge_lookup(self, mac_url, make_area, make_equipment):
+        # Admin typed 'Planer'; MAC reports 'planer'. The batched dict lookup
+        # must still resolve (matches the case-insensitive direct-DB lookup).
+        area = make_area()
+        make_equipment(name='Planer', area=area, mac_machine_name='Planer')
+        mac_service.upsert_machine_status(_status_dict('planer', status='oops'))
+        dashboard = status_service.get_area_status_dashboard()
+        item = dashboard[0]['equipment'][0]
+        assert item['machine_status'] is not None
+        assert item['machine_status'].status == 'oops'
+
     def test_none_when_disabled(self, app, make_area, make_equipment):
         app.config['MAC_URL'] = ''
         area = make_area()

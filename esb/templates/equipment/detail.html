@@ -37,11 +37,11 @@
     {% endif %}
 </div>
 
-{% if machine_status %}
+{% if mac_enabled and equipment.mac_machine_name %}
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">MAC Machine Status</h5>
-        {% include 'components/_mac_status_badge.html' %}
+        {% if machine_status %}{% include 'components/_mac_status_badge.html' %}{% endif %}
     </div>
     <div class="card-body">
         <dl class="row mb-3">
@@ -49,14 +49,18 @@
             <dd class="col-sm-9">{{ equipment.mac_machine_name }}</dd>
 
             <dt class="col-sm-3">State</dt>
+            {% if machine_status %}
             <dd class="col-sm-9">{{ machine_status.status }}</dd>
+            {% else %}
+            <dd class="col-sm-9 text-muted">No status received from MAC yet — controls below still work; status appears after the next machine event or worker poll.</dd>
+            {% endif %}
 
-            {% if machine_status.current_user_full_name %}
+            {% if machine_status and machine_status.current_user_full_name %}
             <dt class="col-sm-3">Current User</dt>
             <dd class="col-sm-9">{{ machine_status.current_user_full_name }}</dd>
             {% endif %}
 
-            {% if machine_status.last_checkin %}
+            {% if machine_status and machine_status.last_checkin %}
             <dt class="col-sm-3">Last Check-in</dt>
             <dd class="col-sm-9">{{ machine_status.last_checkin }} UTC</dd>
             {% endif %}
@@ -436,7 +440,7 @@
 {% endblock %}
 
 {% block extra_js %}
-{% if machine_status %}
+{% if mac_enabled and equipment.mac_machine_name %}
 <script>
 // On-demand MAC activity loader. GET request -> no CSRF token needed.
 (function () {

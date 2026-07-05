@@ -147,6 +147,7 @@ def _render_equipment_detail(eq, *, note_form=None):
         link_form=ExternalLinkForm(),
         note_form=note_form or EquipmentNoteForm(),
         can_edit_docs=can_edit_docs,
+        mac_enabled=mac_service.mac_enabled(),
         machine_status=mac_service.get_status_for_equipment(eq),
         mac_visible=mac_service.visible_statuses('admin'),
     )

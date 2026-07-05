@@ -282,7 +282,9 @@ def get_area_status_dashboard() -> list[dict]:
                 'equipment': equip,
                 'status': status,
                 'open_records': open_records_sorted,
-                'machine_status': machine_status_by_name.get(equip.mac_machine_name),
+                'machine_status': machine_status_by_name.get(
+                    (equip.mac_machine_name or '').lower()
+                ),
             })
 
         result.append({
@@ -361,7 +363,9 @@ def get_single_area_status_dashboard(area_id: int) -> dict:
         equip_statuses.append({
             'equipment': equip,
             'status': _derive_status_from_records(equip_records),
-            'machine_status': machine_status_by_name.get(equip.mac_machine_name),
+            'machine_status': machine_status_by_name.get(
+                (equip.mac_machine_name or '').lower()
+            ),
         })
 
     return {'area': area, 'equipment': equip_statuses}

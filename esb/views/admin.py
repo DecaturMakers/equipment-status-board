@@ -17,24 +17,19 @@ from esb.utils.exceptions import ValidationError
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
-# MAC status-display toggle matrix. surface -> statuses shown by default. Public
-# shows only the actionable states; kiosk and admin show all five. Kept in sync
-# with mac_service._DEFAULT_VISIBLE.
-_MAC_SURFACES = ('public', 'kiosk', 'admin')
-_MAC_STATUSES = ('in_use', 'idle', 'oops', 'locked_out', 'unknown')
-_MAC_DEFAULT_VISIBLE = {
-    'public': {'oops', 'locked_out'},
-    'kiosk': set(_MAC_STATUSES),
-    'admin': set(_MAC_STATUSES),
-}
-
-
 def _mac_show_config_defaults():
-    """Yield ``(config_key, default_str)`` for every mac_show_{surface}_{status}."""
-    for surface in _MAC_SURFACES:
-        for status in _MAC_STATUSES:
+    """Yield ``(config_key, default_str)`` for every mac_show_{surface}_{status}.
+
+    The surfaces, statuses, and default-visibility matrix are the single copies
+    that live in ``mac_service`` — so the admin config page's displayed defaults
+    can never drift from what ``mac_service.visible_statuses()`` actually applies.
+    """
+    from esb.services import mac_service
+
+    for surface in mac_service.MAC_SURFACES:
+        for status in mac_service.MAC_MACHINE_STATUSES:
             key = f'mac_show_{surface}_{status}'
-            default = 'true' if status in _MAC_DEFAULT_VISIBLE[surface] else 'false'
+            default = 'true' if status in mac_service.DEFAULT_VISIBLE_STATUSES[surface] else 'false'
             yield key, default
 
 

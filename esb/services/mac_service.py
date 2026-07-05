@@ -34,11 +34,14 @@ logger = logging.getLogger(__name__)
 # the Slack client uses so a hung MAC cannot wedge a request/worker indefinitely.
 _TIMEOUT = 10
 
+# Surfaces that can display MAC status badges.
+MAC_SURFACES = ('public', 'kiosk', 'admin')
+
 # Default per-surface visibility matrix (issue #2): public shows only the
 # actionable states; kiosk and admin show everything. Used as the get_config
-# default so an unconfigured deployment still renders sensibly, and mirrored by
-# the admin toggle defaults (Task 18).
-_DEFAULT_VISIBLE = {
+# default so an unconfigured deployment still renders sensibly, and as the single
+# source of truth for the admin toggle defaults (Task 18, admin.app_config).
+DEFAULT_VISIBLE_STATUSES = {
     'public': {'oops', 'locked_out'},
     'kiosk': set(MAC_MACHINE_STATUSES),
     'admin': set(MAC_MACHINE_STATUSES),
@@ -337,7 +340,7 @@ def visible_statuses(surface: str) -> set[str]:
     visible = set()
     for status in MAC_MACHINE_STATUSES:
         key = f'mac_show_{surface}_{status}'
-        default = 'true' if status in _DEFAULT_VISIBLE.get(surface, set()) else 'false'
+        default = 'true' if status in DEFAULT_VISIBLE_STATUSES.get(surface, set()) else 'false'
         if config_service.get_config(key, default) == 'true':
             visible.add(status)
     return visible
@@ -358,16 +361,26 @@ def get_status_for_equipment(equipment) -> MachineStatus | None:
 def get_statuses_for_names(names) -> dict[str, MachineStatus]:
     """Batch-load MachineStatus rows for many machine names (avoids N+1).
 
-    Returns a ``{machine_name: MachineStatus}`` map. Empty when disabled or no
-    names given.
+    Returns a **case-insensitively keyed** ``{lower(machine_name): MachineStatus}``
+    map; look up with ``get_statuses_for_names(...).get(name.lower())``. Empty when
+    disabled or no names given.
+
+    Case matters here: ``MachineStatus.machine_name`` is stored verbatim from MAC
+    (e.g. ``"planer"``) while ``Equipment.mac_machine_name`` is whatever an admin
+    typed (e.g. ``"Planer"``). MariaDB's default collation matches them
+    case-insensitively in SQL, but a case-sensitive Python dict would then miss on
+    the re-key. So both the query (``lower(...) IN (lower...)``) and the returned
+    keys are lowercased, keeping this batched path consistent with the direct-DB
+    ``get_status_for_equipment`` lookup on both MariaDB and SQLite.
     """
     names = [n for n in names if n]
     if not names or not mac_enabled():
         return {}
+    lowered = [n.lower() for n in names]
     rows = db.session.execute(
-        db.select(MachineStatus).filter(MachineStatus.machine_name.in_(names))
+        db.select(MachineStatus).filter(db.func.lower(MachineStatus.machine_name).in_(lowered))
     ).scalars().all()
-    return {row.machine_name: row for row in rows}
+    return {row.machine_name.lower(): row for row in rows}
 
 
 def maybe_create_oops_repair(payload: dict):
