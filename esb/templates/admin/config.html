@@ -125,6 +125,32 @@
         </div>
     </div>
 
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">MAC Machine Status Display</h5>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small">
+                Control which live MAC machine statuses appear on each surface. Only applies when the
+                MAC integration is configured (<code>MAC_URL</code> set).
+            </p>
+            <div class="row">
+                {% for surface, heading in mac_surfaces %}
+                <div class="col-md-4 mb-3">
+                    <h6>{{ heading }}</h6>
+                    {% for status in mac_statuses %}
+                    {% set field = form['mac_show_' ~ surface ~ '_' ~ status] %}
+                    <div class="form-check form-switch">
+                        {{ field(class="form-check-input", role="switch") }}
+                        <label class="form-check-label" for="{{ field.id }}">{{ field.label.text }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
     {{ form.submit(class="btn btn-primary") }}
 </form>
 {% endblock %}

@@ -37,6 +37,62 @@
     {% endif %}
 </div>
 
+{% if mac_enabled and equipment.mac_machine_name %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">MAC Machine Status</h5>
+        {% if machine_status %}{% include 'components/_mac_status_badge.html' %}{% endif %}
+    </div>
+    <div class="card-body">
+        <dl class="row mb-3">
+            <dt class="col-sm-3">Machine</dt>
+            <dd class="col-sm-9">{{ equipment.mac_machine_name }}</dd>
+
+            <dt class="col-sm-3">State</dt>
+            {% if machine_status %}
+            <dd class="col-sm-9">{{ machine_status.status }}</dd>
+            {% else %}
+            <dd class="col-sm-9 text-muted">No status received from MAC yet — controls below still work; status appears after the next machine event or worker poll.</dd>
+            {% endif %}
+
+            {% if machine_status and machine_status.current_user_full_name %}
+            <dt class="col-sm-3">Current User</dt>
+            <dd class="col-sm-9">{{ machine_status.current_user_full_name }}</dd>
+            {% endif %}
+
+            {% if machine_status and machine_status.last_checkin %}
+            <dt class="col-sm-3">Last Check-in</dt>
+            <dd class="col-sm-9">{{ machine_status.last_checkin }} UTC</dd>
+            {% endif %}
+        </dl>
+
+        {% if current_user.role == 'staff' and not equipment.is_archived %}
+        <div class="d-flex gap-2 flex-wrap mb-3">
+            <form method="post" action="{{ url_for('equipment.mac_oops', id=equipment.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-warning btn-sm"
+                        onclick="return confirm('Flag this machine as Oops in MAC?')">Oops</button>
+            </form>
+            <form method="post" action="{{ url_for('equipment.mac_lockout', id=equipment.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger btn-sm"
+                        onclick="return confirm('Lock out this machine for maintenance in MAC?')">Maintenance Lockout</button>
+            </form>
+            <form method="post" action="{{ url_for('equipment.mac_clear', id=equipment.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-success btn-sm"
+                        onclick="return confirm('Clear this machine Oops and Lockout in MAC?')">Clear</button>
+            </form>
+        </div>
+        {% endif %}
+
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="mac-activity-btn"
+                data-url="{{ url_for('equipment.mac_activity', id=equipment.id) }}">Load recent activity</button>
+        <div id="mac-activity-panel" class="mt-3"></div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card mb-4">
     <div class="card-header">
         <h5 class="mb-0">Equipment Information</h5>
@@ -381,4 +437,68 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% if mac_enabled and equipment.mac_machine_name %}
+<script>
+// On-demand MAC activity loader. GET request -> no CSRF token needed.
+(function () {
+    const btn = document.getElementById('mac-activity-btn');
+    const panel = document.getElementById('mac-activity-panel');
+    if (!btn || !panel) { return; }
+    btn.addEventListener('click', function () {
+        btn.disabled = true;
+        panel.textContent = 'Loading…';
+        fetch(btn.dataset.url, { headers: { 'Accept': 'application/json' } })
+            .then(function (resp) {
+                if (!resp.ok) { throw new Error('HTTP ' + resp.status); }
+                return resp.json();
+            })
+            .then(function (events) {
+                btn.disabled = false;
+                if (!events.length) {
+                    panel.textContent = 'No recent activity.';
+                    return;
+                }
+                // Build the table via DOM nodes + textContent (never innerHTML
+                // with response data) so machine/user/event values that contain
+                // HTML cannot inject markup — the values originate from an
+                // externally-reachable webhook.
+                function cell(text) {
+                    const td = document.createElement('td');
+                    td.textContent = text == null ? '' : String(text);
+                    return td;
+                }
+                const table = document.createElement('table');
+                table.className = 'table table-sm table-striped mb-0';
+                const thead = document.createElement('thead');
+                const headRow = document.createElement('tr');
+                ['Time (UTC)', 'Event', 'Status', 'User'].forEach(function (label) {
+                    const th = document.createElement('th');
+                    th.textContent = label;
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+                const tbody = document.createElement('tbody');
+                events.forEach(function (e) {
+                    const tr = document.createElement('tr');
+                    tr.appendChild(cell(e.event_timestamp));
+                    tr.appendChild(cell(e.event_type));
+                    tr.appendChild(cell(e.status));
+                    tr.appendChild(cell(e.user_full_name));
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                panel.replaceChildren(table);
+            })
+            .catch(function (err) {
+                btn.disabled = false;
+                panel.textContent = 'Failed to load activity: ' + err.message;
+            });
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

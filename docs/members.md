@@ -15,6 +15,9 @@ The Status Dashboard shows every piece of tracked equipment organized by area (e
 - **Red / Down** — Equipment is not usable
 
 Go to {{ base_url_display }} in your browser to see the dashboard. No login is required.
+{% if mac_enabled %}
+Some equipment is connected to the makerspace's machine-access system. Those cards may also show a small badge indicating the machine's live state (for example, **Oops** or **Locked Out**) so you know at a glance whether it needs attention — even if no repair has been filed yet.
+{% endif %}
 
 ![Status Dashboard](images/status-dashboard.png)
 
@@ -48,6 +51,7 @@ The equipment page shows:
 1. **Equipment name and area** — Confirms which piece of equipment you're looking at
 2. **Status indicator** — A large, clear green/yellow/red indicator showing the current status
 3. **Issue description** — If the equipment isn't green, a description of the current problem
+{% if mac_enabled %}4. **Machine status badge** — For equipment connected to the makerspace's machine-access system, a small badge may show whether the machine is currently flagged as needing attention ("Oops") or locked out.{% endif %}
 
 ![QR Code Equipment Page](images/qr-equipment-page-mobile.png)
 

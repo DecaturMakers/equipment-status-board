@@ -73,6 +73,11 @@ def create_app(config_name='default'):
     # Register blueprints
     register_blueprints(app)
 
+    # The MAC webhook receiver is a machine-to-machine POST endpoint (no browser
+    # session / CSRF token). Exempt it after registration.
+    from esb.views.webhooks import webhooks_bp
+    csrf.exempt(webhooks_bp)
+
     # Initialize Slack integration (conditional on SLACK_BOT_TOKEN and SLACK_APP_TOKEN)
     from esb.slack import init_slack
     init_slack(app)

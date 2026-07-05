@@ -51,6 +51,15 @@
                 {{ form.serial_number(class="form-control") }}
             </div>
 
+            <div class="mb-3">
+                <label for="mac_machine_name" class="form-label">MAC Machine Name</label>
+                {{ form.mac_machine_name(class="form-control" ~ (" is-invalid" if form.mac_machine_name.errors else "")) }}
+                <div class="form-text">Links this equipment to a Machine Access Control machine by its name (optional).</div>
+                {% for error in form.mac_machine_name.errors %}
+                <div class="invalid-feedback">{{ error }}</div>
+                {% endfor %}
+            </div>
+
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label for="acquisition_date" class="form-label">Acquisition Date</label>

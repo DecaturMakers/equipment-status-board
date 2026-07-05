@@ -235,6 +235,13 @@ def get_area_status_dashboard() -> list[dict]:
     for equip in all_equipment:
         equipment_by_area.setdefault(equip.area_id, []).append(equip)
 
+    # Batch-load MAC machine status for every linked equipment in ONE query
+    # (avoids an N+1 of per-equipment lookups). Empty map when MAC is disabled.
+    from esb.services import mac_service
+    machine_status_by_name = mac_service.get_statuses_for_names(
+        [e.mac_machine_name for e in all_equipment]
+    )
+
     # Prefetch all open repair records for non-archived equipment in one query.
     # Eager-load assignee so dashboard rendering does not lazy-fire one
     # query per non-green item when it reads ``best_record.assignee.username``.
@@ -275,6 +282,9 @@ def get_area_status_dashboard() -> list[dict]:
                 'equipment': equip,
                 'status': status,
                 'open_records': open_records_sorted,
+                'machine_status': machine_status_by_name.get(
+                    (equip.mac_machine_name or '').lower()
+                ),
             })
 
         result.append({
@@ -341,12 +351,21 @@ def get_single_area_status_dashboard(area_id: int) -> dict:
         for record in open_records:
             records_by_equipment.setdefault(record.equipment_id, []).append(record)
 
+    # Batch-load MAC machine status for this area's linked equipment (F9).
+    from esb.services import mac_service
+    machine_status_by_name = mac_service.get_statuses_for_names(
+        [e.mac_machine_name for e in equipment_list]
+    )
+
     equip_statuses = []
     for equip in equipment_list:
         equip_records = records_by_equipment.get(equip.id, [])
         equip_statuses.append({
             'equipment': equip,
             'status': _derive_status_from_records(equip_records),
+            'machine_status': machine_status_by_name.get(
+                (equip.mac_machine_name or '').lower()
+            ),
         })
 
     return {'area': area, 'equipment': equip_statuses}

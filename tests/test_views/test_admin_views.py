@@ -937,8 +937,15 @@ class TestAppConfig:
             json.loads(r.message) for r in capture.records
             if 'app_config.updated' in r.message
         ]
-        # All 7 values change from defaults (tech_doc false→true, 6 triggers true→false)
-        assert len(entries) == 7
+        # This synthetic POST omits every boolean except tech_doc_edit_enabled,
+        # so every toggle that defaults to 'true' flips to 'false':
+        #   tech_doc false→true (1)
+        #   6 notify_* triggers true→false (6)
+        #   12 mac_show_* keys that default 'true' → false
+        #     (public: oops, locked_out; kiosk: all 5; admin: all 5)
+        # The 3 public mac_show_* keys that default 'false' (in_use/idle/unknown)
+        # submit as 'false' == default, so they do not write.
+        assert len(entries) == 19
         tech_doc_entries = [e for e in entries if e['data']['key'] == 'tech_doc_edit_enabled']
         assert len(tech_doc_entries) == 1
         assert tech_doc_entries[0]['data']['new_value'] == 'true'

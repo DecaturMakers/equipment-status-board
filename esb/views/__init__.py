@@ -7,6 +7,7 @@ from esb.views.equipment import equipment_bp
 from esb.views.public import public_bp
 from esb.views.repairs import repairs_bp
 from esb.views.reservations import reservations_bp
+from esb.views.webhooks import webhooks_bp
 
 
 def register_blueprints(app):
@@ -18,3 +19,4 @@ def register_blueprints(app):
     app.register_blueprint(public_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(docs_bp)
+    app.register_blueprint(webhooks_bp)

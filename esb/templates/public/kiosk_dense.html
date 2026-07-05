@@ -23,6 +23,8 @@
             <span class="kiosk-dense-name">{{ item.equipment.name }}</span>
             <span class="kiosk-dense-status">{{ item.status.label }}</span>
             {% if item.status.eta %}<span class="kiosk-dense-eta">ETA: {{ item.status.eta|format_date }}</span>{% endif %}
+            {% set machine_status = item.machine_status %}
+            {% include 'components/_mac_status_badge.html' %}
           </div>
           {# Non-empty open_records implies a non-green status (green is only
              derived when there are zero open records), so gating on

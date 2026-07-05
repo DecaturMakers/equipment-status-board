@@ -38,6 +38,18 @@ Report problems, check equipment status, and create and triage repairs — all f
 - `/esb-repair` — Dispatcher for open repairs (no args) or create a new repair record (with an equipment name)
 {% endif %}
 
+{% if mac_enabled %}
+### Machine Access Control (MAC) Integration
+
+Equipment can be linked to a [Machine Access Control](https://github.com/jantman/machine-access-control) machine so the board reflects — and can act on — what the machine is actually doing:
+
+- **Live machine status** (in use, idle, oops, locked out) shown as badges on the dashboard, kiosk, and equipment pages, with staff-configurable visibility per surface.
+- **Automatic repair creation** when a machine is flagged "Oops" on the machine itself.
+- **Machine controls** — staff can Oops, lock out for maintenance, or clear a machine directly from its equipment page.
+- **Recent activity** — logins, oops, lockouts, and more, viewable on the equipment detail page.
+- **Automatic clearing** — resolving a repair clears the machine's oops/lockout so it's usable again.
+{% endif %}
+
 ### Repair Workflow
 
 A 10-status repair lifecycle tracks every repair from initial report through resolution. An append-only timeline on each repair record preserves diagnostic notes, photos, status changes, and assignment history — building institutional knowledge over time.

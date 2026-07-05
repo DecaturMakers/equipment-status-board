@@ -15,6 +15,7 @@ A web application for tracking equipment status and coordinating repairs at comm
 - **Kiosk Display** — Large-screen auto-refreshing status grid for wall-mounted monitors in the space
 - **Static Status Page** — Lightweight externally hosted page for checking status from anywhere (pushes to local directory, S3, or Google Cloud Storage)
 - **Slack Integration** — Report problems, check status, create and triage repairs via slash commands (`/esb-report`, `/esb-status`, `/esb-repair`); automated notifications for new reports, status changes, and more
+- **MAC (Machine Access Control) Integration** — Optional two-way link to a [MAC](https://github.com/jantman/machine-access-control) instance: cache and display live machine status (in use / idle / oops / locked out) with admin-configurable per-surface visibility, auto-create a "Down" repair when a machine is oops'ed, oops / lock out / clear a machine from the equipment page, view recent machine activity, and automatically clear a machine's oops/lockout when its repair is resolved
 - **Role-Based Access** — Three user types: Members (public, no login), Technicians (repair management), Staff (full administration)
 
 ## Quick Start
@@ -40,6 +41,24 @@ Full user guides and administrator documentation are available at:
 - [Technicians Guide](https://decaturmakers.github.io/equipment-status-board/technicians/) — Repair queue, managing repairs, Slack commands
 - [Staff Guide](https://decaturmakers.github.io/equipment-status-board/staff/) — Kanban board, equipment management, user administration
 - [Administrators Guide](https://decaturmakers.github.io/equipment-status-board/administrators/) — Deployment, configuration, Slack setup, maintenance
+
+## MAC (Machine Access Control) Integration
+
+ESB can optionally integrate with a [Machine Access Control](https://github.com/jantman/machine-access-control) (MAC) instance. The integration is **disabled unless `MAC_URL` is set** — leave it empty and nothing changes.
+
+Configuration (environment variables, see `.env.example`):
+
+- `MAC_URL` — Base URL of the MAC instance (e.g. `http://mac.local:5000`). Setting this enables the integration.
+- `MAC_WEBHOOK_TOKEN` — Optional shared secret for the inbound webhook. Empty = network-trusted (any POST accepted). When set, MAC must POST to `/webhooks/mac/<token>` and a mismatched/missing token returns `403`.
+
+Setup:
+
+1. Set `MAC_URL` (and optionally `MAC_WEBHOOK_TOKEN`) and restart ESB and its worker.
+2. In MAC, set `STATUS_WEBHOOK_URL` to `https://<esb-host>/webhooks/mac` (or `https://<esb-host>/webhooks/mac/<token>` when a token is configured). **Security:** this receiver can create repair records and enqueue notifications, so set `MAC_WEBHOOK_TOKEN` or firewall the endpoint on any internet-reachable deployment. As a URL path segment the token appears in proxy/access logs.
+3. On each ESB equipment record, set **MAC Machine Name** to the MAC machine's `name` to link them.
+4. Under **Admin → Config → MAC Machine Status Display**, choose which statuses (In Use / Idle / Oops / Locked Out / Unknown) appear on each surface (public dashboard & equipment page, kiosk displays, equipment admin/detail). Defaults: public shows only Oops and Locked Out; kiosk and admin show all five.
+
+Behavior once linked: live machine status is cached (via the webhook plus a ≤60s worker poll of `GET /api/machines`) and shown as badges; oops'ing a machine in MAC auto-creates a "Down" repair; staff can Oops / Maintenance Lockout / Clear the machine from its detail page; recent machine activity is viewable on demand; and resolving (or closing "No Issue Found") the last open repair clears the machine's oops/lockout in MAC.
 
 ## Tech Stack
 

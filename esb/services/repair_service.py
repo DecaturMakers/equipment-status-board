@@ -83,6 +83,38 @@ def _queue_slack_notification(equipment, event_type, extra_payload=None):
     )
 
 
+def _maybe_queue_mac_clear(record, new_status) -> None:
+    """Queue a ``mac_clear`` notification iff the F2 conditions all hold.
+
+    Called from ``update_repair_record`` inside the closed-transition branch:
+      (a) new_status is in MAC_CLEAR_STATUSES (i.e. NOT 'Closed - Duplicate');
+      (b) the equipment is linked (``mac_machine_name``) and MAC is enabled;
+      (c) no OTHER open repair exists for that equipment (excluding this record).
+    All three prevent physically unlocking a machine whose real repair is still
+    open. Deferred/lazy imports avoid a circular dependency with mac_service.
+    """
+    from esb.services import mac_service, notification_service
+
+    if new_status not in MAC_CLEAR_STATUSES:
+        return
+    machine_name = record.equipment.mac_machine_name if record.equipment else None
+    if not machine_name or not mac_service.mac_enabled():
+        return
+    other_open = db.session.execute(
+        db.select(RepairRecord)
+        .filter(RepairRecord.equipment_id == record.equipment_id)
+        .filter(RepairRecord.id != record.id)
+        .filter(RepairRecord.status.notin_(CLOSED_STATUSES))
+    ).scalars().first()
+    if other_open is not None:
+        return
+    notification_service.queue_notification(
+        'mac_clear',
+        target=machine_name,
+        payload={'repair_record_id': record.id},
+    )
+
+
 def create_repair_record(
     equipment_id: int,
     description: str,
@@ -276,6 +308,12 @@ def list_duplicate_candidates(repair_record_id: int) -> list[RepairRecord]:
 
 
 CLOSED_STATUSES = ('Resolved', 'Closed - No Issue Found', 'Closed - Duplicate')
+
+# Statuses that should physically clear the machine's oops/lockout in MAC (F2).
+# A strict subset of CLOSED_STATUSES that EXCLUDES 'Closed - Duplicate': closing
+# a repair as a duplicate means the authoritative repair is still open, so the
+# machine must stay locked.
+MAC_CLEAR_STATUSES = ('Resolved', 'Closed - No Issue Found')
 
 KANBAN_COLUMNS = [s for s in REPAIR_STATUSES if s not in CLOSED_STATUSES]
 
@@ -772,6 +810,12 @@ def update_repair_record(
                     'old_status': audit_changes['status'][0],
                     'new_status': audit_changes['status'][1],
                 })
+            # Resolve-clears-machine (F2). Queued as a SIBLING of the Slack
+            # notify_resolved check above -- NOT nested inside it -- so turning
+            # off the Slack "resolved" notification does not also stop physically
+            # unlocking the machine. Queued (not synchronous) so it retries with
+            # BACKOFF_SCHEDULE.
+            _maybe_queue_mac_clear(record, audit_changes['status'][1])
         elif 'status' in audit_changes:
             # Open transition. Enrich status_changed with the assignee delta when
             # one is present; fall through to assignee_changed if status_changed

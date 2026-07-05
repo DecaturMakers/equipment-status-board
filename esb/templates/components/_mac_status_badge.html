@@ -1,0 +1,20 @@
+{#
+  MAC Machine Status Badge
+  Pass in scope:
+    machine_status : a MachineStatus row (or None)
+    mac_visible    : set/list of status strings allowed on this surface
+  Renders a small badge ONLY when machine_status is set AND its status is in
+  mac_visible. When MAC is disabled both are empty/None, so nothing renders.
+#}
+{% set _mac_visible = mac_visible if mac_visible is defined else [] %}
+{% if machine_status and machine_status.status in _mac_visible %}
+{% set mac_badge_map = {
+  'in_use': ('primary', 'In Use'),
+  'idle': ('secondary', 'Idle'),
+  'oops': ('warning text-dark', 'Oops'),
+  'locked_out': ('danger', 'Locked Out'),
+  'unknown': ('light text-dark', 'Unknown'),
+} %}
+{% set _m = mac_badge_map.get(machine_status.status, ('light text-dark', machine_status.status)) %}
+<span class="badge bg-{{ _m[0] }} mac-status-badge" title="MAC machine status">{{ _m[1] }}</span>
+{% endif %}

@@ -17,6 +17,29 @@ from esb.utils.exceptions import ValidationError
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
+# UI headings for each MAC display surface (keyed by mac_service.MAC_SURFACES).
+_MAC_SURFACE_HEADINGS = {
+    'public': 'Public Dashboard & Equipment Page',
+    'kiosk': 'Kiosk Displays',
+    'admin': 'Equipment Admin/Detail',
+}
+
+
+def _mac_show_config_defaults():
+    """Yield ``(config_key, default_str)`` for every mac_show_{surface}_{status}.
+
+    The surfaces, statuses, and default-visibility matrix are the single copies
+    that live in ``mac_service`` — so the admin config page's displayed defaults
+    can never drift from what ``mac_service.visible_statuses()`` actually applies.
+    """
+    from esb.services import mac_service
+
+    for surface in mac_service.MAC_SURFACES:
+        for status in mac_service.MAC_MACHINE_STATUSES:
+            key = f'mac_show_{surface}_{status}'
+            default = 'true' if status in mac_service.DEFAULT_VISIBLE_STATUSES[surface] else 'false'
+            yield key, default
+
 
 @admin_bp.route('/')
 @role_required('staff')
@@ -277,6 +300,9 @@ def app_config():
         )
         form.wifi_ssid.data = config_service.get_config('wifi_ssid', '')
         form.wifi_info_default.data = config_service.get_config('wifi_info_default', 'none')
+        # MAC status-display toggles.
+        for key, default in _mac_show_config_defaults():
+            getattr(form, key).data = config_service.get_config(key, default) == 'true'
 
     if form.validate_on_submit():
         config_keys = [
@@ -288,6 +314,7 @@ def app_config():
             ('notify_assignee_changed', 'true'),
             ('notify_eta_updated', 'true'),
         ]
+        config_keys.extend(_mac_show_config_defaults())
         for key, default in config_keys:
             new_value = 'true' if getattr(form, key).data else 'false'
             if config_service.get_config(key, default) != new_value:
@@ -328,4 +355,15 @@ def app_config():
         flash('Configuration updated successfully.', 'success')
         return redirect(url_for('admin.app_config'))
 
-    return render_template('admin/config.html', form=form)
+    # Surfaces/statuses for the MAC toggle grid are derived from mac_service's
+    # constants (single source of truth) rather than re-listed in the template,
+    # so the admin UI can't silently drift from the backend if MAC's status set
+    # or the surface list changes. Headings are UI text mapped per surface.
+    from esb.services import mac_service
+    mac_surfaces = [(s, _MAC_SURFACE_HEADINGS.get(s, s.title())) for s in mac_service.MAC_SURFACES]
+    return render_template(
+        'admin/config.html',
+        form=form,
+        mac_surfaces=mac_surfaces,
+        mac_statuses=list(mac_service.MAC_MACHINE_STATUSES),
+    )
