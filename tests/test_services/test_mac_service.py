@@ -279,6 +279,18 @@ class TestLookups:
         found = mac_service.get_equipment_by_machine_name('planer')
         assert found is not None and found.id == eq.id
 
+    def test_get_recent_activity_case_insensitive(self, mac_url):
+        from datetime import datetime
+        from esb.models.machine_activity_event import MachineActivityEvent
+        # Events stored under MAC's casing ('planer'); caller passes 'Planer'.
+        db.session.add(MachineActivityEvent(
+            machine_name='planer', event_type='login',
+            event_timestamp=datetime(2026, 7, 1, 12, 0, 0),
+        ))
+        db.session.commit()
+        events = mac_service.get_recent_activity('Planer')
+        assert len(events) == 1
+
     def test_get_recent_activity_gated_when_disabled(self, app):
         from datetime import datetime
         from esb.models.machine_activity_event import MachineActivityEvent

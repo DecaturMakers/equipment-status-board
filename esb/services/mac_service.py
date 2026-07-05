@@ -452,9 +452,12 @@ def get_recent_activity(machine_name: str, limit: int = 100) -> list[MachineActi
     """
     if not machine_name or not mac_enabled():
         return []
+    # Case-insensitive: events are stored under MAC's casing while the caller
+    # passes the admin-typed mac_machine_name, which may differ in case (matches
+    # the status lookups). Consistent on both MariaDB and SQLite via func.lower.
     return db.session.execute(
         db.select(MachineActivityEvent)
-        .filter_by(machine_name=machine_name)
+        .filter(db.func.lower(MachineActivityEvent.machine_name) == machine_name.lower())
         .order_by(MachineActivityEvent.event_timestamp.desc(), MachineActivityEvent.id.desc())
         .limit(limit)
     ).scalars().all()
