@@ -220,6 +220,14 @@ class TestReconcileOrphans:
         remaining = db.session.execute(db.select(MachineStatus)).scalars().all()
         assert [r.machine_name for r in remaining] == ['planer']
 
+    def test_empty_seen_set_deletes_nothing(self, mac_url):
+        # Defensive: an empty set must NOT wipe the whole cache.
+        mac_service.upsert_machine_status(_status_dict('planer'))
+        deleted = mac_service.reconcile_orphans(set())
+        assert deleted == 0
+        remaining = db.session.execute(db.select(MachineStatus)).scalars().all()
+        assert len(remaining) == 1
+
 
 class TestVisibleStatuses:
     def test_defaults_public(self, mac_url):
@@ -250,6 +258,18 @@ class TestLookups:
     def test_get_status_for_unlinked(self, mac_url, make_equipment):
         eq = make_equipment()
         assert mac_service.get_status_for_equipment(eq) is None
+
+    def test_get_status_for_equipment_case_insensitive(self, mac_url, make_equipment):
+        # MAC reports 'planer'; admin typed 'Planer'. Must still resolve.
+        mac_service.upsert_machine_status(_status_dict('planer', status='oops'))
+        eq = make_equipment(mac_machine_name='Planer')
+        status = mac_service.get_status_for_equipment(eq)
+        assert status is not None and status.status == 'oops'
+
+    def test_get_equipment_by_machine_name_case_insensitive(self, mac_url, make_equipment):
+        eq = make_equipment(mac_machine_name='Planer')
+        found = mac_service.get_equipment_by_machine_name('planer')
+        assert found is not None and found.id == eq.id
 
     def test_get_equipment_by_machine_name(self, mac_url, make_equipment):
         eq = make_equipment(mac_machine_name='planer')

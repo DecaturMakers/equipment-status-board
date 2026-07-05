@@ -250,7 +250,10 @@ def _mac_control(id, action_fn, action_label):
     except ValidationError:
         abort(404)
 
-    if not mac_service.mac_enabled() or not eq.mac_machine_name:
+    if not mac_service.mac_enabled():
+        flash('The MAC integration is not enabled on this deployment.', 'danger')
+        return redirect(url_for('equipment.detail', id=id))
+    if not eq.mac_machine_name:
         flash('This equipment is not linked to a MAC machine.', 'danger')
         return redirect(url_for('equipment.detail', id=id))
 

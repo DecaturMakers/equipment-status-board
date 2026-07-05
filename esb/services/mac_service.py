@@ -224,7 +224,14 @@ def reconcile_orphans(seen_names: set[str]) -> int:
     Called from the poll ONLY after a successful, non-empty fetch (F10), so a
     machine removed/renamed in MAC does not leak a stale cache row. Returns the
     number of rows deleted.
+
+    Defensive: an empty ``seen_names`` returns 0 without deleting anything. A bare
+    ``.notin_(set())`` would otherwise delete the ENTIRE cache (and generates
+    dialect-dependent SQL), which would be a dangerous footgun for any future
+    caller that doesn't pre-guard on a non-empty fetch.
     """
+    if not seen_names:
+        return 0
     stale = db.session.execute(
         db.select(MachineStatus).filter(MachineStatus.machine_name.notin_(seen_names))
     ).scalars().all()
@@ -347,14 +354,20 @@ def visible_statuses(surface: str) -> set[str]:
 
 
 def get_status_for_equipment(equipment) -> MachineStatus | None:
-    """Return the cached MachineStatus for an equipment's linked machine, or None."""
+    """Return the cached MachineStatus for an equipment's linked machine, or None.
+
+    Matches case-insensitively (``lower(machine_name) == lower(name)``): the
+    stored MAC name and the admin-typed ``mac_machine_name`` may differ in case,
+    and this keeps the detail/public-equipment pages consistent with the batched
+    ``get_statuses_for_names`` path on both MariaDB and SQLite.
+    """
     if not mac_enabled():
         return None
     name = getattr(equipment, 'mac_machine_name', None)
     if not name:
         return None
     return db.session.execute(
-        db.select(MachineStatus).filter_by(machine_name=name)
+        db.select(MachineStatus).filter(db.func.lower(MachineStatus.machine_name) == name.lower())
     ).scalars().first()
 
 
@@ -388,9 +401,13 @@ def maybe_create_oops_repair(payload: dict):
 
     Resolves the equipment by the payload's machine name. Returns ``None`` (no-op)
     when: no equipment is linked (AC18 -- status/activity are still recorded), or
-    an open repair already exists for that equipment (AC17 -- no duplicate). Only
-    invoked for a non-duplicate ``oops`` event (F4), so retried oops webhooks
-    never re-create repairs.
+    an open repair already exists for that equipment (AC17 -- no duplicate).
+
+    The webhook attempts this on EVERY ``oops`` delivery (including duplicates);
+    idempotency is provided by the open-repair guard above, not by the activity
+    dedup. So a retried ``oops`` while a repair is still open is a no-op, but an
+    ``oops`` redelivered after the prior repair was resolved does open a fresh
+    one (there is no longer an open repair to guard against).
 
     The reporter name is read defensively as ``(payload.get('user') or {}).get(
     'full_name')`` (F13) so a missing/None user yields ``None``, not a KeyError.
@@ -448,9 +465,13 @@ def get_equipment_by_machine_name(name: str):
         return None
     # Only non-archived equipment (matches the uniqueness rule and the docstring):
     # an archived row may legitimately share the name, but it can't take repairs.
+    # Case-insensitive so a webhook for 'planer' resolves an admin-typed 'Planer'.
     matches = db.session.execute(
         db.select(Equipment)
-        .filter(Equipment.mac_machine_name == name, Equipment.is_archived.is_(False))
+        .filter(
+            db.func.lower(Equipment.mac_machine_name) == name.lower(),
+            Equipment.is_archived.is_(False),
+        )
         .order_by(Equipment.id)
     ).scalars().all()
     if not matches:

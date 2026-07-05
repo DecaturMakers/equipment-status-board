@@ -118,6 +118,15 @@ class TestFormUniqueness:
                 mac_machine_name='planer',
             )
 
+    def test_duplicate_rejected_case_insensitive(self, mac_url, make_area, make_equipment):
+        area = make_area()
+        make_equipment(area=area, mac_machine_name='Planer')
+        with pytest.raises(ValidationError):
+            equipment_service.create_equipment(
+                name='B', manufacturer='m', model='x', area_id=area.id,
+                created_by='t', mac_machine_name='planer',
+            )
+
     def test_duplicate_rejected_on_edit(self, mac_url, make_area, make_equipment):
         area = make_area()
         make_equipment(name='A', area=area, mac_machine_name='planer')

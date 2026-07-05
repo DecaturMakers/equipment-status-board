@@ -253,8 +253,11 @@ def _check_mac_machine_name_unique(name: str | None, exclude_id: int | None = No
     """
     if not name:
         return
+    # Case-insensitive: MAC name matching is case-insensitive elsewhere, so
+    # 'Planer' and 'planer' must not both be linkable (they'd make lookups
+    # ambiguous). Consistent on both MariaDB and SQLite via func.lower.
     query = db.select(Equipment).filter(
-        Equipment.mac_machine_name == name,
+        db.func.lower(Equipment.mac_machine_name) == name.lower(),
         Equipment.is_archived.is_(False),
     )
     if exclude_id is not None:
