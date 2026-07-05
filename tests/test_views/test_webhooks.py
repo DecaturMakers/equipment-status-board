@@ -118,6 +118,20 @@ class TestWebhookProcessing:
         repairs = db.session.execute(db.select(RepairRecord)).scalars().all()
         assert len(repairs) == 2  # a new open repair was created
 
+    def test_bad_last_checkin_does_not_500(self, client, mac_url):
+        # A bad last_checkin (not the event timestamp) must not crash the upsert;
+        # it stores None and the webhook still succeeds (204).
+        resp = client.post('/webhooks/mac', json=_payload(name='planer', event='oops', last_checkin='bad'))
+        assert resp.status_code == 204
+        status = db.session.execute(db.select(MachineStatus)).scalars().one()
+        assert status.last_checkin is None
+
+    def test_null_status_does_not_500(self, client, mac_url):
+        resp = client.post('/webhooks/mac', json=_payload(name='planer', event='oops', status=None))
+        assert resp.status_code == 204
+        status = db.session.execute(db.select(MachineStatus)).scalars().one()
+        assert status.status == 'unknown'
+
     def test_oops_creates_repair(self, client, mac_url, make_equipment):
         eq = make_equipment(mac_machine_name='planer')
         resp = client.post('/webhooks/mac', json=_payload(event='oops', status='oops', oops=True))

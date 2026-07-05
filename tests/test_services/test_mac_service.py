@@ -148,6 +148,18 @@ class TestUpsert:
         row = mac_service.upsert_machine_status(_status_dict(last_checkin=None))
         assert row.last_checkin is None
 
+    def test_bad_epoch_values_coerce_to_none(self, mac_url):
+        # Non-numeric / NaN / Infinity epochs must not raise (they'd 500 the
+        # webhook / abort the poll) -- they store None.
+        for bad in ('not-a-number', float('nan'), float('inf'), True):
+            row = mac_service.upsert_machine_status(_status_dict('planer', last_checkin=bad))
+            assert row.last_checkin is None
+
+    def test_null_status_coerced_to_unknown(self, mac_url):
+        # Explicit null status must not violate the NOT NULL column.
+        row = mac_service.upsert_machine_status(_status_dict('planer', status=None))
+        assert row.status == 'unknown'
+
     def test_update_existing(self, mac_url):
         mac_service.upsert_machine_status(_status_dict(status='idle'))
         mac_service.upsert_machine_status(_status_dict(status='oops', oops=True))

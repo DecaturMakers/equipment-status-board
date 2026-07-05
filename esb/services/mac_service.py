@@ -16,6 +16,7 @@ MAC API facts (verified against tag 0.15.0):
 """
 
 import logging
+import math
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -171,10 +172,21 @@ def _epoch_to_dt(value):
     instant is correct. Note the stored ``db.DateTime`` column is naive on read
     (SQLite and MariaDB both drop tzinfo) -- do not assert awareness after a
     round-trip; treat the column as naive-UTC when comparing (F7).
+
+    Defensive: these epoch fields (``last_checkin``/``last_update``) come from an
+    externally-reachable webhook and are NOT pre-validated by the caller, so a
+    non-numeric, NaN/Infinity, or out-of-range value coerces to ``None`` rather
+    than raising -- otherwise one bad value would 500 the webhook (endless MAC
+    retries) or abort the whole worker refresh mid-cycle.
     """
-    if value is None:
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return datetime.fromtimestamp(value, tz=UTC)
+    if not math.isfinite(value):
+        return None
+    try:
+        return datetime.fromtimestamp(value, tz=UTC)
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 # --- Status cache --------------------------------------------------------------
@@ -184,7 +196,9 @@ def _apply_status_fields(row: MachineStatus, status_dict: dict) -> None:
     """Copy fields from a MAC status_dict onto a MachineStatus row."""
     user = status_dict.get('current_user') or {}
     row.display_name = status_dict.get('display_name')
-    row.status = status_dict.get('status', 'unknown')
+    # `or 'unknown'` (not a get-default) so an explicit null/empty status doesn't
+    # violate the NOT NULL column and 500 the webhook (endless MAC retries).
+    row.status = status_dict.get('status') or 'unknown'
     row.relay = bool(status_dict.get('relay'))
     row.oops = bool(status_dict.get('oops'))
     row.locked_out = bool(status_dict.get('locked_out'))

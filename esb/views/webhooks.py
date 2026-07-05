@@ -2,7 +2,11 @@
 
 MAC's ``STATUS_WEBHOOK_URL`` POSTs a status_dict + ``event`` + ``timestamp`` +
 ``user`` on each machine state change. This endpoint caches the status, appends
-an activity event, and (on a non-duplicate ``oops``) auto-creates a repair.
+an activity event (deduped), and on every ``oops`` event attempts to auto-create
+a repair -- idempotency there comes from the open-repair guard in
+``maybe_create_oops_repair``, NOT from the activity dedup, so a duplicate ``oops``
+delivery is a no-op while a repair is open but re-opens one if the prior repair
+was already resolved.
 
 Network-trusted by default. An OPTIONAL ``MAC_WEBHOOK_TOKEN`` enables a
 ``/webhooks/mac/<token>`` guard (403 on mismatch). The route is CSRF-exempt
