@@ -46,10 +46,14 @@ _DEFAULT_VISIBLE = {
 
 
 def mac_enabled() -> bool:
-    """Return True when the MAC integration is configured (non-empty MAC_URL)."""
+    """Return True when the MAC integration is configured (non-blank MAC_URL).
+
+    Strips whitespace so a blank-but-non-empty value doesn't count as enabled
+    (which would make _base_url() produce an empty base and malformed requests).
+    """
     from flask import current_app
 
-    return bool(current_app.config.get('MAC_URL', ''))
+    return bool(current_app.config.get('MAC_URL', '').strip())
 
 
 def _base_url() -> str:
@@ -237,10 +241,16 @@ def reconcile_orphans(seen_names: set[str]) -> int:
 def record_activity_event(payload: dict) -> MachineActivityEvent | None:
     """Append a webhook event to the activity log, deduped on the event triple.
 
-    If a row already exists with the same ``(machine_name, event_type,
-    event_timestamp)`` this is a duplicate delivery (F4): return ``None`` without
-    inserting, signalling the caller to also skip auto-repair. Otherwise insert
-    and return the new row. Pruning is NOT done here (it runs in the poll, F10).
+    Returns ``None`` when this is a duplicate delivery -- a row already exists
+    with the same ``(machine_name, event_type, event_timestamp)``, or a
+    concurrent insert won the race against the UNIQUE dedup index (F4) -- so no
+    second activity row is written. Otherwise inserts and returns the new row.
+
+    A ``None`` return means only "this activity was already recorded"; it does
+    NOT instruct the caller to skip auto-repair. Auto-repair idempotency is
+    handled independently by ``maybe_create_oops_repair``'s open-repair guard,
+    so the webhook attempts it on every ``oops`` regardless of this return value
+    (see webhooks.mac_status). Pruning is NOT done here (it runs in the poll, F10).
     """
     machine_name = payload['name']
     event_type = payload.get('event')

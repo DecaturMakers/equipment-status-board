@@ -8,6 +8,7 @@ import pytest
 from esb.extensions import db
 from esb.models.machine_activity_event import MachineActivityEvent
 from esb.services import config_service, equipment_service, mac_service
+from esb.utils.exceptions import ValidationError
 
 
 @pytest.fixture
@@ -90,12 +91,13 @@ class TestActivityJson:
 
 
 class TestFormUniqueness:
-    def test_duplicate_rejected_on_create(self, mac_url, make_equipment):
-        make_equipment(mac_machine_name='planer')
-        with pytest.raises(Exception):
+    def test_duplicate_rejected_on_create(self, mac_url, make_area, make_equipment):
+        area = make_area()
+        make_equipment(area=area, mac_machine_name='planer')
+        with pytest.raises(ValidationError):
             equipment_service.create_equipment(
                 name='B', manufacturer='m', model='x',
-                area_id=make_equipment().area_id, created_by='t',
+                area_id=area.id, created_by='t',
                 mac_machine_name='planer',
             )
 
@@ -103,7 +105,7 @@ class TestFormUniqueness:
         area = make_area()
         make_equipment(name='A', area=area, mac_machine_name='planer')
         c = make_equipment(name='C', area=area)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             equipment_service.update_equipment(
                 c.id, updated_by='t', mac_machine_name='planer',
             )

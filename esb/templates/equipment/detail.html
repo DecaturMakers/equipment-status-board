@@ -457,21 +457,37 @@
                     panel.textContent = 'No recent activity.';
                     return;
                 }
-                const rows = events.map(function (e) {
-                    const ts = e.event_timestamp || '';
-                    const user = e.user_full_name ? (' — ' + e.user_full_name) : '';
-                    const cells = [
-                        '<td>' + ts + '</td>',
-                        '<td>' + e.event_type + '</td>',
-                        '<td>' + (e.status || '') + '</td>',
-                        '<td>' + (e.user_full_name || '') + '</td>',
-                    ].join('');
-                    return '<tr>' + cells + '</tr>';
-                }).join('');
-                panel.innerHTML =
-                    '<table class="table table-sm table-striped mb-0">' +
-                    '<thead><tr><th>Time (UTC)</th><th>Event</th><th>Status</th><th>User</th></tr></thead>' +
-                    '<tbody>' + rows + '</tbody></table>';
+                // Build the table via DOM nodes + textContent (never innerHTML
+                // with response data) so machine/user/event values that contain
+                // HTML cannot inject markup — the values originate from an
+                // externally-reachable webhook.
+                function cell(text) {
+                    const td = document.createElement('td');
+                    td.textContent = text == null ? '' : String(text);
+                    return td;
+                }
+                const table = document.createElement('table');
+                table.className = 'table table-sm table-striped mb-0';
+                const thead = document.createElement('thead');
+                const headRow = document.createElement('tr');
+                ['Time (UTC)', 'Event', 'Status', 'User'].forEach(function (label) {
+                    const th = document.createElement('th');
+                    th.textContent = label;
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+                const tbody = document.createElement('tbody');
+                events.forEach(function (e) {
+                    const tr = document.createElement('tr');
+                    tr.appendChild(cell(e.event_timestamp));
+                    tr.appendChild(cell(e.event_type));
+                    tr.appendChild(cell(e.status));
+                    tr.appendChild(cell(e.user_full_name));
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                panel.replaceChildren(table);
             })
             .catch(function (err) {
                 btn.disabled = false;
