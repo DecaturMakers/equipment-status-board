@@ -105,6 +105,14 @@ class TestControls:
             with pytest.raises(RuntimeError):
                 mac_service.set_oops('planer')
 
+    def test_name_is_url_encoded(self, mac_url):
+        # A machine name with a space / reserved chars must be percent-encoded.
+        with patch('esb.services.mac_service.requests') as mock_req:
+            mock_req.request.return_value = self._resp(200)
+            mac_service.set_oops('cnc router#2')
+        url = mock_req.request.call_args[0][1]
+        assert url == 'http://mac.test/api/machine/oops/cnc%20router%232'
+
     def test_clear_issues_both_deletes(self, mac_url):
         with patch('esb.services.mac_service.requests') as mock_req:
             mock_req.request.return_value = self._resp(200)
@@ -270,6 +278,17 @@ class TestLookups:
         eq = make_equipment(mac_machine_name='Planer')
         found = mac_service.get_equipment_by_machine_name('planer')
         assert found is not None and found.id == eq.id
+
+    def test_get_recent_activity_gated_when_disabled(self, app):
+        from datetime import datetime
+        from esb.models.machine_activity_event import MachineActivityEvent
+        db.session.add(MachineActivityEvent(
+            machine_name='planer', event_type='login',
+            event_timestamp=datetime(2026, 7, 1, 12, 0, 0),
+        ))
+        db.session.commit()
+        app.config['MAC_URL'] = ''
+        assert mac_service.get_recent_activity('planer') == []
 
     def test_get_equipment_by_machine_name(self, mac_url, make_equipment):
         eq = make_equipment(mac_machine_name='planer')

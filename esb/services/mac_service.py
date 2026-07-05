@@ -17,6 +17,7 @@ MAC API facts (verified against tag 0.15.0):
 
 import logging
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import requests
 from requests import RequestException
@@ -99,7 +100,10 @@ def _control_request(method: str, kind: str, name: str) -> bool:
     Raises:
         RuntimeError: on any other non-2xx response or a transport error.
     """
-    url = f'{_base_url()}/api/machine/{kind}/{name}'
+    # URL-encode the name segment (safe='') so a machine name containing spaces
+    # or reserved characters (?, #, /) can't malform the path or hit a different
+    # endpoint.
+    url = f'{_base_url()}/api/machine/{kind}/{quote(name, safe="")}'
     try:
         resp = requests.request(method, url, timeout=_TIMEOUT)
     except RequestException as exc:
@@ -442,9 +446,11 @@ def maybe_create_oops_repair(payload: dict):
 def get_recent_activity(machine_name: str, limit: int = 100) -> list[MachineActivityEvent]:
     """Return a machine's recent activity events, newest first (Task 17).
 
-    Returns an empty list when the machine name is falsy.
+    Returns an empty list when the machine name is falsy or MAC is disabled
+    (consistent with the module's gating -- callers never read the activity
+    tables through this helper when the integration is off).
     """
-    if not machine_name:
+    if not machine_name or not mac_enabled():
         return []
     return db.session.execute(
         db.select(MachineActivityEvent)
