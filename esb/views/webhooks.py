@@ -11,6 +11,7 @@ Network-trusted by default. An OPTIONAL ``MAC_WEBHOOK_TOKEN`` enables a
 
 import hmac
 import logging
+import math
 
 from flask import Blueprint, current_app, request
 
@@ -65,7 +66,10 @@ def mac_status(token=None):
         not isinstance(name, str) or not name
         or not isinstance(event, str) or not event
         or isinstance(timestamp, bool) or not isinstance(timestamp, (int, float))
+        or not math.isfinite(timestamp)
     ):
+        # math.isfinite rejects NaN / Infinity (which Python's JSON parser
+        # accepts by default) -- datetime.fromtimestamp() would raise on those.
         return ('', 400)
 
     try:

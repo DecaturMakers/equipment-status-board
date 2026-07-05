@@ -98,8 +98,14 @@ def _control_request(method: str, kind: str, name: str) -> bool:
         on a normal 2xx success.
 
     Raises:
-        RuntimeError: on any other non-2xx response or a transport error.
+        RuntimeError: on any other non-2xx response or a transport error, or if
+            MAC is disabled (MAC_URL not set).
     """
+    # Fail fast (with a clear message) when disabled, rather than building a
+    # schemeless '/api/machine/...' URL that requests would reject with a
+    # confusing MissingSchema error. Keeps the module's gating contract.
+    if not mac_enabled():
+        raise RuntimeError('MAC integration is disabled (MAC_URL is not set)')
     # URL-encode the name segment (safe='') so a machine name containing spaces
     # or reserved characters (?, #, /) can't malform the path or hit a different
     # endpoint.

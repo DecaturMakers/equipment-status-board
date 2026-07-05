@@ -72,6 +72,13 @@ class TestControls:
         resp.json.return_value = body or {'success': True}
         return resp
 
+    def test_control_disabled_raises_without_calling_requests(self, app):
+        app.config['MAC_URL'] = ''
+        with patch('esb.services.mac_service.requests') as mock_req:
+            with pytest.raises(RuntimeError):
+                mac_service.set_oops('planer')
+            mock_req.request.assert_not_called()
+
     def test_set_oops_success(self, mac_url):
         with patch('esb.services.mac_service.requests') as mock_req:
             mock_req.request.return_value = self._resp(200)
