@@ -89,9 +89,13 @@ test_patterns: [
 
 ### Deviations from spec (spec authored against a different repo state)
 
-- Migration head was actually `c2f9a8d4e6b1` (not `77b248bd052d`); the new revision chains from it.
-- `esb/models/equipment_note.py` does not exist; mirrored `repair_timeline_entry.py` for the
-  append-only child model idiom instead.
+- At implementation time the migration head was `c2f9a8d4e6b1` (not `77b248bd052d`) and
+  `esb/models/equipment_note.py` did not exist, so the child-model idiom was mirrored from
+  `repair_timeline_entry.py`. **Resolved on merge:** issue #69 (equipment notes) landed on
+  `main` first, so `main` now provides `77b248bd052d` and `equipment_note.py` exactly as the
+  spec assumed. `main` was merged in and the MAC migration re-pointed to chain after
+  `77b248bd052d` (single head `a1b2c3d4e5f6`); the equipment detail view/template were merged
+  to carry both the notes card and the MAC status card.
 - Updated one pre-existing test (`test_config_mutation_logging`) whose hard-coded config-key
   count changed due to the 12 new default-`true` MAC display toggles.
 - Version bumped `0.16.0` → `0.17.0` (minor: new feature).

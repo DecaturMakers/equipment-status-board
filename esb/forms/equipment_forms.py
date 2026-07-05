@@ -12,9 +12,10 @@ from wtforms import (
     SubmitField,
     TextAreaField,
 )
-from wtforms.validators import URL, DataRequired, Length, NumberRange, Optional
+from wtforms.validators import URL, DataRequired, Length, NumberRange, Optional, ValidationError
 
 from esb.models.document import DOCUMENT_CATEGORIES
+from esb.services.equipment_service import NOTE_MAX_LENGTH
 from esb.services.qr_service import DEFAULT_DEVICE_KEY, QR_DEVICE_PRESETS, QR_SIZE_PRESETS
 
 FORM_DOCUMENT_CATEGORIES = [('', '-- Select Category --')] + DOCUMENT_CATEGORIES
@@ -127,6 +128,26 @@ class ExternalLinkForm(FlaskForm):
     title = StringField('Title', validators=[DataRequired(), Length(max=200)])
     url = StringField('URL', validators=[DataRequired(), Length(max=2000), URL()])
     submit = SubmitField('Add Link')
+
+
+class EquipmentNoteForm(FlaskForm):
+    """Form for adding an append-only note to an equipment record."""
+
+    content = TextAreaField('Note', validators=[DataRequired()])
+    submit = SubmitField('Add Note')
+
+    def validate_content(self, field):
+        """Reject over-length notes by *stripped* length, matching the service.
+
+        ``add_equipment_note`` is authoritative and measures
+        ``len(content.strip())``. Measuring the stripped length here (rather than
+        WTForms' raw-length ``Length``) keeps the form from rejecting a note the
+        service would happily store -- e.g. one padded with trailing whitespace
+        past the raw limit. Shares the ``NOTE_MAX_LENGTH`` constant and the
+        service's message string.
+        """
+        if field.data and len(field.data.strip()) > NOTE_MAX_LENGTH:
+            raise ValidationError(f'Note is too long (max {NOTE_MAX_LENGTH} characters)')
 
 
 class QRGenerateForm(FlaskForm):

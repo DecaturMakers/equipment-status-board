@@ -6,7 +6,7 @@ exactly one head (do NOT run `flask db migrate` for this; it was hand-authored,
 see tech-spec F8).
 
 Revision ID: a1b2c3d4e5f6
-Revises: c2f9a8d4e6b1
+Revises: 77b248bd052d
 Create Date: 2026-07-05 00:00:00.000000
 
 """
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'a1b2c3d4e5f6'
-down_revision = 'c2f9a8d4e6b1'
+down_revision = '77b248bd052d'
 branch_labels = None
 depends_on = None
 
