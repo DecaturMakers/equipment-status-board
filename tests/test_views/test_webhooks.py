@@ -76,6 +76,18 @@ class TestWebhookProcessing:
         assert resp.status_code == 400
         assert db.session.execute(db.select(MachineStatus)).scalars().first() is None
 
+    def test_non_numeric_timestamp_returns_400_not_500(self, client, mac_url):
+        # A string/bool timestamp must be rejected as 400 (unprocessable), not
+        # crash into a 500 that MAC would retry forever.
+        for bad in ('not-a-number', True, None):
+            resp = client.post('/webhooks/mac', json=_payload(name='planer', event='oops', ts=bad))
+            assert resp.status_code == 400, bad
+        assert db.session.execute(db.select(MachineStatus)).scalars().first() is None
+
+    def test_non_string_name_or_event_returns_400(self, client, mac_url):
+        assert client.post('/webhooks/mac', json={'name': 123, 'event': 'oops', 'timestamp': 1.0}).status_code == 400
+        assert client.post('/webhooks/mac', json={'name': 'planer', 'event': {'x': 1}, 'timestamp': 1.0}).status_code == 400
+
     def test_internal_error_returns_500(self, client, mac_url):
         # F4: a server-side failure returns 5xx so MAC retries (not 400).
         from unittest.mock import patch

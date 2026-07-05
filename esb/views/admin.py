@@ -17,6 +17,14 @@ from esb.utils.exceptions import ValidationError
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
+# UI headings for each MAC display surface (keyed by mac_service.MAC_SURFACES).
+_MAC_SURFACE_HEADINGS = {
+    'public': 'Public Dashboard & Equipment Page',
+    'kiosk': 'Kiosk Displays',
+    'admin': 'Equipment Admin/Detail',
+}
+
+
 def _mac_show_config_defaults():
     """Yield ``(config_key, default_str)`` for every mac_show_{surface}_{status}.
 
@@ -347,4 +355,15 @@ def app_config():
         flash('Configuration updated successfully.', 'success')
         return redirect(url_for('admin.app_config'))
 
-    return render_template('admin/config.html', form=form)
+    # Surfaces/statuses for the MAC toggle grid are derived from mac_service's
+    # constants (single source of truth) rather than re-listed in the template,
+    # so the admin UI can't silently drift from the backend if MAC's status set
+    # or the surface list changes. Headings are UI text mapped per surface.
+    from esb.services import mac_service
+    mac_surfaces = [(s, _MAC_SURFACE_HEADINGS.get(s, s.title())) for s in mac_service.MAC_SURFACES]
+    return render_template(
+        'admin/config.html',
+        form=form,
+        mac_surfaces=mac_surfaces,
+        mac_statuses=list(mac_service.MAC_MACHINE_STATUSES),
+    )

@@ -49,14 +49,22 @@ def mac_status(token=None):
         return ('', 403)
 
     payload = request.get_json(silent=True)
-    # Validate required fields BEFORE any DB write so bad input is a clean 400
-    # and never leaves a half-written status row (F5). event/timestamp back the
-    # NOT NULL activity columns; name is required for every lookup.
+    # Validate required fields AND their types BEFORE any DB write, so bad input
+    # is a clean 400 and never leaves a half-written status row (F5). Crucially,
+    # timestamp must be numeric: a non-numeric value would make
+    # datetime.fromtimestamp() raise, which would otherwise surface as a 500 and
+    # make MAC retry unprocessable input indefinitely. (bool is a subclass of
+    # int, so it's excluded explicitly.) name/event back String columns and every
+    # lookup, so they must be non-empty strings.
+    if not isinstance(payload, dict):
+        return ('', 400)
+    name = payload.get('name')
+    event = payload.get('event')
+    timestamp = payload.get('timestamp')
     if (
-        not isinstance(payload, dict)
-        or not payload.get('name')
-        or not payload.get('event')
-        or payload.get('timestamp') is None
+        not isinstance(name, str) or not name
+        or not isinstance(event, str) or not event
+        or isinstance(timestamp, bool) or not isinstance(timestamp, (int, float))
     ):
         return ('', 400)
 

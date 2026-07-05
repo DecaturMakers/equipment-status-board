@@ -135,10 +135,10 @@
                 MAC integration is configured (<code>MAC_URL</code> set).
             </p>
             <div class="row">
-                {% for surface, heading in [('public', 'Public Dashboard & Equipment Page'), ('kiosk', 'Kiosk Displays'), ('admin', 'Equipment Admin/Detail')] %}
+                {% for surface, heading in mac_surfaces %}
                 <div class="col-md-4 mb-3">
                     <h6>{{ heading }}</h6>
-                    {% for status in ['in_use', 'idle', 'oops', 'locked_out', 'unknown'] %}
+                    {% for status in mac_statuses %}
                     {% set field = form['mac_show_' ~ surface ~ '_' ~ status] %}
                     <div class="form-check form-switch">
                         {{ field(class="form-check-input", role="switch") }}
