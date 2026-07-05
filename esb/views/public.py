@@ -22,25 +22,35 @@ def status_dashboard():
     """Status dashboard showing all equipment status by area."""
     if request.args.get('kiosk') == 'true':
         return redirect(url_for('public.kiosk'))
-    from esb.services import status_service
+    from esb.services import mac_service, status_service
 
     areas = status_service.get_area_status_dashboard()
-    return render_template('public/status_dashboard.html', areas=areas)
+    return render_template(
+        'public/status_dashboard.html',
+        areas=areas,
+        mac_visible=mac_service.visible_statuses('public'),
+    )
 
 
 @public_bp.route('/kiosk')
 def kiosk():
     """Kiosk display -- full-screen equipment status for wall-mounted displays."""
-    from esb.services import status_service
+    from esb.services import mac_service, status_service
 
     areas = status_service.get_area_status_dashboard()
-    return render_template('public/kiosk.html', areas=areas)
+    return render_template(
+        'public/kiosk.html',
+        areas=areas,
+        mac_visible=mac_service.visible_statuses('kiosk'),
+    )
 
 
 @public_bp.route('/kiosk/<int:area_id>')
 def kiosk_area(area_id):
     """Per-area kiosk display -- full-screen equipment status for one area."""
     from esb.services import status_service
+
+    from esb.services import mac_service
 
     try:
         area_data = status_service.get_single_area_status_dashboard(area_id)
@@ -51,6 +61,7 @@ def kiosk_area(area_id):
         'public/kiosk.html',
         areas=[area_data],
         area_name=area_data['area'].name,
+        mac_visible=mac_service.visible_statuses('kiosk'),
     )
 
 
@@ -61,7 +72,7 @@ def kiosk_dense(columns):
     if columns not in (2, 3):
         abort(404)
     from esb.models.repair_record import REPAIR_SEVERITIES
-    from esb.services import status_service
+    from esb.services import mac_service, status_service
 
     areas = status_service.get_area_status_dashboard()
     return render_template(
@@ -69,6 +80,7 @@ def kiosk_dense(columns):
         areas=areas,
         columns=columns,
         repair_severities=REPAIR_SEVERITIES,
+        mac_visible=mac_service.visible_statuses('kiosk'),
     )
 
 
@@ -101,7 +113,7 @@ def _build_equipment_page_context(equipment_id):
 def equipment_page(id):
     """QR code equipment page -- public status, issues, and documentation link."""
     from esb.forms.repair_forms import ProblemReportForm
-    from esb.services import equipment_service
+    from esb.services import equipment_service, mac_service
 
     try:
         equipment = equipment_service.get_equipment(id)
@@ -121,6 +133,8 @@ def equipment_page(id):
         open_repairs=open_repairs,
         eta=eta,
         form=form,
+        machine_status=mac_service.get_status_for_equipment(equipment),
+        mac_visible=mac_service.visible_statuses('public'),
     )
 
 
@@ -128,7 +142,7 @@ def equipment_page(id):
 def report_problem(id):
     """Handle problem report form submission -- public, no auth required."""
     from esb.forms.repair_forms import ProblemReportForm
-    from esb.services import equipment_service, repair_service, upload_service
+    from esb.services import equipment_service, mac_service, repair_service, upload_service
 
     form = ProblemReportForm()
 
@@ -181,6 +195,8 @@ def report_problem(id):
         open_repairs=open_repairs,
         eta=eta,
         form=form,
+        machine_status=mac_service.get_status_for_equipment(equipment),
+        mac_visible=mac_service.visible_statuses('public'),
     )
 
 

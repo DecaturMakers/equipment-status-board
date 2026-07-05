@@ -2,7 +2,7 @@
 title: 'MAC (Machine Access Control) Integration'
 slug: 'mac-integration'
 created: '2026-07-04'
-status: 'ready-for-dev'
+status: 'completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack: [Python 3.14, Flask, Flask-SQLAlchemy, MariaDB, Alembic, WTForms/Flask-WTF, Jinja2, requests, pytest]
 files_to_modify: [
@@ -61,6 +61,40 @@ test_patterns: [
 # Tech-Spec: MAC (Machine Access Control) Integration
 
 **Created:** 2026-07-04
+
+## Review Notes
+
+- Status: **Completed** (implementation + adversarial review).
+- Adversarial review findings: 8 total (all real) — 7 fixed, 1 deferred with rationale.
+  Resolution approach: auto-fix real findings.
+  - **F1 (High, fixed):** auto-repair was gated on the activity dedup, so a failure after
+    the activity commit would permanently lose the repair on retry. Decoupled — the webhook
+    now attempts `maybe_create_oops_repair` on every `oops` (its open-repair guard prevents
+    duplicates).
+  - **F2 (Med/High, fixed):** `get_equipment_by_machine_name` now filters `is_archived=False`
+    (matching its docstring and the uniqueness rule), so auto-repair can't resolve to an
+    archived equipment.
+  - **F3 (Med, fixed):** the `(machine_name, event_type, event_timestamp)` dedup index is now
+    UNIQUE and `record_activity_event` handles `IntegrityError` (rollback → None), closing the
+    concurrent-duplicate-delivery race. (Deviation from the spec's `unique=False`.)
+  - **F4 (Med, fixed):** the webhook now returns 500 (not 400) on internal/transient failures
+    so MAC retries; 400 is reserved for validated bad input.
+  - **F5 (Med, fixed):** the webhook validates `name`/`event`/`timestamp` up front, before any
+    DB write, so a malformed payload can't leave a half-written status row.
+  - **F6 (Low, fixed):** webhook token compared with `hmac.compare_digest`.
+  - **F7 (Low, fixed):** the `mac-activity.json` route is gated on `mac_enabled()`.
+  - **F8 (Low, deferred):** activity rows for machines removed/renamed in MAC are not pruned.
+    Deleting them conflicts with the "history is ESB-persisted and retained" design intent;
+    left as a known slow-growth limitation (revisit with an age-bound if needed).
+
+### Deviations from spec (spec authored against a different repo state)
+
+- Migration head was actually `c2f9a8d4e6b1` (not `77b248bd052d`); the new revision chains from it.
+- `esb/models/equipment_note.py` does not exist; mirrored `repair_timeline_entry.py` for the
+  append-only child model idiom instead.
+- Updated one pre-existing test (`test_config_mutation_logging`) whose hard-coded config-key
+  count changed due to the 12 new default-`true` MAC display toggles.
+- Version bumped `0.16.0` → `0.17.0` (minor: new feature).
 
 ## Overview
 
@@ -356,12 +390,12 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
 
 #### Group A — Config & dependency
 
-- [ ] **Task 1: Add `requests` dependency.**
+- [x] **Task 1: Add `requests` dependency.**
   - File: `pyproject.toml` (and `requirements*.txt`/lock if present — verify how deps are declared).
   - Action: Add `requests` to the project dependencies. Run `make setup` (or the venv pip install) to install it.
   - Notes: This is the only new runtime dependency. It is the first HTTP client in the tree.
 
-- [ ] **Task 2: Add `MAC_URL` env var.**
+- [x] **Task 2: Add `MAC_URL` env var.**
   - File: `esb/config.py` (`class Config`).
   - Action: Add `MAC_URL = os.environ.get('MAC_URL', '')` immediately after `ESB_BASE_URL`. Inherited by all env
     subclasses. Leave it `''` in `TestingConfig` (tests set it via `app.config` when needed).
@@ -369,12 +403,12 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
 
 #### Group B — Data model & MAC service
 
-- [ ] **Task 3: Add `Equipment.mac_machine_name` column.**
+- [x] **Task 3: Add `Equipment.mac_machine_name` column.**
   - File: `esb/models/equipment.py`.
   - Action: Add `mac_machine_name = db.Column(db.String(200), nullable=True, index=True)` alongside `serial_number`.
   - Notes: Optional link from an ESB equipment to a MAC machine `name`. Indexed for reverse lookup by machine name.
 
-- [ ] **Task 4: Create the SINGLE Alembic migration file (starts with the column add).** _(F8 — perform after Tasks
+- [x] **Task 4: Create the SINGLE Alembic migration file (starts with the column add).** _(F8 — perform after Tasks
       3, 5, 6 exist; this is the one ordering exception, called out explicitly.)_
   - File: `migrations/versions/<rev>_add_mac_integration.py` (new — ONE file for all MAC schema changes).
   - Action: Hand-author (do NOT run `flask db migrate`). `down_revision = '77b248bd052d'`. In `upgrade()` add the
@@ -384,7 +418,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     `downgrade()` reverses it (Task 7 adds the two tables to this SAME file's `upgrade`/`downgrade`).
   - Notes: One revision ⇒ one head. Apply with `flask db upgrade`; confirm `flask db heads` shows exactly one head.
 
-- [ ] **Task 5: `MachineStatus` cache model.**
+- [x] **Task 5: `MachineStatus` cache model.**
   - File: `esb/models/machine_status.py` (new); register in `esb/models/__init__.py` (import + `__all__`).
   - Action: One row per MAC machine, keyed by `machine_name`. Columns: `id` PK; `machine_name` String(200)
     NOT NULL UNIQUE index; `display_name` String(200) nullable; `status` String(20) NOT NULL; `relay`/`oops`/
@@ -393,7 +427,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     nullable; `updated_at` DateTime NOT NULL default+onupdate `lambda: datetime.now(UTC)`. Add `__repr__`.
   - Notes: `last_checkin`/`last_update` are converted from MAC epoch floats to UTC datetimes on write.
 
-- [ ] **Task 6: `MachineActivityEvent` model (append-only, capped, dedup-able).**
+- [x] **Task 6: `MachineActivityEvent` model (append-only, capped, dedup-able).**
   - File: `esb/models/machine_activity_event.py` (new); register in `esb/models/__init__.py`.
   - Action: Columns: `id` PK; `machine_name` String(200) NOT NULL index; `event_type` String(30) NOT NULL;
     `status` String(20) nullable; `user_account_id` String(200) nullable; `user_full_name` String(200) nullable;
@@ -405,7 +439,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
   - Notes: No `updated_at` (append-only). Mirror the `equipment_note.py` child idiom (minus the equipment FK — keyed
     by machine name, since events arrive before/independently of an equipment link).
 
-- [ ] **Task 7: Extend the Task-4 migration file with the two `create_table` blocks.**
+- [x] **Task 7: Extend the Task-4 migration file with the two `create_table` blocks.**
   - File: the SAME `migrations/versions/<rev>_add_mac_integration.py` created in Task 4 (do NOT make new files — F8).
   - Action: In that file's `upgrade()`, after the column add, `op.create_table('machine_status', ...)` with a UNIQUE
     index on `machine_name` (`batch_op.create_index(..., unique=True)`) and `op.create_table('machine_activity_events',
@@ -414,7 +448,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     (drop tables, then drop the column/index). Follow the `77b248bd052d` create-table template.
   - Notes: Result is one revision, one head. Re-verify with `flask db upgrade` + `flask db heads`.
 
-- [ ] **Task 8: `mac_service.py` — outbound client + gating + cache/activity writers.**
+- [x] **Task 8: `mac_service.py` — outbound client + gating + cache/activity writers.**
   - File: `esb/services/mac_service.py` (new).
   - Action: Implement:
     - `mac_enabled() -> bool` → `bool(current_app.config.get('MAC_URL', ''))`.
@@ -448,7 +482,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
 
 #### Group C — Inbound webhook & periodic poll
 
-- [ ] **Task 9: Inbound webhook blueprint (idempotent, optionally token-guarded).**
+- [x] **Task 9: Inbound webhook blueprint (idempotent, optionally token-guarded).**
   - Files: `esb/views/webhooks.py` (new); `esb/views/__init__.py` (register); `esb/__init__.py` (CSRF-exempt);
     `esb/config.py` (add `MAC_WEBHOOK_TOKEN = os.environ.get('MAC_WEBHOOK_TOKEN', '')`).
   - Action: `webhooks_bp = Blueprint('webhooks', __name__, url_prefix='/webhooks')`. Define the route with an OPTIONAL
@@ -465,7 +499,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
   - Notes: Network-trusted by default; `MAC_WEBHOOK_TOKEN` hardens it. Idempotent via the F4 dedup — retried identical
     webhooks re-upsert status but do NOT duplicate activity rows or auto-repairs.
 
-- [ ] **Task 10: Periodic status refresh + prune + orphan-reconcile in the worker loop.**
+- [x] **Task 10: Periodic status refresh + prune + orphan-reconcile in the worker loop.**
   - File: `esb/services/notification_service.py` (`run_worker_loop`).
   - Action: Split into TWO functions (R2 — keep the throttle out of the testable core):
     - `_do_mac_refresh()` — the actual work, no throttle: `if not mac_service.mac_enabled(): return`;
@@ -487,7 +521,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
 
 #### Group D — Status display
 
-- [ ] **Task 11: Inject `machine_status` in BOTH dashboard builders (F9).**
+- [x] **Task 11: Inject `machine_status` in BOTH dashboard builders (F9).**
   - File: `esb/services/status_service.py`.
   - Action: In `get_area_status_dashboard()` (def ~line 186; per-equipment dict appended ~line 274) AND
     `get_single_area_status_dashboard()` (def ~line 288; per-equipment dict appended ~line 347 — the smaller
@@ -498,7 +532,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     build's `mac_machine_name`s in ONE query (`WHERE machine_name IN (...)`), then map in-memory — do not call
     `get_status_for_equipment` per equipment. Verify the `~line` anchors before editing.
 
-- [ ] **Task 12: Pass per-surface visible statuses from views; render badges.**
+- [x] **Task 12: Pass per-surface visible statuses from views; render badges.**
   - Files: `esb/views/public.py` (`status_dashboard`→'public', `kiosk`/`kiosk_area`/`kiosk_dense`→'kiosk',
     `equipment_page`→'public'); `esb/views/equipment.py` (`_render_equipment_detail`→'admin'); templates
     `public/status_dashboard.html`, `public/kiosk.html`, `public/kiosk_dense.html`, `public/equipment_page.html`,
@@ -517,7 +551,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
 
 #### Group E — Equipment linkage, controls, activity UI, auto-repair, resolve-clears
 
-- [ ] **Task 13: Add `mac_machine_name` to BOTH equipment forms + the update allow-list.**
+- [x] **Task 13: Add `mac_machine_name` to BOTH equipment forms + the update allow-list.**
   - Files: `esb/forms/equipment_forms.py` (**two classes** — `EquipmentCreateForm` AND `EquipmentEditForm`, R2);
     the equipment form template(s); `esb/services/equipment_service.py` (`create_equipment` keyword params AND
     `_UPDATABLE_FIELDS`).
@@ -535,7 +569,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     uniqueness check doesn't collide multiple blanks. All writes to `mac_machine_name` go through these two
     views/forms — the webhook only reads — so form/service validation fully covers creation.
 
-- [ ] **Task 14: Admin machine panel + control buttons on the detail page.**
+- [x] **Task 14: Admin machine panel + control buttons on the detail page.**
   - Files: `esb/views/equipment.py` (new staff-only POST routes); `esb/templates/equipment/detail.html`.
   - Action: Add a staff-gated card (`{% if current_user.role == 'staff' %}`, ~line 39) showing current
     `machine_status` (state, current user, last check-in) and three buttons: **Oops**, **Maintenance Lockout**,
@@ -546,7 +580,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     returned); on `RuntimeError` flash danger; redirect back to detail.
   - Notes: Only render the card when `machine_status` is not None (i.e. equipment is linked and MAC enabled).
 
-- [ ] **Task 15: Auto-create Down repair on `oops` webhook.**
+- [x] **Task 15: Auto-create Down repair on `oops` webhook.**
   - Files: `esb/services/mac_service.py` (helper) or `esb/views/webhooks.py`; uses `repair_service`.
   - Action: `maybe_create_oops_repair(payload)`: resolve equipment via `get_equipment_by_machine_name(payload.get(
     'name'))`; if `None`, return (no-match is fine — status/activity were still recorded, AC18). Guard: if an open
@@ -560,7 +594,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     `create_repair_record` already queues the `new_report` Slack + `static_page_push` notifications, so the oops repair
     flows through the normal pipeline. Email is unavailable from MAC (see Notes).
 
-- [ ] **Task 16: Resolve-clears-machine via `mac_clear` notification.**
+- [x] **Task 16: Resolve-clears-machine via `mac_clear` notification.**
   - Files: `esb/services/notification_service.py` (register type + handler); `esb/services/repair_service.py`
     (queue on closed transition).
   - Action: Add `'mac_clear'` to `VALID_NOTIFICATION_TYPES` and `handlers` (`'mac_clear': _deliver_mac_clear`).
@@ -579,7 +613,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     notification does not also stop physically clearing the machine. Queued (not synchronous) so it retries with
     `BACKOFF_SCHEDULE`. Clears BOTH oops and lockout.
 
-- [ ] **Task 17: On-demand recent-activity UI.**
+- [x] **Task 17: On-demand recent-activity UI.**
   - Files: `esb/views/equipment.py` (JSON route); `esb/templates/equipment/detail.html` (`{% block extra_js %}`).
   - Action: `@equipment_bp.route('/<int:id>/mac-activity.json')` `@login_required` → query
     `MachineActivityEvent` by the equipment's `mac_machine_name`, newest first, limit (e.g. 100), return
@@ -590,7 +624,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
 
 #### Group F — Admin config, tests, docs
 
-- [ ] **Task 18: Per-surface status-display admin toggles (15 keys).**
+- [x] **Task 18: Per-surface status-display admin toggles (15 keys).**
   - Files: `esb/forms/admin_forms.py`; `esb/views/admin.py` (`app_config`); `esb/templates/admin/config.html`.
   - Action: Add 15 `BooleanField`s named exactly `mac_show_{surface}_{status}` for surface ∈
     {public, kiosk, admin} × status ∈ {in_use, idle, oops, locked_out, unknown} (keep `submit` last). In
@@ -600,7 +634,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
     `form-check form-switch` markup, before `{{ form.submit(...) }}`.
   - Notes: Field name MUST equal the config key (view uses `getattr(form, key)`).
 
-- [ ] **Task 19: Tests.**
+- [x] **Task 19: Tests.**
   - Files: `tests/test_models/test_machine_status.py`, `test_machine_activity_event.py` (new);
     `tests/test_services/test_mac_service.py` (new); `tests/test_views/test_webhooks.py` (new);
     `tests/test_services/test_repair_service.py` (extend), `tests/test_services/test_notification_service.py`
@@ -609,7 +643,7 @@ Group A = foundation, B = data/service core, C = inbound + async, D = display, E
   - Action: See Testing Strategy. Mock all MAC HTTP via `patch('esb.services.mac_service.requests')`.
   - Notes: Drive `MAC_URL` through `app.config`. `make_equipment(mac_machine_name='planer')` works once Task 3 lands.
 
-- [ ] **Task 20: Documentation.**
+- [x] **Task 20: Documentation.**
   - Files: `README.md` / deployment docs; `.env.example` if present; `docs/` if the built-in docs site covers config.
   - Action: Document `MAC_URL`; the OPTIONAL `MAC_WEBHOOK_TOKEN` and that MAC's `STATUS_WEBHOOK_URL` must point at
     `https://<esb>/webhooks/mac` (or `https://<esb>/webhooks/mac/<token>` when the token is set); the

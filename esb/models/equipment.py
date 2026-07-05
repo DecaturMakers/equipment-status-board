@@ -18,6 +18,9 @@ class Equipment(db.Model):
         db.Integer, db.ForeignKey('areas.id'), nullable=False, index=True
     )
     serial_number = db.Column(db.String(200), nullable=True)
+    # Optional link to a MAC (Machine Access Control) machine by its `name`.
+    # Indexed for reverse lookup (machine name -> equipment) from the webhook.
+    mac_machine_name = db.Column(db.String(200), nullable=True, index=True)
     acquisition_date = db.Column(db.Date, nullable=True)
     acquisition_source = db.Column(db.String(200), nullable=True)
     acquisition_cost = db.Column(db.Numeric(10, 2), nullable=True)

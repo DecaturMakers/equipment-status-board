@@ -37,10 +37,19 @@ BACKOFF_SCHEDULE = [30, 60, 120, 300, 900, 3600]
 MAX_RETRIES = 10
 
 # Valid notification types accepted by the queue
-VALID_NOTIFICATION_TYPES = {'slack_message', 'static_page_push'}
+VALID_NOTIFICATION_TYPES = {'slack_message', 'static_page_push', 'mac_clear'}
 
 # Default batch size for polling queries
 DEFAULT_BATCH_SIZE = 100
+
+# Minimum seconds between periodic MAC status refreshes. A fast --poll-interval
+# must not hammer MAC, so the refresh is throttled independently of the poll.
+MAC_REFRESH_INTERVAL = 60
+
+# Throttle state for the periodic MAC status refresh. ``None`` => the first call
+# always runs (bootstrap at worker startup). A single worker process owns
+# run_worker_loop(), so a module-level global is safe. Tests reset this.
+_last_mac_refresh = None
 
 
 def _write_heartbeat(path: Path) -> None:
@@ -75,6 +84,46 @@ def _record_iteration_timestamp() -> None:
     except SQLAlchemyError:
         db.session.rollback()
         logger.warning('Failed to update worker last-iteration timestamp', exc_info=True)
+
+
+def _do_mac_refresh() -> None:
+    """Refresh the MAC status cache from ``GET /api/machines`` (no throttle).
+
+    Upserts every returned machine's status, deletes cache rows for machines no
+    longer returned (reconcile_orphans, only on a non-empty fetch), then prunes
+    each seen machine's activity log (F10). This is the testable core -- AC9
+    calls it directly; the throttle lives in ``_refresh_mac_status``.
+    """
+    from esb.services import mac_service
+
+    if not mac_service.mac_enabled():
+        return
+    machines = mac_service.fetch_all_status()
+    for status_dict in machines:
+        mac_service.upsert_machine_status(status_dict)
+    if machines:
+        seen = {m['name'] for m in machines}
+        mac_service.reconcile_orphans(seen)
+        for name in seen:
+            mac_service.prune_activity_events(name, keep=500)
+
+
+def _refresh_mac_status() -> None:
+    """Throttled wrapper around ``_do_mac_refresh`` (at most once per ~60s).
+
+    Runs the first time it is called (bootstrap), then gates on
+    ``MAC_REFRESH_INTERVAL``. Wrapped in its own try/except so a MAC failure
+    cannot trigger the outer poll-failure backoff (F3).
+    """
+    global _last_mac_refresh
+    try:
+        now = time.monotonic()
+        if _last_mac_refresh is not None and (now - _last_mac_refresh) < MAC_REFRESH_INTERVAL:
+            return
+        _last_mac_refresh = now
+        _do_mac_refresh()
+    except Exception:
+        logger.warning('MAC refresh failed', exc_info=True)
 
 
 def queue_notification(
@@ -219,6 +268,7 @@ def process_notification(notification: PendingNotification) -> None:
     handlers = {
         'slack_message': _deliver_slack_message,
         'static_page_push': _deliver_static_page_push,
+        'mac_clear': _deliver_mac_clear,
     }
 
     handler = handlers.get(notification.notification_type)
@@ -425,6 +475,17 @@ def _deliver_static_page_push(notification: PendingNotification) -> None:
     static_page_service.generate_and_push()
 
 
+def _deliver_mac_clear(notification: PendingNotification) -> None:
+    """Clear a machine's oops + lockout in MAC (resolve-clears-machine, Task 16).
+
+    ``notification.target`` is the MAC machine name. Returns None on success;
+    raises on failure so the worker retries with BACKOFF_SCHEDULE (AC20b).
+    """
+    from esb.services import mac_service
+
+    mac_service.clear(notification.target)
+
+
 def run_worker_loop(poll_interval: int = 30) -> None:
     """Main worker polling loop.
 
@@ -541,6 +602,13 @@ def run_worker_loop(poll_interval: int = 30) -> None:
                     '— iteration metric will be stale',
                     exc_info=True,
                 )
+
+            # Periodic MAC status refresh. Placed AFTER the drain loop (F3) so a
+            # slow MAC cannot delay notification delivery and so upsert commits
+            # don't expire loaded PendingNotification rows mid-drain. Self-
+            # throttled and self-contained (its own try/except), so a MAC outage
+            # never feeds the outer poll-failure backoff.
+            _refresh_mac_status()
 
         except Exception:
             consecutive_poll_failures += 1

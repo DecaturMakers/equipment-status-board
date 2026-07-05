@@ -80,6 +80,8 @@ Open `http://localhost:5000` in a browser (or the server's IP/hostname on port 5
 | `MARIADB_ROOT_PASSWORD` | Root password for the MariaDB container. Must match the password in `DATABASE_URL`. | Yes | `esb_dev_password` | `strong-random-password` |
 | `UPLOAD_PATH` | Directory for uploaded files (photos, documents). Relative to app root or absolute path. | No | `uploads` | `/app/uploads` |
 | `UPLOAD_MAX_SIZE_MB` | Maximum upload file size in megabytes. | No | `500` | `100` |
+| `MAC_URL` | Base URL of a [Machine Access Control](https://github.com/jantman/machine-access-control) instance. Setting this enables the MAC integration (status badges, auto-repair, machine controls, activity log, resolve-clears). Leave empty to disable the entire integration. No trailing slash needed (stripped). See [MAC Integration](#mac-machine-access-control-integration). | No | _(empty)_ | `http://mac.local:5000` |
+| `MAC_WEBHOOK_TOKEN` | Optional shared secret guarding the inbound MAC status webhook. When empty, `/webhooks/mac` is network-trusted (accepts any POST). When set, MAC must POST to `/webhooks/mac/<token>` and a mismatched/missing token is rejected with `403`. The receiver can create repair records and enqueue notifications, so set this (or firewall the endpoint) on any internet-reachable deployment. As a URL path segment, the token appears in proxy/access logs. | No | _(empty)_ | `a-long-random-string` |
 | `SLACK_BOT_TOKEN` | Slack Bot User OAuth Token. Leave empty to disable Slack integration. | No | _(empty)_ | `xoxb-1234567890-...` |
 | `SLACK_APP_TOKEN` | Slack App-Level Token for Socket Mode. Required for Slack integration. Leave empty to disable. | No | _(empty)_ | `xapp-1-...` |
 | `SLACK_SOCKET_MODE_CONNECT` | Set to `true` to enable the Socket Mode WebSocket connection. Only the app container should set this; worker and other services should leave it unset. | No | _(empty)_ | `true` |
@@ -303,6 +305,56 @@ Set the push method via the `STATIC_PAGE_PUSH_METHOD` environment variable:
 The static page is pushed by the background worker whenever it detects a status change during its polling cycle.
 
 The static page's generation timestamp reflects the `worker` container's `TZ` environment variable. The variable resolves against the OS tzdata database (`/usr/share/zoneinfo`), which is provided by the `tzdata` system package. Both the `python:3.14-slim` base image and this image's Dockerfile install list include `tzdata`; do not remove it. To use a non-default zone, set `TZ` in `.env` before running `docker compose up`.
+
+## MAC (Machine Access Control) Integration
+
+ESB can optionally integrate with a [Machine Access Control](https://github.com/jantman/machine-access-control) (MAC) instance. The integration is **disabled unless `MAC_URL` is set** — leave it empty and nothing about ESB's behavior changes.
+
+When enabled, ESB:
+
+- Caches each linked machine's live status and shows it as a badge on the dashboard, kiosk, and equipment pages (visibility is configurable per surface — see the [Staff Guide](staff.md)).
+- Automatically opens a **Down** repair when a machine is flagged "Oops".
+- Lets staff **Oops**, **Maintenance Lockout**, or **Clear** a machine from its equipment detail page.
+- Records machine activity (logins, oops, lockouts, etc.) viewable on demand.
+- Clears a machine's oops/lockout in MAC when its repair is resolved.
+
+### Setup
+
+1. **Set the environment variables** in `.env` and restart the app and worker:
+
+    ```bash
+    MAC_URL=http://mac.local:5000
+    # Optional but recommended on any non-isolated network:
+    MAC_WEBHOOK_TOKEN=a-long-random-string
+    ```
+
+    ```bash
+    docker compose restart app worker
+    ```
+
+2. **Point MAC's `STATUS_WEBHOOK_URL` at ESB** so status changes, activity, and auto-repair stay current. In the MAC configuration set it to:
+
+    - `https://<esb-host>/webhooks/mac` — when `MAC_WEBHOOK_TOKEN` is empty, or
+    - `https://<esb-host>/webhooks/mac/<token>` — when `MAC_WEBHOOK_TOKEN` is set (use the same value).
+
+3. **Link equipment to machines.** On each equipment record (Staff → edit equipment), set the **MAC Machine Name** field to the machine's `name` in MAC. See the [Staff Guide](staff.md).
+
+4. **Choose which statuses display where** under **Admin → Config → MAC Machine Status Display** (see the [Staff Guide](staff.md)).
+
+### How status stays current
+
+The status cache is updated two ways, so page loads never block on MAC and survive brief MAC outages:
+
+- **The inbound webhook** (`STATUS_WEBHOOK_URL` above) updates a machine the instant it changes.
+- **The background worker** polls MAC's `GET /api/machines` at most once every ~60 seconds as a backstop, and prunes/reconciles stale cached rows.
+
+If the worker is down and no webhooks arrive, badges simply go stale — they never block or break page loads.
+
+!!! warning "Secure the webhook endpoint"
+    `/webhooks/mac` can create repair records and enqueue Slack/static-page notifications, so an unguarded, internet-reachable receiver is a repair/notification flooding (DoS) vector. On any deployment that isn't fully network-isolated, **set `MAC_WEBHOOK_TOKEN`** (or firewall the endpoint). Note the token travels as a URL path segment, so it appears in reverse-proxy and access logs — rotate it if those logs are broadly readable.
+
+!!! note "No changes needed in MAC"
+    The integration only requires pointing MAC's existing `STATUS_WEBHOOK_URL` at ESB — no MAC code changes. ESB was verified against MAC 0.15.0. Activity history accumulates from the first received webhook onward (there is no historical backfill).
 
 ## New Relic Monitoring (Optional)
 
@@ -574,3 +626,12 @@ MariaDB data is persisted in the `mariadb_data` Docker volume. This volume survi
 - For `gcs` method: verify Google Cloud credentials and bucket permissions
 - For `local` method: verify the target directory exists and is writable
 - Check worker logs for push errors
+
+### MAC status not showing or updating
+
+- Verify `MAC_URL` is set and points at a reachable MAC instance (restart `app` and `worker` after changing it)
+- Confirm the equipment record's **MAC Machine Name** exactly matches the machine's `name` in MAC
+- Confirm the status you expect to see is enabled for that surface under **Admin → Config → MAC Machine Status Display**
+- For live updates and auto-repair, verify MAC's `STATUS_WEBHOOK_URL` points at `/webhooks/mac` (or `/webhooks/mac/<token>`); a `403` in the app logs means the token doesn't match
+- The worker's periodic poll is a ~60s backstop, so a fresh link may take up to a minute to appear if no webhook has fired yet
+- Check worker logs for `MAC refresh failed` and app logs for `MAC webhook processing failed`

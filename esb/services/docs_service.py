@@ -178,6 +178,7 @@ def get_placeholder_values():
         'slack_enabled': bool(cfg.get('SLACK_BOT_TOKEN') and cfg.get('SLACK_APP_TOKEN')),
         'static_page_enabled': bool(static_page_url),
         'wifi_configured': bool(wifi_ssid),
+        'mac_enabled': bool(cfg.get('MAC_URL', '')),
     }
 
 

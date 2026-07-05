@@ -230,6 +230,42 @@ def get_equipment_display_name(equipment_id: int) -> str:
     return equipment.name if equipment else f'ID {equipment_id}'
 
 
+def _normalize_mac_machine_name(value: str | None) -> str | None:
+    """Coerce a MAC machine name to a trimmed string or None.
+
+    WTForms StringField yields ``''`` for blank input; persisting that would let
+    multiple blanks collide in the uniqueness check, so empty coerces to NULL.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _check_mac_machine_name_unique(name: str | None, exclude_id: int | None = None) -> None:
+    """Reject a MAC machine name already linked to another non-archived equipment (F6).
+
+    A blank/None name is always allowed (multiple equipment may be unlinked).
+
+    Raises:
+        ValidationError: if the name is in use by a different non-archived equipment.
+    """
+    if not name:
+        return
+    query = db.select(Equipment).filter(
+        Equipment.mac_machine_name == name,
+        Equipment.is_archived.is_(False),
+    )
+    if exclude_id is not None:
+        query = query.filter(Equipment.id != exclude_id)
+    existing = db.session.execute(query).scalars().first()
+    if existing is not None:
+        raise ValidationError(
+            f'MAC machine name {name!r} is already linked to another equipment '
+            f'({existing.name!r})'
+        )
+
+
 def create_equipment(
     name: str,
     manufacturer: str,
@@ -242,6 +278,7 @@ def create_equipment(
     acquisition_cost: Decimal | None = None,
     warranty_expiration: date | None = None,
     description: str | None = None,
+    mac_machine_name: str | None = None,
 ) -> Equipment:
     """Create a new equipment record.
 
@@ -261,12 +298,16 @@ def create_equipment(
     if area.is_archived:
         raise ValidationError(f'Area {area.name!r} is archived and cannot be used')
 
+    mac_machine_name = _normalize_mac_machine_name(mac_machine_name)
+    _check_mac_machine_name_unique(mac_machine_name)
+
     equipment = Equipment(
         name=name.strip(),
         manufacturer=manufacturer.strip(),
         model=model.strip(),
         area_id=area_id,
         serial_number=serial_number,
+        mac_machine_name=mac_machine_name,
         acquisition_date=acquisition_date,
         acquisition_source=acquisition_source,
         acquisition_cost=acquisition_cost,
@@ -303,6 +344,7 @@ def create_equipment(
 
 _UPDATABLE_FIELDS = {
     'name', 'manufacturer', 'model', 'area_id', 'serial_number',
+    'mac_machine_name',
     'acquisition_date', 'acquisition_source', 'acquisition_cost',
     'warranty_expiration', 'description',
 }
@@ -338,6 +380,14 @@ def update_equipment(
                 raise ValidationError(f'Area with id {new_area_id} not found')
             if area.is_archived:
                 raise ValidationError(f'Area {area.name!r} is archived and cannot be used')
+
+    # Coerce blank MAC machine name to NULL and enforce uniqueness (F6). Done
+    # here (not just in the form) because update_equipment does a bare setattr,
+    # so without coercion a blank '' would persist and collide with other blanks.
+    if 'mac_machine_name' in fields:
+        normalized = _normalize_mac_machine_name(fields['mac_machine_name'])
+        fields['mac_machine_name'] = normalized
+        _check_mac_machine_name_unique(normalized, exclude_id=equipment_id)
 
     changes = {}
     for field_name in _UPDATABLE_FIELDS:

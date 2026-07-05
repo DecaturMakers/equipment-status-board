@@ -52,6 +52,7 @@ extra:
   slack_enabled: true
   static_page_enabled: true
   wifi_configured: false
+  mac_enabled: true
 
 markdown_extensions:
   - toc:

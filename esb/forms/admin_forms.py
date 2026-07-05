@@ -53,6 +53,23 @@ class AppConfigForm(FlaskForm):
         ],
         default='none',
     )
+    # MAC machine-status display toggles. One BooleanField per (surface, status);
+    # the field name MUST equal the config key (the view uses getattr(form, key)).
+    mac_show_public_in_use = BooleanField('In Use')
+    mac_show_public_idle = BooleanField('Idle')
+    mac_show_public_oops = BooleanField('Oops')
+    mac_show_public_locked_out = BooleanField('Locked Out')
+    mac_show_public_unknown = BooleanField('Unknown')
+    mac_show_kiosk_in_use = BooleanField('In Use')
+    mac_show_kiosk_idle = BooleanField('Idle')
+    mac_show_kiosk_oops = BooleanField('Oops')
+    mac_show_kiosk_locked_out = BooleanField('Locked Out')
+    mac_show_kiosk_unknown = BooleanField('Unknown')
+    mac_show_admin_in_use = BooleanField('In Use')
+    mac_show_admin_idle = BooleanField('Idle')
+    mac_show_admin_oops = BooleanField('Oops')
+    mac_show_admin_locked_out = BooleanField('Locked Out')
+    mac_show_admin_unknown = BooleanField('Unknown')
     submit = SubmitField('Save Configuration')
 
     def __init__(self, *args, **kwargs):

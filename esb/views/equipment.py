@@ -26,7 +26,7 @@ from esb.forms.equipment_forms import (
     PhotoUploadForm,
     QRGenerateForm,
 )
-from esb.services import config_service, equipment_service, qr_service, repair_service, upload_service
+from esb.services import config_service, equipment_service, mac_service, qr_service, repair_service, upload_service
 from esb.utils.decorators import role_required
 from esb.utils.exceptions import ValidationError
 from esb.utils.text import get_normalized_base_url, slugify_filename
@@ -95,6 +95,7 @@ def create():
                 area_id=form.area_id.data,
                 created_by=current_user.username,
                 serial_number=form.serial_number.data or None,
+                mac_machine_name=form.mac_machine_name.data or None,
                 acquisition_date=form.acquisition_date.data,
                 acquisition_source=form.acquisition_source.data or None,
                 acquisition_cost=form.acquisition_cost.data,
@@ -147,6 +148,8 @@ def detail(id):
         photo_form=photo_form,
         link_form=link_form,
         can_edit_docs=can_edit_docs,
+        machine_status=mac_service.get_status_for_equipment(eq),
+        mac_visible=mac_service.visible_statuses('admin'),
     )
 
 
@@ -184,6 +187,7 @@ def edit(id):
                 model=form.model.data,
                 area_id=form.area_id.data,
                 serial_number=form.serial_number.data or None,
+                mac_machine_name=form.mac_machine_name.data or None,
                 acquisition_date=form.acquisition_date.data,
                 acquisition_source=form.acquisition_source.data or None,
                 acquisition_cost=form.acquisition_cost.data,
@@ -217,6 +221,89 @@ def archive(id):
     except ValidationError as e:
         flash(str(e), 'danger')
     return redirect(url_for('equipment.detail', id=id))
+
+
+# --- MAC machine controls + activity ---
+
+
+def _mac_control(id, action_fn, action_label):
+    """Run a MAC control action for a linked equipment and flash the outcome.
+
+    Shared by the oops / lockout / clear routes. Flashes danger and redirects
+    when the equipment is unlinked or MAC is disabled; on a control call flashes
+    success (noting the 503 save-timeout warning case) or danger on RuntimeError.
+    """
+    try:
+        eq = equipment_service.get_equipment(id)
+    except ValidationError:
+        abort(404)
+
+    if not mac_service.mac_enabled() or not eq.mac_machine_name:
+        flash('This equipment is not linked to a MAC machine.', 'danger')
+        return redirect(url_for('equipment.detail', id=id))
+
+    try:
+        warned = action_fn(eq.mac_machine_name)
+    except RuntimeError as e:
+        flash(f'MAC {action_label} failed: {e}', 'danger')
+        return redirect(url_for('equipment.detail', id=id))
+
+    if warned:
+        flash(
+            f'MAC {action_label} applied, but the machine reported a save timeout '
+            f'(the action was applied).',
+            'warning',
+        )
+    else:
+        flash(f'MAC {action_label} applied.', 'success')
+    return redirect(url_for('equipment.detail', id=id))
+
+
+@equipment_bp.route('/<int:id>/mac/oops', methods=['POST'])
+@role_required('staff')
+def mac_oops(id):
+    """Flag the linked machine as oops'ed in MAC."""
+    return _mac_control(id, mac_service.set_oops, 'Oops')
+
+
+@equipment_bp.route('/<int:id>/mac/lockout', methods=['POST'])
+@role_required('staff')
+def mac_lockout(id):
+    """Lock out the linked machine in MAC (maintenance)."""
+    return _mac_control(id, mac_service.set_lockout, 'Maintenance Lockout')
+
+
+@equipment_bp.route('/<int:id>/mac/clear', methods=['POST'])
+@role_required('staff')
+def mac_clear(id):
+    """Clear the linked machine's oops and lockout in MAC."""
+    return _mac_control(id, mac_service.clear, 'Clear')
+
+
+@equipment_bp.route('/<int:id>/mac-activity.json')
+@login_required
+def mac_activity(id):
+    """Return the linked machine's recent activity events as JSON (Task 17)."""
+    from flask import jsonify
+
+    try:
+        eq = equipment_service.get_equipment(id)
+    except ValidationError:
+        abort(404)
+
+    events = (
+        mac_service.get_recent_activity(eq.mac_machine_name, limit=100)
+        if mac_service.mac_enabled() else []
+    )
+    return jsonify([
+        {
+            'event_type': e.event_type,
+            'status': e.status,
+            'user_full_name': e.user_full_name,
+            'event_timestamp': e.event_timestamp.isoformat() if e.event_timestamp else None,
+        }
+        for e in events
+    ])
 
 
 def _get_active_equipment_or_404(id):

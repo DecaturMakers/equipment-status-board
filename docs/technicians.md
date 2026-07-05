@@ -128,6 +128,19 @@ You can make multiple changes at once — update the status, add a note, change 
 
 ![Repair Record Detail](images/repair-record-detail.png)
 
+{% if mac_enabled %}
+## Machine Access Control (MAC)
+
+Some equipment is linked to a [Machine Access Control](https://github.com/jantman/machine-access-control) machine. On a linked equipment's detail page you'll see a **MAC Machine Status** card showing the machine's live state (In Use, Idle, Oops, Locked Out, or Unknown), the current user, and last check-in. Click **Load recent activity** to see the machine's recent events (logins, oops, lockouts, etc.).
+
+Two things worth knowing as a technician:
+
+- When a machine is **Oops'd**, ESB automatically opens a **Down** repair record for that equipment — so an oops'd machine shows up in your queue without anyone filing a report manually.
+- When you **resolve** that repair (and no other repair is still open for the equipment), ESB automatically clears the machine's oops/lockout so members can use it again. You don't need to clear it in MAC yourself.
+
+The Oops / Maintenance Lockout / Clear buttons on the card are **staff-only**; as a technician you can view status and activity but not operate the machine controls.
+{% endif %}
+
 ## Creating Repair Records
 
 ### Via Web

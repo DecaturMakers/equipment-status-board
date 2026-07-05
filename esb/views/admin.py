@@ -17,6 +17,26 @@ from esb.utils.exceptions import ValidationError
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
+# MAC status-display toggle matrix. surface -> statuses shown by default. Public
+# shows only the actionable states; kiosk and admin show all five. Kept in sync
+# with mac_service._DEFAULT_VISIBLE.
+_MAC_SURFACES = ('public', 'kiosk', 'admin')
+_MAC_STATUSES = ('in_use', 'idle', 'oops', 'locked_out', 'unknown')
+_MAC_DEFAULT_VISIBLE = {
+    'public': {'oops', 'locked_out'},
+    'kiosk': set(_MAC_STATUSES),
+    'admin': set(_MAC_STATUSES),
+}
+
+
+def _mac_show_config_defaults():
+    """Yield ``(config_key, default_str)`` for every mac_show_{surface}_{status}."""
+    for surface in _MAC_SURFACES:
+        for status in _MAC_STATUSES:
+            key = f'mac_show_{surface}_{status}'
+            default = 'true' if status in _MAC_DEFAULT_VISIBLE[surface] else 'false'
+            yield key, default
+
 
 @admin_bp.route('/')
 @role_required('staff')
@@ -277,6 +297,9 @@ def app_config():
         )
         form.wifi_ssid.data = config_service.get_config('wifi_ssid', '')
         form.wifi_info_default.data = config_service.get_config('wifi_info_default', 'none')
+        # MAC status-display toggles.
+        for key, default in _mac_show_config_defaults():
+            getattr(form, key).data = config_service.get_config(key, default) == 'true'
 
     if form.validate_on_submit():
         config_keys = [
@@ -288,6 +311,7 @@ def app_config():
             ('notify_assignee_changed', 'true'),
             ('notify_eta_updated', 'true'),
         ]
+        config_keys.extend(_mac_show_config_defaults())
         for key, default in config_keys:
             new_value = 'true' if getattr(form, key).data else 'false'
             if config_service.get_config(key, default) != new_value:

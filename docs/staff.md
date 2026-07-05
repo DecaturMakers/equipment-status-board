@@ -94,6 +94,8 @@ Click **Equipment** in the navigation bar to see all equipment in the system. Us
 3. Update any fields as needed
 4. Click Save
 
+{% if mac_enabled %}The edit form also includes a **MAC Machine Name** field for linking equipment to a Machine Access Control machine — see [Linking Equipment to a MAC Machine](#linking-equipment-to-a-mac-machine) below.{% endif %}
+
 ### Adding Documentation
 
 From the equipment detail page, you can upload and manage reference materials:
@@ -113,6 +115,38 @@ From the equipment detail page, you can upload and manage reference materials:
 The equipment detail page includes a **Repair History** table listing every repair record that has ever been filed against that piece of equipment — both open and resolved, **newest first**. Each row shows when the issue was opened, its severity, current status, assignee, and a short description. Click any row to jump to the full repair record, including timeline notes and photos.
 
 Closed records — whether "Resolved", "Closed - No Issue Found", or "Closed - Duplicate" — remain in the history permanently so you can trace the repair history of a machine over its lifetime.
+
+{% if mac_enabled %}
+### Linking Equipment to a MAC Machine
+
+This deployment is connected to a [Machine Access Control](https://github.com/jantman/machine-access-control) (MAC) system, so equipment can be linked to a physical machine to show live status and enable machine controls.
+
+To link a piece of equipment:
+
+1. Open the equipment's detail page and click **Edit**.
+2. Set **MAC Machine Name** to the machine's `name` in MAC (ask an administrator if you're unsure of the exact name).
+3. Click Save.
+
+Each MAC machine name may be linked to only one (non-archived) piece of equipment; saving a name already in use is rejected with an error. Leave the field blank to unlink.
+
+Once linked, the equipment detail page gains a **MAC Machine Status** card, and status badges appear on the dashboard, kiosk, and public equipment page (subject to the display settings — see [MAC Machine Status Display](#mac-machine-status-display)).
+
+### MAC Machine Status, Controls & Activity
+
+On a linked equipment's detail page, the **MAC Machine Status** card shows:
+
+- The machine's current **state** — In Use, Idle, Oops, Locked Out, or Unknown — and, when available, the current user and last check-in time.
+- Three control buttons (staff only), each with a confirmation prompt:
+    - **Oops** — flag the machine as needing attention in MAC.
+    - **Maintenance Lockout** — lock the machine out for maintenance.
+    - **Clear** — clear both the oops and the lockout so the machine is usable again.
+- A **Load recent activity** button that lists the machine's recent events (logins, oops, lockouts, etc.), newest first.
+
+Two behaviors happen automatically when MAC is connected:
+
+- **Auto-repair on Oops** — when a machine is Oops'd (in MAC or via the button above), ESB opens a **Down** repair record for the linked equipment (if one isn't already open), attributed to the person who triggered it. It flows through the normal notification pipeline like any other new report.
+- **Resolve clears the machine** — when you resolve a repair (or close it as "No Issue Found") and no other repair is still open for that equipment, ESB automatically clears the machine's oops/lockout in MAC so it's usable again. Closing a repair as **"Closed - Duplicate"** deliberately does **not** clear the machine, because the authoritative repair is still open.
+{% endif %}
 
 ### Archiving Equipment
 
@@ -236,6 +270,19 @@ Enable or disable which events trigger Slack notifications:
 Notifications are sent to the area's configured Slack channel and to the `{{ oops_channel }}` channel (configurable via the `SLACK_OOPS_CHANNEL` environment variable).
 {% endif %}
 ![App Configuration](images/app-configuration.png)
+
+{% if mac_enabled %}
+### MAC Machine Status Display
+
+Because this deployment is connected to a Machine Access Control system, the configuration page includes a **MAC Machine Status Display** section that controls which machine statuses appear on each surface. There are three groups of toggles — **Public Dashboard & Equipment Page**, **Kiosk Displays**, and **Equipment Admin/Detail** — each with a switch for the five statuses (In Use, Idle, Oops, Locked Out, Unknown).
+
+Defaults are chosen to avoid clutter on member-facing views:
+
+- **Public** shows only **Oops** and **Locked Out** (the statuses a member would care about before walking over).
+- **Kiosk** and **Admin/Detail** show all five.
+
+Turn a status on or off for a surface and click **Save Configuration**. When a status is turned off for a surface, its badge simply doesn't render there — the underlying data is unchanged.
+{% endif %}
 
 ## Working with Repairs
 

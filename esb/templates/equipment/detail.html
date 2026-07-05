@@ -37,6 +37,58 @@
     {% endif %}
 </div>
 
+{% if machine_status %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">MAC Machine Status</h5>
+        {% include 'components/_mac_status_badge.html' %}
+    </div>
+    <div class="card-body">
+        <dl class="row mb-3">
+            <dt class="col-sm-3">Machine</dt>
+            <dd class="col-sm-9">{{ equipment.mac_machine_name }}</dd>
+
+            <dt class="col-sm-3">State</dt>
+            <dd class="col-sm-9">{{ machine_status.status }}</dd>
+
+            {% if machine_status.current_user_full_name %}
+            <dt class="col-sm-3">Current User</dt>
+            <dd class="col-sm-9">{{ machine_status.current_user_full_name }}</dd>
+            {% endif %}
+
+            {% if machine_status.last_checkin %}
+            <dt class="col-sm-3">Last Check-in</dt>
+            <dd class="col-sm-9">{{ machine_status.last_checkin }} UTC</dd>
+            {% endif %}
+        </dl>
+
+        {% if current_user.role == 'staff' and not equipment.is_archived %}
+        <div class="d-flex gap-2 flex-wrap mb-3">
+            <form method="post" action="{{ url_for('equipment.mac_oops', id=equipment.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-warning btn-sm"
+                        onclick="return confirm('Flag this machine as Oops in MAC?')">Oops</button>
+            </form>
+            <form method="post" action="{{ url_for('equipment.mac_lockout', id=equipment.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger btn-sm"
+                        onclick="return confirm('Lock out this machine for maintenance in MAC?')">Maintenance Lockout</button>
+            </form>
+            <form method="post" action="{{ url_for('equipment.mac_clear', id=equipment.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-success btn-sm"
+                        onclick="return confirm('Clear this machine Oops and Lockout in MAC?')">Clear</button>
+            </form>
+        </div>
+        {% endif %}
+
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="mac-activity-btn"
+                data-url="{{ url_for('equipment.mac_activity', id=equipment.id) }}">Load recent activity</button>
+        <div id="mac-activity-panel" class="mt-3"></div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card mb-4">
     <div class="card-header">
         <h5 class="mb-0">Equipment Information</h5>
@@ -348,4 +400,52 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% if machine_status %}
+<script>
+// On-demand MAC activity loader. GET request -> no CSRF token needed.
+(function () {
+    const btn = document.getElementById('mac-activity-btn');
+    const panel = document.getElementById('mac-activity-panel');
+    if (!btn || !panel) { return; }
+    btn.addEventListener('click', function () {
+        btn.disabled = true;
+        panel.textContent = 'Loading…';
+        fetch(btn.dataset.url, { headers: { 'Accept': 'application/json' } })
+            .then(function (resp) {
+                if (!resp.ok) { throw new Error('HTTP ' + resp.status); }
+                return resp.json();
+            })
+            .then(function (events) {
+                btn.disabled = false;
+                if (!events.length) {
+                    panel.textContent = 'No recent activity.';
+                    return;
+                }
+                const rows = events.map(function (e) {
+                    const ts = e.event_timestamp || '';
+                    const user = e.user_full_name ? (' — ' + e.user_full_name) : '';
+                    const cells = [
+                        '<td>' + ts + '</td>',
+                        '<td>' + e.event_type + '</td>',
+                        '<td>' + (e.status || '') + '</td>',
+                        '<td>' + (e.user_full_name || '') + '</td>',
+                    ].join('');
+                    return '<tr>' + cells + '</tr>';
+                }).join('');
+                panel.innerHTML =
+                    '<table class="table table-sm table-striped mb-0">' +
+                    '<thead><tr><th>Time (UTC)</th><th>Event</th><th>Status</th><th>User</th></tr></thead>' +
+                    '<tbody>' + rows + '</tbody></table>';
+            })
+            .catch(function (err) {
+                btn.disabled = false;
+                panel.textContent = 'Failed to load activity: ' + err.message;
+            });
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -31,6 +31,8 @@
             {% set variant = 'compact' %}
             {% include 'components/_status_indicator.html' %}
           </div>
+          {% set machine_status = item.machine_status %}
+          {% include 'components/_mac_status_badge.html' %}
           {% if item.status.color != 'green' and item.status.issue_description %}
           <p class="card-text text-muted mt-2 mb-0">{{ item.status.issue_description }}</p>
           {% endif %}
