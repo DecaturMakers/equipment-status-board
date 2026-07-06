@@ -79,7 +79,7 @@ def init_slack(app):
     # child serving process. Only the child should own a Slack Socket Mode
     # connection, otherwise one local `flask run --debug` can connect twice.
     if app.debug and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-        logger.info('Werkzeug reloader parent, skipping Socket Mode connection')
+        logger.warning('Werkzeug reloader parent, skipping Socket Mode connection')
         return
 
     # Unified Socket Mode setup: import, instantiation, and connect all live
