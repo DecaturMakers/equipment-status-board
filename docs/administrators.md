@@ -214,6 +214,67 @@ The application Docker image includes these key Python packages:
 
 Slack integration is optional — the core web application works without it. If you want Slack commands, notifications, and the status bot, follow these steps.
 
+### Quick setup with an app manifest
+
+Instead of configuring the app by hand (steps 1, 2, 4, 5, and 6 below), you can create it from the manifest below: go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From an app manifest**, select your workspace, and paste the following JSON. This pre-configures the bot user, OAuth scopes, slash commands, interactivity, and Socket Mode. You still need to create an App-Level Token (step 3), install the app, and copy the credentials (steps 7–8).
+
+```json
+{
+    "display_information": {
+        "name": "EquipmentStatusBoard"
+    },
+    "features": {
+        "bot_user": {
+            "display_name": "EquipmentStatusBoard",
+            "always_online": false
+        },
+        "slash_commands": [
+            {
+                "command": "/esb-report",
+                "description": "Report an equipment problem",
+                "should_escape": false
+            },
+            {
+                "command": "/esb-status",
+                "description": "Check equipment status",
+                "should_escape": false
+            },
+            {
+                "command": "/esb-repair",
+                "description": "Create a repair record",
+                "should_escape": false
+            },
+            {
+                "command": "/esb-reserve",
+                "description": "Equipment reservations",
+                "should_escape": false
+            }
+        ]
+    },
+    "oauth_config": {
+        "scopes": {
+            "bot": [
+                "chat:write",
+                "commands",
+                "users:read",
+                "users:read.email",
+                "im:write"
+            ]
+        },
+        "pkce_enabled": false
+    },
+    "settings": {
+        "interactivity": {
+            "is_enabled": true
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": true,
+        "token_rotation_enabled": false,
+        "is_mcp_enabled": false
+    }
+}
+```
+
 ### 1. Create a Slack App
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App**
@@ -239,17 +300,22 @@ Under **OAuth & Permissions**, add these Bot Token OAuth Scopes:
 
 ### 4. Set Up Slash Commands
 
-Under **Slash Commands**, create three commands:
+Under **Slash Commands**, create four commands:
 
 | Command | Description |
 |---------|-------------|
 | `/esb-report` | Report an equipment problem |
 | `/esb-status` | Check equipment status (area or equipment name) |
 | `/esb-repair` | Technician dispatcher (no args) or create a repair record (with arg) |
+| `/esb-reserve` | Equipment reservations (opens the reservation modal) |
 
 With Socket Mode enabled, slash commands are automatically routed to your app via WebSocket. No Request URL is needed.
 
-### 5. Enable Event Subscriptions
+### 5. Enable Interactivity
+
+Under **Interactivity & Shortcuts**, turn on **Interactivity**. This is required for the modals and buttons used by `/esb-report`, `/esb-repair`, and `/esb-reserve`. With Socket Mode enabled, interaction payloads are delivered over the WebSocket, so no Request URL is needed.
+
+### 6. Enable Event Subscriptions
 
 Under **Event Subscriptions**:
 
@@ -257,12 +323,12 @@ Under **Event Subscriptions**:
 
 Event subscriptions are not currently required but may be used for future features.
 
-### 6. Install the App
+### 7. Install the App
 
 1. Go to **Install App** and click **Install to Workspace**
 2. Authorize the permissions
 
-### 7. Copy Credentials
+### 8. Copy Credentials
 
 After installation:
 
