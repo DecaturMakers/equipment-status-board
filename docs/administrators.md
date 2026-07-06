@@ -313,7 +313,7 @@ With Socket Mode enabled, slash commands are automatically routed to your app vi
 
 ### 5. Enable Interactivity
 
-Under **Interactivity & Shortcuts**, turn on **Interactivity**. This is required for the modals and buttons used by `/esb-report`, `/esb-repair`, and `/esb-reserve`. With Socket Mode enabled, interaction payloads are delivered over the WebSocket, so no Request URL is needed.
+Under **Interactivity & Shortcuts**, turn on **Interactivity**. This is required for the modals and buttons used by `/esb-report`, `/esb-status`, `/esb-repair`, and `/esb-reserve`. With Socket Mode enabled, interaction payloads are delivered over the WebSocket, so no Request URL is needed.
 
 ### 6. Enable Event Subscriptions
 
