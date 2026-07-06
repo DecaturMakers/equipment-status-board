@@ -114,5 +114,11 @@ config = {
     'slack_test': SlackTestConfig,
     'production': ProductionConfig,
     'screenshot': ScreenshotConfig,
-    'default': DevelopmentConfig,
+    # 'default' is what create_app() uses when no config_name is passed, which
+    # is how gunicorn runs it in production (esb:create_app()). It must be a
+    # non-debug config: with DEBUG=True, app.debug is True and Slack's
+    # init_slack() hits the Werkzeug-reloader guard and skips the Socket Mode
+    # connection, so slash commands never get acked. Local dev is unaffected
+    # because `flask run --debug` forces app.debug=True at the CLI level.
+    'default': ProductionConfig,
 }
