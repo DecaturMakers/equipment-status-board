@@ -1,6 +1,20 @@
 /* ESB custom JavaScript */
 
 document.addEventListener('DOMContentLoaded', function () {
+  // --- Prevent accidental duplicate confirmation submissions ---
+  document.querySelectorAll('form[data-submit-once]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      if (form.dataset.submitting === 'true') {
+        event.preventDefault();
+        return;
+      }
+      form.dataset.submitting = 'true';
+      form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(function (control) {
+        control.disabled = true;
+      });
+    });
+  });
+
   // --- Clickable queue rows / cards (with keyboard support) ---
   // Action buttons + forms inside rows/cards must NOT trigger row-nav.
   // The closest('button, a[href], form, [data-no-nav]') guard catches

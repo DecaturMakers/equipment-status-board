@@ -1,5 +1,7 @@
 """Equipment forms for area and equipment management."""
 
+import re
+
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileAllowed, FileField, FileRequired
 from wtforms import (
@@ -12,11 +14,12 @@ from wtforms import (
     SubmitField,
     TextAreaField,
 )
-from wtforms.validators import URL, DataRequired, Length, NumberRange, Optional, ValidationError
+from wtforms.validators import URL, DataRequired, InputRequired, Length, NumberRange, Optional, ValidationError
 
 from esb.models.document import DOCUMENT_CATEGORIES
 from esb.services.equipment_service import NOTE_MAX_LENGTH
 from esb.services.qr_service import DEFAULT_DEVICE_KEY, QR_DEVICE_PRESETS, QR_SIZE_PRESETS
+from esb.services.reservation_policy import settings_validation_errors
 
 FORM_DOCUMENT_CATEGORIES = [('', '-- Select Category --')] + DOCUMENT_CATEGORIES
 
@@ -93,6 +96,71 @@ class EquipmentEditForm(FlaskForm):
     warranty_expiration = DateField('Warranty Expiration', validators=[Optional()])
     description = TextAreaField('Description')
     submit = SubmitField('Save Changes')
+
+
+class EquipmentReservationSettingsForm(FlaskForm):
+    """Staff-only reservation policy settings for one equipment item."""
+
+    reservations_enabled = BooleanField("Allow reservations", default=True)
+    reservation_slug = StringField(
+        "Reservation slug",
+        validators=[DataRequired(), Length(max=200)],
+    )
+    min_advance_notice_minutes = IntegerField(
+        "Minimum advance notice (minutes)",
+        default=120,
+        validators=[InputRequired(), NumberRange(min=0)],
+    )
+    max_advance_notice_minutes = IntegerField(
+        "Maximum advance notice (minutes)",
+        default=14 * 24 * 60,
+        validators=[DataRequired(), NumberRange(min=1)],
+    )
+    min_duration_minutes = IntegerField(
+        "Minimum duration (minutes)",
+        default=30,
+        validators=[DataRequired(), NumberRange(min=1)],
+    )
+    max_duration_minutes = IntegerField(
+        "Maximum duration (minutes)",
+        default=120,
+        validators=[DataRequired(), NumberRange(min=1)],
+    )
+    slot_granularity_minutes = IntegerField(
+        "Slot granularity (minutes)",
+        default=30,
+        validators=[DataRequired(), NumberRange(min=1)],
+    )
+    submit = SubmitField("Save Reservation Settings")
+
+    def validate_reservation_slug(self, field):
+        """Require a URL-safe, stable slug without silently rewriting it."""
+        value = (field.data or "").strip()
+        if not value:
+            raise ValidationError("Reservation slug is required.")
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value):
+            raise ValidationError("Use lowercase letters, numbers, and single hyphens only.")
+        field.data = value
+
+    def validate(self, extra_validators=None):
+        """Validate cross-field reservation policy constraints."""
+        if not super().validate(extra_validators=extra_validators):
+            return False
+
+        values = {
+            name: getattr(self, name).data
+            for name in (
+                "min_advance_notice_minutes",
+                "max_advance_notice_minutes",
+                "min_duration_minutes",
+                "max_duration_minutes",
+                "slot_granularity_minutes",
+            )
+        }
+        errors = settings_validation_errors(**values)
+        for field_name, message in errors.items():
+            getattr(self, field_name).errors.append(f"{message}.")
+        return not errors
 
 
 class DocumentUploadForm(FlaskForm):

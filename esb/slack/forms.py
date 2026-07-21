@@ -214,14 +214,9 @@ def build_equipment_options():
     Returns:
         List of option dicts: [{"text": {"type": "plain_text", "text": "Name (Area)"}, "value": "id"}, ...]
     """
-    from esb.extensions import db
-    from esb.models.equipment import Equipment
+    from esb.services import equipment_service
 
-    equipment_list = db.session.execute(
-        db.select(Equipment)
-        .filter(Equipment.is_archived.is_(False))
-        .order_by(Equipment.name)
-    ).scalars().all()
+    equipment_list = equipment_service.list_equipment()
 
     options = []
     for e in equipment_list:
@@ -239,14 +234,9 @@ def build_user_options():
     Returns:
         List of option dicts.
     """
-    from esb.extensions import db
-    from esb.models.user import User
+    from esb.services import user_service
 
-    users = db.session.execute(
-        db.select(User)
-        .filter(User.is_active.is_(True), User.role.in_(['technician', 'staff']))
-        .order_by(User.username)
-    ).scalars().all()
+    users = user_service.list_active_admin_users()
 
     return [
         {

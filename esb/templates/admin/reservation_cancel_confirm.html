@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Cancel Reservation - Equipment Status Board{% endblock %}
+
+{% block content %}
+{% include 'components/_admin_nav.html' %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <h1 class="h3 mb-3">Cancel Reservation</h1>
+        <div class="alert alert-warning" role="alert">This will preserve the reservation in history and make the time available again.</div>
+        <dl class="row">
+            <dt class="col-sm-4">Equipment</dt><dd class="col-sm-8">{{ reservation.equipment.name }}</dd>
+            <dt class="col-sm-4">Type</dt><dd class="col-sm-8">{{ 'Admin hold' if reservation.reservation_type == 'admin_hold' else 'Member reservation' }}</dd>
+            <dt class="col-sm-4">Note</dt><dd class="col-sm-8 text-break">{{ reservation.notes }}</dd>
+        </dl>
+        <form method="POST" data-submit-once>
+            {{ form.hidden_tag() }}
+            <div class="d-flex gap-2">
+                {{ form.submit(class="btn btn-danger") }}
+                <a class="btn btn-outline-secondary" href="{{ url_for('admin.list_reservations') }}">Keep reservation</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

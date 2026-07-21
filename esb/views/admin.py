@@ -14,8 +14,10 @@ from esb.forms.equipment_forms import AreaCreateForm, AreaEditForm
 from esb.services import equipment_service, user_service
 from esb.utils.decorators import role_required
 from esb.utils.exceptions import ValidationError
+from esb.views.admin_reservations import register_admin_reservation_routes
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
+register_admin_reservation_routes(admin_bp)
 
 # UI headings for each MAC display surface (keyed by mac_service.MAC_SURFACES).
 _MAC_SURFACE_HEADINGS = {
@@ -42,10 +44,12 @@ def _mac_show_config_defaults():
 
 
 @admin_bp.route('/')
-@role_required('staff')
+@role_required("technician")
 def index():
-    """Admin dashboard -- redirects to user list."""
-    return redirect(url_for('admin.list_users'))
+    """Admin dashboard -- redirects to a role-appropriate admin page."""
+    if current_user.role == "staff":
+        return redirect(url_for("admin.list_users"))
+    return redirect(url_for("admin.list_reservations"))
 
 
 @admin_bp.route('/users')

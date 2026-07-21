@@ -519,10 +519,11 @@ class TestAdminIndex:
         assert resp.status_code == 302
         assert '/admin/users' in resp.headers['Location']
 
-    def test_technician_gets_403(self, tech_client):
-        """Technician gets 403 on admin index."""
+    def test_technician_redirects_to_reservations(self, tech_client):
+        """Technician is redirected to reservation management."""
         resp = tech_client.get('/admin/')
-        assert resp.status_code == 403
+        assert resp.status_code == 302
+        assert '/admin/reservations' in resp.headers['Location']
 
 
 # --- Area Management View Tests ---

@@ -42,6 +42,12 @@ class User(UserMixin, db.Model):
         back_populates='canceled_by_user',
         lazy='dynamic',
     )
+    created_reservations = db.relationship(
+        "Reservation",
+        foreign_keys="Reservation.created_by_user_id",
+        back_populates="created_by_user",
+        lazy="dynamic",
+    )
 
     @property
     def display_name(self):

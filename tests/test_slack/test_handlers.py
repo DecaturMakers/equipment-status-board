@@ -318,11 +318,12 @@ class TestEsbReserveCommand:
     def test_availability_modal_groups_bookings_by_start_day(self):
         """Flow 2: midnight-crossing reservations appear only on their start day."""
         from esb.slack.reservation_forms import build_reservation_availability_modal
+        from esb.utils.timezones import MAKERSPACE_TIMEZONE
 
         now = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
-        local_tz = now.astimezone().tzinfo
+        local_tz = MAKERSPACE_TIMEZONE
         local_midnight = datetime.combine(
-            now.astimezone().date() + timedelta(days=1),
+            now.astimezone(MAKERSPACE_TIMEZONE).date() + timedelta(days=1),
             datetime.min.time(),
             tzinfo=local_tz,
         )

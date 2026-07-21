@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Confirm Reservation - Equipment Status Board{% endblock %}
+
+{% block content %}
+{% include 'components/_admin_nav.html' %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h1 class="h3 mb-3">Confirm Reservation</h1>
+        <div class="alert alert-warning" role="alert">
+            <p class="mb-2">This reservation has policy warnings that require confirmation.</p>
+            <ul class="mb-0">
+                {% for violation in violations %}<li>{{ violation.message }}</li>{% endfor %}
+            </ul>
+        </div>
+        <dl class="row">
+            <dt class="col-sm-4">Type</dt><dd class="col-sm-8">{{ 'Admin hold' if values['reservation_type'] == 'admin_hold' else 'Member reservation' }}</dd>
+            <dt class="col-sm-4">Equipment</dt><dd class="col-sm-8">{{ equipment_label }}</dd>
+            <dt class="col-sm-4">Member</dt><dd class="col-sm-8">{{ member_label }}</dd>
+            <dt class="col-sm-4">Start</dt><dd class="col-sm-8">{{ local_start_label }}</dd>
+            <dt class="col-sm-4">Duration</dt><dd class="col-sm-8">{{ values['duration_minutes'] }} minutes</dd>
+            <dt class="col-sm-4">Note</dt><dd class="col-sm-8 text-break">{{ values['notes'] }}</dd>
+        </dl>
+        <form method="POST" data-submit-once>
+            {{ form.hidden_tag() }}
+            <div class="d-flex gap-2">
+                {{ form.submit(class="btn btn-warning") }}
+                <a class="btn btn-outline-secondary" href="{{ cancel_url }}">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

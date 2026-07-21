@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block title %}Reservation Management - Equipment Status Board{% endblock %}
+
+{% block content %}
+{% include 'components/_admin_nav.html' %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <h1 class="mb-0">Reservation Management</h1>
+    <div class="d-flex align-items-center gap-3">
+        <span class="text-muted small">Eastern Time</span>
+        <a class="btn btn-primary" href="{{ url_for('admin.create_reservation') }}">New Reservation</a>
+    </div>
+</div>
+
+<form method="GET" class="row g-2 align-items-end mb-4" data-admin-reservation-filters>
+    <input type="hidden" name="calendar_date" value="{{ filters.calendar_date.isoformat() }}">
+    <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label" for="starts_on">History from</label>
+        <input class="form-control" type="date" id="starts_on" name="starts_on" value="{{ filters.starts_on.isoformat() }}">
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label" for="ends_on">History to</label>
+        <input class="form-control" type="date" id="ends_on" name="ends_on" value="{{ filters.ends_on.isoformat() }}">
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label" for="area_id">Area</label>
+        <select class="form-select" id="area_id" name="area_id">
+            <option value="">All areas</option>
+            {% for area in filter_options.areas %}
+            <option value="{{ area.id }}" {% if filters.area_id == area.id %}selected{% endif %}>{{ area.name }}{% if area.is_archived %} (Archived){% endif %}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label" for="equipment_id">Equipment</label>
+        <select class="form-select" id="equipment_id" name="equipment_id">
+            <option value="">All equipment</option>
+            {% for item in filter_options.equipment %}
+            <option value="{{ item.id }}" {% if filters.equipment_id == item.id %}selected{% endif %}>{{ item.name }}{% if item.is_archived %} (Archived){% elif not item.reservation_settings or not item.reservation_settings.reservations_enabled %} (Reservations disabled){% endif %}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label" for="user_id">Member</label>
+        <select class="form-select" id="user_id" name="user_id">
+            <option value="">All members</option>
+            {% for user in filter_options.users %}
+            <option value="{{ user.id }}" {% if filters.user_id == user.id %}selected{% endif %}>{{ user.display_name }}{% if not user.is_active %} (Inactive){% endif %}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-lg-1">
+        <label class="form-label" for="status">Status</label>
+        <select class="form-select" id="status" name="status">
+            <option value="">All</option>
+            <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Active</option>
+            <option value="canceled" {% if filters.status == 'canceled' %}selected{% endif %}>Canceled</option>
+        </select>
+    </div>
+    <div class="col-6 col-lg-1">
+        <label class="form-label" for="created_via">Source</label>
+        <select class="form-select" id="created_via" name="created_via">
+            <option value="">All</option>
+            <option value="slack" {% if filters.created_via == 'slack' %}selected{% endif %}>Slack</option>
+            <option value="admin" {% if filters.created_via == 'admin' %}selected{% endif %}>Admin</option>
+        </select>
+    </div>
+    <div class="col-12 d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Apply filters</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('admin.list_reservations') }}">Reset</a>
+    </div>
+</form>
+
+<div class="btn-group mb-3" role="tablist" aria-label="Reservation view">
+    <button class="btn btn-outline-secondary active" type="button" data-admin-reservation-tab="calendar" aria-selected="true">Calendar</button>
+    <button class="btn btn-outline-secondary" type="button" data-admin-reservation-tab="list" aria-selected="false">History</button>
+</div>
+
+<section data-admin-reservation-pane="calendar">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <h2 class="h5 mb-0">{{ filters.calendar_date.strftime('%A, %B') }} {{ filters.calendar_date.day }}, {{ filters.calendar_date.year }}</h2>
+        <div class="btn-group" aria-label="Calendar date navigation">
+            <a class="btn btn-outline-secondary btn-sm" href="{{ calendar_prev_url }}">Previous</a>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ calendar_today_url }}">Today</a>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ calendar_next_url }}">Next</a>
+        </div>
+    </div>
+    {% if calendar_data.columns %}
+    <div class="border mb-4">
+        <div id="admin-reservation-calendar" class="reservation-calendar" aria-label="Admin reservation calendar"></div>
+        <div id="admin-reservation-calendar-fallback" class="alert alert-warning m-2 d-none" role="status">
+            Calendar controls are unavailable. Use the history view below.
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info" role="status">No equipment matches these filters.</div>
+    {% endif %}
+</section>
+
+<section data-admin-reservation-pane="list">
+    <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <h2 class="h5 mb-0">History</h2>
+        <span class="text-muted small">{{ calendar_data.pagination.total }} reservations</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-striped align-middle">
+            <thead>
+                <tr>
+                    <th>Equipment</th>
+                    <th>Member</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Status</th>
+                    <th>Source</th>
+                    <th><span class="visually-hidden">Details</span></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for reservation in calendar_data.reservations %}
+                <tr>
+                    <td>
+                        {% if current_user.role == 'staff' %}<a href="{{ url_for('equipment.reservation_settings', id=reservation.equipment_id) }}">{{ reservation.equipment }}</a>{% else %}{{ reservation.equipment }}{% endif %}
+                        {% if reservation.equipment_archived %}<span class="badge text-bg-secondary ms-1">Archived</span>{% endif %}
+                        {% if reservation.reservations_disabled %}<span class="badge text-bg-warning ms-1">Disabled</span>{% endif %}
+                    </td>
+                    <td>{{ reservation.user }}</td>
+                    <td>{{ reservation.starts_at_label }}</td>
+                    <td>{{ reservation.ends_at_label }}</td>
+                    <td><span class="badge text-bg-{{ 'secondary' if reservation.status == 'canceled' else 'success' }}">{{ reservation.status|capitalize }}</span></td>
+                    <td>{{ reservation.created_via|capitalize }}</td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" type="button" data-reservation-detail="{{ reservation.id }}">View</button>
+                            {% if reservation.status == 'active' %}
+                            <a class="btn btn-outline-secondary" href="{{ url_for('admin.edit_reservation', id=reservation.id) }}">Edit</a>
+                            <form method="POST" action="{{ url_for('admin.cancel_reservation', id=reservation.id) }}" class="d-inline">
+                                {{ cancel_request_form.hidden_tag() }}
+                                <button class="btn btn-outline-danger" type="submit">Cancel</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-4">No reservations match these filters.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if calendar_data.pagination.pages > 1 %}
+    <nav aria-label="Reservation history pages">
+        <ul class="pagination justify-content-end mb-4">
+            <li class="page-item {% if not calendar_data.pagination.has_prev %}disabled{% endif %}"><a class="page-link" href="{{ previous_page_url }}">Previous</a></li>
+            <li class="page-item disabled"><span class="page-link">Page {{ calendar_data.pagination.page }} of {{ calendar_data.pagination.pages }}</span></li>
+            <li class="page-item {% if not calendar_data.pagination.has_next %}disabled{% endif %}"><a class="page-link" href="{{ next_page_url }}">Next</a></li>
+        </ul>
+    </nav>
+    {% endif %}
+</section>
+
+<div class="modal fade" id="reservationDetailModal" tabindex="-1" aria-labelledby="reservationDetailTitle" aria-hidden="true"
+     data-edit-url-template="{{ url_for('admin.edit_reservation', id=0) }}"
+     data-cancel-url-template="{{ url_for('admin.cancel_reservation', id=0) }}">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h2 class="modal-title fs-5" id="reservationDetailTitle">Reservation details</h2>
+                    <p class="mb-0 text-muted small" data-reservation-field="area"></p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 border-bottom pb-3 mb-3">
+                    <div>
+                        <div class="fw-semibold" data-reservation-field="equipment"></div>
+                        <div class="text-muted small" data-reservation-field="time"></div>
+                    </div>
+                    <span class="badge" data-reservation-field="status"></span>
+                </div>
+                <dl class="row row-cols-1 row-cols-sm-2 g-3 mb-0 reservation-detail-facts">
+                    <div class="col">
+                        <dt>Member</dt>
+                        <dd data-reservation-field="user"></dd>
+                    </div>
+                    <div class="col">
+                        <dt>Created by</dt>
+                        <dd data-reservation-field="created_by"></dd>
+                    </div>
+                    <div class="col d-none" data-reservation-detail-row="canceled_by">
+                        <dt>Canceled by</dt>
+                        <dd data-reservation-field="canceled_by"></dd>
+                    </div>
+                    <div class="col d-none" data-reservation-detail-row="replaces">
+                        <dt>Replaces</dt>
+                        <dd data-reservation-field="replaces"></dd>
+                    </div>
+                    <div class="col d-none" data-reservation-detail-row="replaced_by">
+                        <dt>Replaced by</dt>
+                        <dd data-reservation-field="replaced_by"></dd>
+                    </div>
+                    <div class="col d-none" data-reservation-detail-row="overrides">
+                        <dt>Overrides</dt>
+                        <dd data-reservation-field="overrides"></dd>
+                    </div>
+                </dl>
+                <div class="border-top mt-3 pt-3">
+                    <h3 class="h6 mb-1">Note</h3>
+                    <p class="mb-0 text-break" data-reservation-field="note"></p>
+                </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                <div class="d-flex gap-2" data-reservation-actions>
+                    <a class="btn btn-outline-secondary" data-reservation-edit>Edit</a>
+                    <form method="POST" data-reservation-cancel>
+                        {{ cancel_request_form.hidden_tag() }}
+                        <button class="btn btn-danger" type="submit">Cancel Reservation</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="application/json" id="admin-reservation-calendar-data">{{ calendar_data|tojson }}</script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/daypilot-javascript.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin-reservations.js') }}"></script>
+{% endblock %}

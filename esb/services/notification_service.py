@@ -6,14 +6,17 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from flask import current_app
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from esb.extensions import db
 from esb.models.app_config import AppConfig
 from esb.models.pending_notification import PendingNotification
+from esb.models.reservation import RESERVATION_TYPE_ADMIN_HOLD, Reservation
 from esb.utils.exceptions import ValidationError
 from esb.utils.logging import log_mutation
+from esb.utils.timezones import utc_naive_to_local
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ BACKOFF_SCHEDULE = [30, 60, 120, 300, 900, 3600]
 MAX_RETRIES = 10
 
 # Valid notification types accepted by the queue
-VALID_NOTIFICATION_TYPES = {'slack_message', 'static_page_push', 'mac_clear'}
+VALID_NOTIFICATION_TYPES = {'slack_message', 'slack_dm', 'static_page_push', 'mac_clear'}
 
 # Default batch size for polling queries
 DEFAULT_BATCH_SIZE = 100
@@ -165,6 +168,43 @@ def queue_notification(
     return notification
 
 
+def queue_member_reservation_notification(reservation: Reservation, event_type: str) -> str | None:
+    """Queue a member reservation DM; return a non-fatal warning on failure."""
+    if reservation.reservation_type == RESERVATION_TYPE_ADMIN_HOLD or reservation.user is None:
+        return None
+    if not current_app.config.get('SLACK_BOT_TOKEN', ''):
+        return 'Reservation was saved, but Slack notifications are not configured.'
+
+    equipment = reservation.equipment
+    base_url = current_app.config.get('ESB_BASE_URL', '').rstrip('/')
+    payload = {
+        'event_type': event_type,
+        'reservation_id': reservation.id,
+        'recipient_email': reservation.user.email,
+        'recipient_username': reservation.user.username,
+        'equipment_name': equipment.name if equipment else f'Equipment {reservation.equipment_id}',
+        'area_name': equipment.area.name if equipment and equipment.area else 'Unknown Area',
+        'starts_at_label': utc_naive_to_local(reservation.starts_at).strftime('%Y-%m-%d %I:%M %p %Z'),
+        'ends_at_label': utc_naive_to_local(reservation.ends_at).strftime('%Y-%m-%d %I:%M %p %Z'),
+        'note': reservation.notes or '',
+        'reservation_url': f'{base_url}/reservations/' if base_url else '',
+    }
+    try:
+        queue_notification(
+            notification_type='slack_dm',
+            target=reservation.user.email,
+            payload=payload,
+        )
+    except Exception:
+        logger.exception(
+            'Failed to queue reservation notification (reservation=%s, event=%s)',
+            reservation.id,
+            event_type,
+        )
+        return 'Reservation was saved, but its Slack notification could not be queued.'
+    return None
+
+
 def get_pending_notifications(batch_size: int = DEFAULT_BATCH_SIZE) -> list[PendingNotification]:
     """Get notifications ready for delivery.
 
@@ -267,6 +307,7 @@ def process_notification(notification: PendingNotification) -> None:
     """
     handlers = {
         'slack_message': _deliver_slack_message,
+        'slack_dm': _deliver_slack_dm,
         'static_page_push': _deliver_static_page_push,
         'mac_clear': _deliver_mac_clear,
     }
@@ -360,6 +401,23 @@ def _deliver_slack_message(notification: PendingNotification) -> None:
             )
 
 
+def _deliver_slack_dm(notification: PendingNotification) -> None:
+    """Resolve a member by email and deliver a reservation DM through Slack."""
+    payload = dict(notification.payload or {})
+    recipient_email = payload.get('recipient_email')
+    if not recipient_email:
+        raise RuntimeError('Reservation notification has no recipient email')
+    text, _blocks = _format_slack_message(payload)
+    from esb.services import slack_dm_service
+
+    slack_dm_service.deliver_direct_message(
+        recipient_email=recipient_email,
+        text=text,
+        timeout=15,
+    )
+    logger.info('Reservation Slack DM delivered (notification=%d)', notification.id)
+
+
 def _format_slack_message(payload: dict) -> tuple[str, list | None]:
     """Format a Slack notification message based on event type.
 
@@ -450,6 +508,21 @@ def _format_slack_message(payload: dict) -> tuple[str, list | None]:
         if old_eta:
             eta_text = f'ETA updated: {old_eta} -> {eta}'
         text = f'{_ETA_PREFIX}ETA update: *{equipment_name}* ({area_name})\n{eta_text}'
+
+    elif event_type in {'reservation_created', 'reservation_updated', 'reservation_canceled'}:
+        action = {
+            'reservation_created': 'created',
+            'reservation_updated': 'updated',
+            'reservation_canceled': 'canceled',
+        }[event_type]
+        text = (
+            f':calendar: Your reservation was {action}: *{equipment_name}* ({area_name})\n'
+            f"Time: {payload.get('starts_at_label', 'Unknown')} - {payload.get('ends_at_label', 'Unknown')}"
+        )
+        if payload.get('note'):
+            text += f"\nNote: {payload['note']}"
+        if payload.get('reservation_url'):
+            text += f"\nView reservations: {payload['reservation_url']}"
 
     else:
         text = f'Equipment notification: *{equipment_name}* ({area_name})'
