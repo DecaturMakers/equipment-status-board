@@ -2,14 +2,17 @@
 
 from datetime import UTC, datetime, timedelta
 
+from esb.utils.timezones import MAKERSPACE_TIMEZONE
+
 
 def _format_time(value):
-    text = value.astimezone().strftime('%I:%M %p')
+    text = value.astimezone(MAKERSPACE_TIMEZONE).strftime('%I:%M %p')
     return text.lstrip('0')
 
 
 def _format_datetime(value):
-    return f'{value.astimezone().strftime("%A, %B")} {value.astimezone().day}, {_format_time(value)}'
+    local_value = value.astimezone(MAKERSPACE_TIMEZONE)
+    return f'{local_value.strftime("%A, %B")} {local_value.day}, {_format_time(value)}'
 
 
 def _format_duration(minutes):
@@ -56,8 +59,8 @@ def _date_label(value, today):
 
 
 def _booked_ranges_by_day(item, now, days=3):
-    local_tz = now.astimezone().tzinfo
-    today = now.astimezone().date()
+    local_tz = MAKERSPACE_TIMEZONE
+    today = now.astimezone(MAKERSPACE_TIMEZONE).date()
     ranges_by_day = {today + timedelta(days=offset): [] for offset in range(days)}
 
     for reservation in item['reservations']:
@@ -188,7 +191,7 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
 def build_reservation_availability_modal(item, now=None):
     """Build the Flow 2 one-tool reservation modal."""
     now = now or datetime.now(UTC)
-    today = now.astimezone().date()
+    today = now.astimezone(MAKERSPACE_TIMEZONE).date()
     slot_minutes = item['slot_granularity_minutes']
     duration_minutes = item['min_duration_minutes']
     initial_start = _ceil_to_slot(

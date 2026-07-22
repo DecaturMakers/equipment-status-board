@@ -6,6 +6,7 @@ they never query models directly.
 
 import csv
 import io
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -15,9 +16,12 @@ from esb.extensions import db
 from esb.models.area import Area
 from esb.models.equipment import Equipment
 from esb.models.equipment_note import EquipmentNote
+from esb.models.equipment_reservation_settings import EquipmentReservationSettings
 from esb.models.external_link import ExternalLink
+from esb.services.reservation_policy import validate_settings_values
 from esb.utils.exceptions import ValidationError
 from esb.utils.logging import log_mutation
+from esb.utils.text import slugify_filename
 
 
 def list_areas() -> list[Area]:
@@ -229,6 +233,94 @@ def get_equipment_display_name(equipment_id: int) -> str:
     """Return an equipment name for user-facing messages, with an ID fallback."""
     equipment = db.session.get(Equipment, equipment_id)
     return equipment.name if equipment else f'ID {equipment_id}'
+
+
+# --- Equipment reservation settings ---
+
+
+def default_reservation_slug(equipment: Equipment) -> str:
+    """Return the stable default slug used when settings are first created."""
+    return f"{slugify_filename(equipment.name).lower()}-{equipment.id}"
+
+
+def get_equipment_reservation_settings(
+    equipment_id: int,
+) -> EquipmentReservationSettings | None:
+    """Return reservation settings for an equipment item, if configured."""
+    equipment = get_equipment(equipment_id)
+    return equipment.reservation_settings
+
+
+def update_equipment_reservation_settings(
+    *,
+    equipment_id: int,
+    updated_by: str,
+    reservations_enabled: bool,
+    reservation_slug: str,
+    min_advance_notice_minutes: int,
+    max_advance_notice_minutes: int,
+    min_duration_minutes: int,
+    max_duration_minutes: int,
+    slot_granularity_minutes: int,
+) -> EquipmentReservationSettings:
+    """Create or update the reservation policy for active equipment."""
+    equipment = get_equipment(equipment_id)
+    if equipment.is_archived:
+        raise ValidationError(f"Equipment {equipment.name!r} is archived")
+
+    slug = (reservation_slug or "").strip()
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
+        raise ValidationError("Reservation slug must use lowercase letters, numbers, and hyphens only")
+    validate_settings_values(
+        min_advance_notice_minutes=min_advance_notice_minutes,
+        max_advance_notice_minutes=max_advance_notice_minutes,
+        min_duration_minutes=min_duration_minutes,
+        max_duration_minutes=max_duration_minutes,
+        slot_granularity_minutes=slot_granularity_minutes,
+    )
+
+    settings = equipment.reservation_settings
+    duplicate = db.session.execute(
+        db.select(EquipmentReservationSettings).filter(
+            EquipmentReservationSettings.reservation_slug == slug,
+            EquipmentReservationSettings.equipment_id != equipment_id,
+        )
+    ).scalar_one_or_none()
+    if duplicate is not None:
+        raise ValidationError(f"Reservation slug {slug!r} is already in use")
+
+    values = {
+        "reservations_enabled": bool(reservations_enabled),
+        "reservation_slug": slug,
+        "min_advance_notice_minutes": min_advance_notice_minutes,
+        "max_advance_notice_minutes": max_advance_notice_minutes,
+        "min_duration_minutes": min_duration_minutes,
+        "max_duration_minutes": max_duration_minutes,
+        "slot_granularity_minutes": slot_granularity_minutes,
+    }
+    created = settings is None
+    if settings is None:
+        settings = EquipmentReservationSettings(equipment_id=equipment_id, **values)
+        db.session.add(settings)
+        changes = values
+    else:
+        changes = {name: value for name, value in values.items() if getattr(settings, name) != value}
+        for name, value in changes.items():
+            setattr(settings, name, value)
+
+    db.session.commit()
+    if created or changes:
+        log_mutation(
+            "equipment.reservation_settings.updated",
+            updated_by,
+            {
+                "equipment_id": equipment.id,
+                "reservation_slug": settings.reservation_slug,
+                "created": created,
+                "changes": changes,
+            },
+        )
+    return settings
 
 
 def _normalize_mac_machine_name(value: str | None) -> str | None:

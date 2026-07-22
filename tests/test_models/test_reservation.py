@@ -7,7 +7,11 @@ from sqlalchemy.exc import IntegrityError
 
 from esb.extensions import db as _db
 from esb.models.equipment_reservation_settings import EquipmentReservationSettings
-from esb.models.reservation import Reservation
+from esb.models.reservation import (
+    RESERVATION_TYPE_ADMIN_HOLD,
+    RESERVATION_TYPE_MEMBER,
+    Reservation,
+)
 
 
 def _settings(equipment, slug='stub-equipment'):
@@ -116,6 +120,56 @@ class TestReservation:
         assert staff_user.reservations.count() == 1
         assert reservation.canceled_at is None
         assert reservation.canceled_by_user is None
+        assert reservation.reservation_type == RESERVATION_TYPE_MEMBER
+        assert reservation.overridden_policy_codes == []
+
+    def test_admin_hold_has_no_member_and_tracks_creator(
+        self, app, make_equipment, staff_user,
+    ):
+        equipment = make_equipment(name='Held Tool')
+        reservation = Reservation(
+            equipment_id=equipment.id,
+            starts_at=datetime(2026, 6, 15, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
+            created_via='admin',
+            reservation_type=RESERVATION_TYPE_ADMIN_HOLD,
+            created_by_user_id=staff_user.id,
+            overridden_policy_codes=['conflict'],
+        )
+
+        _db.session.add(reservation)
+        _db.session.commit()
+
+        assert reservation.user is None
+        assert reservation.is_admin_hold is True
+        assert reservation.created_by_user == staff_user
+        assert staff_user.created_reservations.count() == 1
+        assert reservation.overridden_policy_codes == ['conflict']
+
+    def test_replacement_lineage_is_navigable(self, app, make_equipment, staff_user):
+        equipment = make_equipment(name='Replacement Tool')
+        original = Reservation(
+            equipment_id=equipment.id,
+            user_id=staff_user.id,
+            starts_at=datetime(2026, 6, 15, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
+            created_via='admin',
+        )
+        _db.session.add(original)
+        _db.session.commit()
+        replacement = Reservation(
+            equipment_id=equipment.id,
+            user_id=staff_user.id,
+            starts_at=datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 6, 15, 16, 0, tzinfo=UTC),
+            created_via='admin',
+            replaces_reservation_id=original.id,
+        )
+        _db.session.add(replacement)
+        _db.session.commit()
+
+        assert replacement.replaces_reservation == original
+        assert original.replacement_reservations.all() == [replacement]
 
     def test_canceled_reservation_links_canceling_user(self, app, make_equipment, staff_user, tech_user):
         """Canceled reservation can track who canceled it."""
@@ -150,6 +204,50 @@ class TestReservation:
         )
 
         _db.session.add(reservation)
+        with pytest.raises(IntegrityError):
+            _db.session.commit()
+        _db.session.rollback()
+
+    def test_member_and_hold_owner_constraints_are_enforced(
+        self, app, make_equipment, staff_user,
+    ):
+        equipment = make_equipment(name='Type Constraint Tool')
+        member_without_owner = Reservation(
+            equipment_id=equipment.id,
+            starts_at=datetime(2026, 6, 15, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
+            created_via='admin',
+            reservation_type=RESERVATION_TYPE_MEMBER,
+        )
+        _db.session.add(member_without_owner)
+        with pytest.raises(IntegrityError):
+            _db.session.commit()
+        _db.session.rollback()
+
+    def test_interval_constraint_is_enforced(self, app, make_equipment, staff_user):
+        equipment = make_equipment(name='Interval Constraint Tool')
+        invalid_interval = Reservation(
+            equipment_id=equipment.id,
+            user_id=staff_user.id,
+            starts_at=datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 6, 15, 14, 0, tzinfo=UTC),
+            created_via='admin',
+        )
+        _db.session.add(invalid_interval)
+
+        with pytest.raises(IntegrityError):
+            _db.session.commit()
+        _db.session.rollback()
+
+        hold_with_owner = Reservation(
+            equipment_id=equipment.id,
+            user_id=staff_user.id,
+            starts_at=datetime(2026, 6, 15, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
+            created_via='admin',
+            reservation_type=RESERVATION_TYPE_ADMIN_HOLD,
+        )
+        _db.session.add(hold_with_owner)
         with pytest.raises(IntegrityError):
             _db.session.commit()
         _db.session.rollback()

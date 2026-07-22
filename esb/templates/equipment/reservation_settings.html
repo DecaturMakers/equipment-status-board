@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Reservation Settings - {{ equipment.name }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('equipment.index') }}">Equipment Registry</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('equipment.detail', id=equipment.id) }}">{{ equipment.name }}</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Reservation Settings</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-4">
+            <h1 class="h3 mb-0">Reservation Settings</h1>
+            <span class="text-muted">{{ equipment.name }}</span>
+        </div>
+        <form method="POST" novalidate>
+            {{ form.hidden_tag() }}
+
+            <div class="form-check form-switch mb-4">
+                {{ form.reservations_enabled(class="form-check-input") }}
+                <label class="form-check-label" for="reservations_enabled">Allow reservations</label>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label" for="reservation_slug">Reservation slug</label>
+                {{ form.reservation_slug(class="form-control" ~ (" is-invalid" if form.reservation_slug.errors else "")) }}
+                {% for error in form.reservation_slug.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label" for="min_advance_notice_minutes">Minimum advance notice (minutes)</label>
+                    {{ form.min_advance_notice_minutes(class="form-control" ~ (" is-invalid" if form.min_advance_notice_minutes.errors else ""), type="number", min="0") }}
+                    {% for error in form.min_advance_notice_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label" for="max_advance_notice_minutes">Maximum advance notice (minutes)</label>
+                    {{ form.max_advance_notice_minutes(class="form-control" ~ (" is-invalid" if form.max_advance_notice_minutes.errors else ""), type="number", min="1") }}
+                    {% for error in form.max_advance_notice_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label" for="min_duration_minutes">Minimum duration (minutes)</label>
+                    {{ form.min_duration_minutes(class="form-control" ~ (" is-invalid" if form.min_duration_minutes.errors else ""), type="number", min="1") }}
+                    {% for error in form.min_duration_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label" for="max_duration_minutes">Maximum duration (minutes)</label>
+                    {{ form.max_duration_minutes(class="form-control" ~ (" is-invalid" if form.max_duration_minutes.errors else ""), type="number", min="1") }}
+                    {% for error in form.max_duration_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6 mb-4">
+                    <label class="form-label" for="slot_granularity_minutes">Slot granularity (minutes)</label>
+                    {{ form.slot_granularity_minutes(class="form-control" ~ (" is-invalid" if form.slot_granularity_minutes.errors else ""), type="number", min="1") }}
+                    {% for error in form.slot_granularity_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+            </div>
+
+            <div class="d-flex gap-2">
+                {{ form.submit(class="btn btn-primary") }}
+                <a href="{{ url_for('equipment.detail', id=equipment.id) }}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

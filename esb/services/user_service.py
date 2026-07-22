@@ -93,6 +93,17 @@ def list_users() -> list[User]:
     )
 
 
+def list_active_admin_users() -> list[User]:
+    """Return active Staff and Technician accounts ordered by username."""
+    return list(
+        db.session.execute(
+            db.select(User)
+            .filter(User.is_active.is_(True), User.role.in_(VALID_ROLES))
+            .order_by(User.username)
+        ).scalars().all()
+    )
+
+
 def get_user(user_id: int) -> User:
     """Get a single user by ID.
 
@@ -267,13 +278,6 @@ def _deliver_temp_password_via_slack(
         # conversations_open, chat_postMessage -- and runs synchronously in a
         # web request. 3 * 8s = 24s stays comfortably under gunicorn's default
         # 30s worker_timeout.
-        client = WebClient(token=token, timeout=8)
-        resp = client.users_lookupByEmail(email=user.email)
-        slack_user_id = resp['user']['id']
-
-        resp = client.conversations_open(users=[slack_user_id])
-        dm_channel_id = resp['channel']['id']
-
         if action == 'reset':
             intro = 'Your Equipment Status Board password has been reset.'
         else:
@@ -285,7 +289,14 @@ def _deliver_temp_password_via_slack(
             f'Temporary password: {temp_password}\n\n'
             f'Please log in and change your password as soon as possible.'
         )
-        client.chat_postMessage(channel=dm_channel_id, text=message)
+        from esb.services import slack_dm_service
+
+        slack_dm_service.deliver_direct_message(
+            recipient_email=user.email,
+            text=message,
+            timeout=8,
+            client_factory=WebClient,
+        )
         return True
     except Exception:
         logger.warning('Failed to deliver temp password via Slack for user %s', user.username)

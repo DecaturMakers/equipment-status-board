@@ -71,6 +71,16 @@ th.sortable:hover {
     padding: 1.5rem;
     color: var(--bs-secondary-color);
 }
+.reservation-detail-facts dt {
+    color: var(--bs-secondary-color);
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-bottom: 0.125rem;
+    text-transform: uppercase;
+}
+.reservation-detail-facts dd {
+    margin-bottom: 0;
+}
 
 /* Kiosk display */
 .kiosk-area-heading {

@@ -23,6 +23,7 @@ from esb.forms.equipment_forms import (
     EquipmentCreateForm,
     EquipmentEditForm,
     EquipmentNoteForm,
+    EquipmentReservationSettingsForm,
     ExternalLinkForm,
     PhotoUploadForm,
     QRGenerateForm,
@@ -188,7 +189,7 @@ def edit(id):
         if form.area_id.data == 0:
             flash('Please select an area.', 'danger')
             return render_template(
-                'equipment/form.html', form=form, title='Edit Equipment',
+                'equipment/form.html', form=form, title='Edit Equipment', equipment=eq,
             )
         try:
             equipment_service.update_equipment(
@@ -209,14 +210,60 @@ def edit(id):
         except ValidationError as e:
             flash(str(e), 'danger')
             return render_template(
-                'equipment/form.html', form=form, title='Edit Equipment',
+                'equipment/form.html', form=form, title='Edit Equipment', equipment=eq,
             )
 
         flash('Equipment updated successfully.', 'success')
         return redirect(url_for('equipment.detail', id=id))
 
     return render_template(
-        'equipment/form.html', form=form, title='Edit Equipment',
+        'equipment/form.html', form=form, title='Edit Equipment', equipment=eq,
+    )
+
+
+@equipment_bp.route('/<int:id>/reservations/settings', methods=['GET', 'POST'])
+@role_required('staff')
+def reservation_settings(id):
+    """Create or update reservation policy settings for one equipment item."""
+    try:
+        eq = equipment_service.get_equipment(id)
+    except ValidationError:
+        abort(404)
+
+    if eq.is_archived:
+        flash('Cannot configure reservations for archived equipment.', 'danger')
+        return redirect(url_for('equipment.detail', id=id))
+
+    settings = equipment_service.get_equipment_reservation_settings(id)
+    form = EquipmentReservationSettingsForm(obj=settings)
+    if settings is None and not form.is_submitted():
+        form.reservations_enabled.data = True
+        form.reservation_slug.data = equipment_service.default_reservation_slug(eq)
+
+    if form.validate_on_submit():
+        try:
+            equipment_service.update_equipment_reservation_settings(
+                equipment_id=id,
+                updated_by=current_user.username,
+                reservations_enabled=form.reservations_enabled.data,
+                reservation_slug=form.reservation_slug.data,
+                min_advance_notice_minutes=form.min_advance_notice_minutes.data,
+                max_advance_notice_minutes=form.max_advance_notice_minutes.data,
+                min_duration_minutes=form.min_duration_minutes.data,
+                max_duration_minutes=form.max_duration_minutes.data,
+                slot_granularity_minutes=form.slot_granularity_minutes.data,
+            )
+        except ValidationError as e:
+            form.reservation_slug.errors.append(str(e))
+        else:
+            flash('Reservation settings updated successfully.', 'success')
+            return redirect(url_for('equipment.reservation_settings', id=id))
+
+    return render_template(
+        'equipment/reservation_settings.html',
+        equipment=eq,
+        form=form,
+        has_settings=settings is not None,
     )
 
 

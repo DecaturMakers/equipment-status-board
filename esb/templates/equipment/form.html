@@ -89,6 +89,9 @@
 
             <div class="d-flex gap-2">
                 {{ form.submit(class="btn btn-primary") }}
+                {% if equipment is defined %}
+                <a href="{{ url_for('equipment.reservation_settings', id=equipment.id) }}" class="btn btn-outline-secondary">Reservation Settings</a>
+                {% endif %}
                 <a href="{{ url_for('equipment.index') }}" class="btn btn-outline-secondary">Cancel</a>
             </div>
         </form>

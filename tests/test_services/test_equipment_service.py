@@ -9,6 +9,8 @@ import pytest
 from esb.extensions import db as _db
 from esb.models.area import Area
 from esb.models.equipment import Equipment
+from esb.models.equipment_reservation_settings import EquipmentReservationSettings
+from esb.models.reservation import Reservation
 from esb.utils.exceptions import ValidationError
 
 
@@ -852,6 +854,91 @@ class TestUpdateEquipment:
         changes = updated_entries[0]['data']['changes']
         assert changes['acquisition_date'] == [None, '2025-06-15']
         assert changes['acquisition_cost'] == [None, '1234.56']
+
+
+class TestEquipmentReservationSettings:
+    """Tests for staff-configured equipment reservation policies."""
+
+    def _update(self, equipment, **overrides):
+        from esb.services.equipment_service import update_equipment_reservation_settings
+
+        values = {
+            'equipment_id': equipment.id,
+            'updated_by': 'staffuser',
+            'reservations_enabled': True,
+            'reservation_slug': f'{equipment.id}-settings-tool',
+            'min_advance_notice_minutes': 120,
+            'max_advance_notice_minutes': 14 * 24 * 60,
+            'min_duration_minutes': 30,
+            'max_duration_minutes': 120,
+            'slot_granularity_minutes': 30,
+        }
+        values.update(overrides)
+        return update_equipment_reservation_settings(**values)
+
+    def test_creates_and_updates_settings(self, app, make_equipment):
+        equipment = make_equipment('Settings Tool', 'Co', 'Model')
+
+        created = self._update(equipment)
+        updated = self._update(
+            equipment,
+            reservations_enabled=False,
+            reservation_slug='settings-tool-updated',
+            max_duration_minutes=180,
+        )
+
+        assert created.id == updated.id
+        assert updated.reservations_enabled is False
+        assert updated.reservation_slug == 'settings-tool-updated'
+        assert updated.max_duration_minutes == 180
+
+    def test_default_slug_is_stable_and_includes_equipment_id(self, app, make_equipment):
+        from esb.services.equipment_service import default_reservation_slug
+
+        equipment = make_equipment('Laser Cutter!', 'Co', 'Model')
+
+        assert default_reservation_slug(equipment) == f'laser-cutter-{equipment.id}'
+
+    def test_rejects_invalid_policy_and_duplicate_slug(
+        self, app, make_area, make_equipment,
+    ):
+        area = make_area('Reservation Settings Area')
+        first = make_equipment('First Settings Tool', 'Co', 'Model', area=area)
+        second = make_equipment('Second Settings Tool', 'Co', 'Model', area=area)
+        self._update(first, reservation_slug='shared-settings-slug')
+
+        with pytest.raises(ValidationError, match='already in use'):
+            self._update(second, reservation_slug='shared-settings-slug')
+        with pytest.raises(ValidationError, match='at least the minimum'):
+            self._update(second, min_duration_minutes=90, max_duration_minutes=60)
+        with pytest.raises(ValidationError, match='align to slot granularity'):
+            self._update(second, min_duration_minutes=45)
+
+    def test_archived_equipment_cannot_have_settings_updated(self, app, make_equipment):
+        equipment = make_equipment('Archived Settings Tool', 'Co', 'Model', is_archived=True)
+
+        with pytest.raises(ValidationError, match='archived'):
+            self._update(equipment)
+
+    def test_disabling_settings_leaves_future_reservations_intact(
+        self, app, make_equipment, staff_user,
+    ):
+        equipment = make_equipment('Disable Settings Tool', 'Co', 'Model')
+        settings = self._update(equipment)
+        reservation = Reservation(
+            equipment_id=equipment.id,
+            user_id=staff_user.id,
+            starts_at=datetime(2026, 7, 20, 14, 0),
+            ends_at=datetime(2026, 7, 20, 15, 0),
+            created_via='slack',
+        )
+        _db.session.add(reservation)
+        _db.session.commit()
+
+        self._update(equipment, reservations_enabled=False)
+
+        assert _db.session.get(EquipmentReservationSettings, settings.id).reservations_enabled is False
+        assert _db.session.get(Reservation, reservation.id).status == 'active'
 
 
 # --- External Link Service Tests ---

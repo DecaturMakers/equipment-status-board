@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title|default('New Reservation') }} - Equipment Status Board{% endblock %}
+
+{% block content %}
+{% include 'components/_admin_nav.html' %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-4">
+            <h1 class="h3 mb-0">{{ title|default('New Reservation') }}</h1>
+            <span class="text-muted small">Eastern Time</span>
+        </div>
+        <form method="POST" novalidate>
+            {{ form.hidden_tag() }}
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label" for="reservation_type">Reservation type</label>
+                    {{ form.reservation_type(class="form-select" ~ (" is-invalid" if form.reservation_type.errors else "")) }}
+                    {% for error in form.reservation_type.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="equipment_id">Equipment</label>
+                    {{ form.equipment_id(class="form-select" ~ (" is-invalid" if form.equipment_id.errors else "")) }}
+                    {% for error in form.equipment_id.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-12" data-member-reservation-field>
+                    <label class="form-label" for="owner_user_id">Member</label>
+                    {{ form.owner_user_id(class="form-select" ~ (" is-invalid" if form.owner_user_id.errors else "")) }}
+                    {% for error in form.owner_user_id.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="start_date">Start date</label>
+                    {{ form.start_date(class="form-control" ~ (" is-invalid" if form.start_date.errors else ""), type="date") }}
+                    {% for error in form.start_date.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="start_time">Start time</label>
+                    {{ form.start_time(class="form-control" ~ (" is-invalid" if form.start_time.errors else ""), type="time") }}
+                    {% for error in form.start_time.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="duration_minutes">Duration (minutes)</label>
+                    {{ form.duration_minutes(class="form-control" ~ (" is-invalid" if form.duration_minutes.errors else ""), type="number", min="1") }}
+                    {% for error in form.duration_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-12">
+                    <label class="form-label" for="notes">Note</label>
+                    {{ form.notes(class="form-control" ~ (" is-invalid" if form.notes.errors else ""), rows="3") }}
+                    {% for error in form.notes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                </div>
+            </div>
+            <div class="d-flex gap-2 mt-4">
+                {{ form.submit(class="btn btn-primary") }}
+                <a class="btn btn-outline-secondary" href="{{ url_for('admin.list_reservations') }}">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const type = document.getElementById('reservation_type');
+    const member = document.querySelector('[data-member-reservation-field]');
+    const update = () => { member.classList.toggle('d-none', type.value === 'admin_hold'); };
+    type.addEventListener('change', update);
+    update();
+})();
+</script>
+{% endblock %}

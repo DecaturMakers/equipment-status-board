@@ -28,6 +28,7 @@
         <a href="{{ url_for('repairs.create', equipment_id=equipment.id) }}" class="btn btn-outline-primary btn-sm">Report Issue</a>
         {% if current_user.role == 'staff' %}
         <a href="{{ url_for('equipment.edit', id=equipment.id) }}" class="btn btn-outline-secondary">Edit</a>
+        <a href="{{ url_for('equipment.reservation_settings', id=equipment.id) }}" class="btn btn-outline-secondary">Reservation Settings</a>
         <form method="post" action="{{ url_for('equipment.archive', id=equipment.id) }}" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to archive this equipment? It will be removed from active lists.')">Archive</button>

@@ -1,7 +1,9 @@
 {% set _user_endpoints = ['admin.list_users', 'admin.create_user', 'admin.user_created', 'admin.change_role', 'admin.reset_password'] %}
 {% set _area_endpoints = ['admin.list_areas', 'admin.create_area', 'admin.edit_area', 'admin.archive_area'] %}
 {% set _config_endpoints = ['admin.app_config'] %}
+{% set _reservation_endpoints = ['admin.list_reservations', 'admin.create_reservation', 'admin.edit_reservation', 'admin.cancel_reservation'] %}
 <ul class="nav nav-tabs mb-3" role="tablist">
+    {% if current_user.role == 'staff' %}
     <li class="nav-item" role="presentation">
         <a class="nav-link {% if request.endpoint in _user_endpoints %}active{% endif %}" href="{{ url_for('admin.list_users') }}" role="tab" {% if request.endpoint in _user_endpoints %}aria-current="page"{% endif %}>Users</a>
     </li>
@@ -9,6 +11,15 @@
         <a class="nav-link {% if request.endpoint in _area_endpoints %}active{% endif %}" href="{{ url_for('admin.list_areas') }}" role="tab" {% if request.endpoint in _area_endpoints %}aria-current="page"{% endif %}>Areas</a>
     </li>
     <li class="nav-item" role="presentation">
+        <a class="nav-link {% if request.endpoint in _reservation_endpoints %}active{% endif %}" href="{{ url_for('admin.list_reservations') }}" role="tab" {% if request.endpoint in _reservation_endpoints %}aria-current="page"{% endif %}>Reservations</a>
+    </li>
+    <li class="nav-item" role="presentation">
         <a class="nav-link {% if request.endpoint in _config_endpoints %}active{% endif %}" href="{{ url_for('admin.app_config') }}" role="tab" {% if request.endpoint in _config_endpoints %}aria-current="page"{% endif %}>Config</a>
     </li>
+    {% endif %}
+    {% if current_user.role != 'staff' %}
+    <li class="nav-item" role="presentation">
+        <a class="nav-link {% if request.endpoint in _reservation_endpoints %}active{% endif %}" href="{{ url_for('admin.list_reservations') }}" role="tab" {% if request.endpoint in _reservation_endpoints %}aria-current="page"{% endif %}>Reservations</a>
+    </li>
+    {% endif %}
 </ul>

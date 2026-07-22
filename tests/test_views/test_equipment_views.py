@@ -3,13 +3,16 @@
 import io
 import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from esb.extensions import db as _db
 from esb.models.document import Document
 from esb.models.equipment import Equipment
+from esb.models.equipment_reservation_settings import EquipmentReservationSettings
 from esb.models.equipment_note import EquipmentNote
 from esb.models.external_link import ExternalLink
+from esb.models.reservation import Reservation
+from esb.models.user import User
 
 
 class TestListEquipment:
@@ -514,6 +517,156 @@ class TestEditEquipment:
         resp = client.get('/equipment/1/edit')
         assert resp.status_code == 302
         assert '/auth/login' in resp.headers['Location']
+
+
+class TestEquipmentReservationSettings:
+    """Tests for staff-only equipment reservation settings views."""
+
+    def _data(self, **overrides):
+        values = {
+            'reservations_enabled': 'y',
+            'reservation_slug': 'settings-view-tool',
+            'min_advance_notice_minutes': '120',
+            'max_advance_notice_minutes': str(14 * 24 * 60),
+            'min_duration_minutes': '30',
+            'max_duration_minutes': '120',
+            'slot_granularity_minutes': '30',
+        }
+        values.update(overrides)
+        return values
+
+    def test_staff_can_create_and_update_settings(self, staff_client, make_equipment):
+        equipment = make_equipment('Settings View Tool', 'Co', 'Model')
+
+        get_response = staff_client.get(f'/equipment/{equipment.id}/reservations/settings')
+        post_response = staff_client.post(
+            f'/equipment/{equipment.id}/reservations/settings',
+            data=self._data(),
+            follow_redirects=True,
+        )
+
+        assert get_response.status_code == 200
+        assert b'Reservation Settings' in get_response.data
+        assert post_response.status_code == 200
+        assert b'Reservation settings updated successfully' in post_response.data
+        settings = _db.session.execute(
+            _db.select(EquipmentReservationSettings).filter_by(equipment_id=equipment.id)
+        ).scalar_one()
+        assert settings.reservation_slug == 'settings-view-tool'
+
+    def test_zero_minimum_advance_notice_is_accepted(self, staff_client, make_equipment):
+        equipment = make_equipment('Zero Notice Tool', 'Co', 'Model')
+
+        response = staff_client.post(
+            f'/equipment/{equipment.id}/reservations/settings',
+            data=self._data(
+                reservation_slug='zero-notice-tool',
+                min_advance_notice_minutes='0',
+            ),
+        )
+
+        assert response.status_code == 302
+        settings = _db.session.execute(
+            _db.select(EquipmentReservationSettings).filter_by(equipment_id=equipment.id)
+        ).scalar_one()
+        assert settings.min_advance_notice_minutes == 0
+
+    def test_technician_is_denied(self, tech_client, make_equipment):
+        equipment = make_equipment('Technician Settings Tool', 'Co', 'Model')
+
+        response = tech_client.get(f'/equipment/{equipment.id}/reservations/settings')
+
+        assert response.status_code == 403
+
+    def test_non_privileged_user_is_denied(self, client, make_equipment):
+        equipment = make_equipment('Member Settings Tool', 'Co', 'Model')
+        user = User(
+            username='memberuser',
+            email='memberuser@example.com',
+            role='member',
+        )
+        user.set_password('testpass')
+        _db.session.add(user)
+        _db.session.commit()
+        client.post('/auth/login', data={
+            'username': 'memberuser',
+            'password': 'testpass',
+        })
+
+        response = client.get(f'/equipment/{equipment.id}/reservations/settings')
+
+        assert response.status_code == 403
+
+    def test_invalid_settings_show_field_error(self, staff_client, make_equipment):
+        equipment = make_equipment('Invalid Settings Tool', 'Co', 'Model')
+
+        response = staff_client.post(
+            f'/equipment/{equipment.id}/reservations/settings',
+            data=self._data(min_duration_minutes='45'),
+        )
+
+        assert response.status_code == 200
+        assert b'Minimum reservation duration must align to slot granularity' in response.data
+
+    def test_duplicate_slug_shows_an_inline_error(
+        self, staff_client, make_area, make_equipment,
+    ):
+        area = make_area('Duplicate Slug Area')
+        first = make_equipment('First Slug Tool', 'Co', 'Model', area=area)
+        second = make_equipment('Second Slug Tool', 'Co', 'Model', area=area)
+        data = self._data(reservation_slug='shared-slug')
+
+        first_response = staff_client.post(
+            f'/equipment/{first.id}/reservations/settings', data=data,
+        )
+        response = staff_client.post(
+            f'/equipment/{second.id}/reservations/settings', data=data,
+        )
+
+        assert first_response.status_code == 302
+        assert response.status_code == 200
+        assert b'shared-slug' in response.data
+        assert b'is already in use' in response.data
+
+    def test_archived_equipment_hides_and_rejects_settings(
+        self, staff_client, make_equipment,
+    ):
+        equipment = make_equipment('Archived Settings View Tool', 'Co', 'Model')
+        equipment.is_archived = True
+        _db.session.commit()
+
+        detail_response = staff_client.get(f'/equipment/{equipment.id}')
+        settings_response = staff_client.get(
+            f'/equipment/{equipment.id}/reservations/settings',
+            follow_redirects=True,
+        )
+
+        assert b'Reservation Settings' not in detail_response.data
+        assert b'Cannot configure reservations for archived equipment' in settings_response.data
+
+    def test_detail_and_admin_history_link_staff_to_settings(
+        self, staff_client, staff_user, make_equipment,
+    ):
+        equipment = make_equipment('Linked Settings Tool', 'Co', 'Model')
+        starts_at = datetime.now().replace(second=0, microsecond=0) + timedelta(hours=2)
+        reservation = Reservation(
+            equipment_id=equipment.id,
+            user_id=staff_user.id,
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(hours=1),
+            created_via='admin',
+        )
+        _db.session.add(reservation)
+        _db.session.commit()
+
+        detail_response = staff_client.get(f'/equipment/{equipment.id}')
+        edit_response = staff_client.get(f'/equipment/{equipment.id}/edit')
+        admin_response = staff_client.get('/admin/reservations')
+
+        settings_url = f'/equipment/{equipment.id}/reservations/settings'
+        assert settings_url.encode() in detail_response.data
+        assert settings_url.encode() in edit_response.data
+        assert settings_url.encode() in admin_response.data
 
 
 class TestArchiveEquipment:

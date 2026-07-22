@@ -8,6 +8,7 @@ import pytest
 
 from esb.extensions import db as _db
 from esb.models.pending_notification import PendingNotification
+from esb.models.reservation import Reservation
 from esb.services import notification_service
 from esb.services.notification_service import (
     BACKOFF_SCHEDULE,
@@ -37,6 +38,21 @@ def _create_notification(notification_type='slack_message', target='#test',
     _db.session.add(notification)
     _db.session.commit()
     return notification
+
+
+def _create_member_reservation(equipment, user, *, reservation_type='member'):
+    reservation = Reservation(
+        equipment_id=equipment.id,
+        user_id=user.id if reservation_type == 'member' else None,
+        starts_at=datetime(2026, 6, 15, 15, 0),
+        ends_at=datetime(2026, 6, 15, 16, 0),
+        created_via='admin',
+        reservation_type=reservation_type,
+        notes='Member notification note',
+    )
+    _db.session.add(reservation)
+    _db.session.commit()
+    return reservation
 
 
 class TestQueueNotification:
@@ -271,6 +287,12 @@ class TestProcessNotification:
             process_notification(n)
             mock.assert_called_once_with(n)
 
+    def test_slack_dm_calls_deliver_handler(self, app):
+        n = _create_notification(notification_type='slack_dm')
+        with patch.object(notification_service, '_deliver_slack_dm') as mock:
+            process_notification(n)
+            mock.assert_called_once_with(n)
+
     def test_static_page_push_calls_deliver_handler(self, app):
         """process_notification calls _deliver_static_page_push for static_page_push type."""
         n = _create_notification(notification_type='static_page_push')
@@ -287,6 +309,34 @@ class TestProcessNotification:
                                           'reporter_name': 'User', 'has_safety_risk': False})
         with pytest.raises(RuntimeError, match='SLACK_BOT_TOKEN not configured'):
             notification_service._deliver_slack_message(n)
+
+    def test_reservation_dm_resolves_email_and_posts_to_opened_channel(self, app):
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test'
+        notification = _create_notification(
+            notification_type='slack_dm',
+            target='member@example.com',
+            payload={
+                'event_type': 'reservation_created',
+                'recipient_email': 'member@example.com',
+                'equipment_name': 'Laser Cutter',
+                'area_name': 'Woodshop',
+                'starts_at_label': '2026-06-15 11:00 AM EDT',
+                'ends_at_label': '2026-06-15 12:00 PM EDT',
+                'note': 'Class project',
+                'reservation_url': 'https://esb.example/reservations/',
+            },
+        )
+        with patch('slack_sdk.WebClient') as web_client:
+            client = web_client.return_value
+            client.users_lookupByEmail.return_value = {'user': {'id': 'U123'}}
+            client.conversations_open.return_value = {'channel': {'id': 'D123'}}
+
+            notification_service._deliver_slack_dm(notification)
+
+        client.users_lookupByEmail.assert_called_once_with(email='member@example.com')
+        client.conversations_open.assert_called_once_with(users=['U123'])
+        assert client.chat_postMessage.call_args.kwargs['channel'] == 'D123'
+        assert 'Your reservation was created' in client.chat_postMessage.call_args.kwargs['text']
 
     def test_static_page_push_no_longer_raises_not_implemented(self, app):
         """_deliver_static_page_push no longer raises NotImplementedError."""
@@ -1480,3 +1530,48 @@ class TestRecordIterationTimestamp:
             'BUG: _record_iteration_timestamp raised unexpectedly' in r.getMessage()
             for r in caplog.records
         )
+
+
+class TestReservationNotifications:
+    def test_queues_email_addressed_dm_after_member_mutation(
+        self, app, make_equipment, staff_user,
+    ):
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test'
+        reservation = _create_member_reservation(
+            make_equipment(name='Notification Tool'),
+            staff_user,
+        )
+
+        warning = notification_service.queue_member_reservation_notification(
+            reservation,
+            'reservation_created',
+        )
+
+        notification = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_dm')
+        ).scalar_one()
+        assert warning is None
+        assert notification.target == staff_user.email
+        assert notification.payload['recipient_email'] == staff_user.email
+        assert notification.payload['event_type'] == 'reservation_created'
+        assert notification.payload['starts_at_label'].endswith('EDT')
+        assert notification.payload['note'] == 'Member notification note'
+
+    def test_skips_holds_and_warns_without_slack_configuration(
+        self, app, make_equipment, staff_user,
+    ):
+        equipment = make_equipment(name='Hold Notification Tool')
+        hold = _create_member_reservation(equipment, staff_user, reservation_type='admin_hold')
+        member = _create_member_reservation(equipment, staff_user)
+
+        assert notification_service.queue_member_reservation_notification(
+            hold,
+            'reservation_created',
+        ) is None
+        warning = notification_service.queue_member_reservation_notification(
+            member,
+            'reservation_created',
+        )
+
+        assert 'not configured' in warning
+        assert _db.session.query(PendingNotification).count() == 0
