@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.14"
           allow-prereleases: true
-      - run: pip install ruff
+      - run: pip install ruff==0.9.7
       - run: ruff check esb/ tests/
 
   test:
