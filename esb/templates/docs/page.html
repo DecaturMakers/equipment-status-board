@@ -4,7 +4,15 @@
 
 {% block content %}
 {% include 'docs/_subnav.html' %}
-<div class="docs-content">
-    {{ content|safe }}
+<div class="row g-4 align-items-start">
+    <aside class="col-12 col-lg-3">
+        <nav class="docs-page-toc" aria-label="On this page">
+            <div class="docs-page-toc-title">On this page</div>
+            {{ toc|safe }}
+        </nav>
+    </aside>
+    <div class="col-12 col-lg-9 docs-content">
+        {{ content|safe }}
+    </div>
 </div>
 {% endblock %}

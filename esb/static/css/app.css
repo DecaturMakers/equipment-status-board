@@ -1,5 +1,10 @@
 /* ESB custom styles */
 
+/* Make local debug sessions visually distinct from production. */
+.navbar-local {
+    background-color: #14532d;
+}
+
 /* Kiosk layout. Class is only applied to <body> in base_kiosk.html, so
    this rule is effectively body-scoped. overflow:hidden prevents any
    pre-JS scrollbars or post-JS clipping artifacts.
@@ -173,9 +178,53 @@ th.sortable:hover {
 /* Built-in docs/help site. python-markdown emits bare HTML (no Bootstrap
    classes), so these minimal styles make tables, admonitions, code blocks,
    and images render acceptably under Bootstrap. Scoped under .docs-content. */
+.docs-page-toc {
+    border-left: 3px solid var(--bs-border-color);
+    font-size: 0.9rem;
+    padding: 0.25rem 0 0.25rem 1rem;
+}
+.docs-page-toc-title {
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+.docs-page-toc ul {
+    list-style: none;
+    margin: 0;
+    padding-left: 0;
+}
+.docs-page-toc li + li {
+    margin-top: 0.35rem;
+}
+.docs-page-toc li ul {
+    border-left: 1px solid var(--bs-border-color);
+    margin-top: 0.35rem;
+    padding-left: 0.75rem;
+}
+.docs-page-toc a {
+    color: var(--bs-secondary-color);
+    text-decoration: none;
+}
+.docs-page-toc a:hover,
+.docs-page-toc a:focus {
+    color: var(--bs-link-color);
+    text-decoration: underline;
+}
+@media (min-width: 992px) {
+    .docs-page-toc {
+        max-height: calc(100vh - 6rem);
+        overflow-y: auto;
+        position: sticky;
+        top: 4.5rem;
+    }
+}
 .docs-content img {
     max-width: 100%;
     height: auto;
+}
+.docs-content .docs-screenshot-compact {
+    display: block;
+    margin: 1rem auto;
+    width: min(100%, 640px);
 }
 .docs-content table {
     border-collapse: collapse;

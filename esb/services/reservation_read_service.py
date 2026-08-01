@@ -324,9 +324,9 @@ def get_admin_calendar_data(
     per_page: int = ADMIN_RESERVATION_PAGE_SIZE,
 ) -> AdminCalendarData:
     """Build private calendar data and a paginated administrative history list."""
-    equipment_items = _admin_filtered_equipment(filters)
-    equipment_ids = [equipment.id for equipment in equipment_items]
-    if not equipment_ids:
+    history_equipment = _admin_filtered_equipment(filters)
+    history_equipment_ids = [equipment.id for equipment in history_equipment]
+    if not history_equipment_ids:
         return {
             "startDate": filters.calendar_date.isoformat(),
             "startsOn": filters.starts_on.isoformat(),
@@ -338,9 +338,25 @@ def get_admin_calendar_data(
             "pagination": {"page": 1, "pages": 0, "total": 0, "has_prev": False, "has_next": False},
         }
 
+    # History must retain reservations made before equipment was archived or
+    # reservations were disabled. The default calendar, however, should only
+    # show tools that can currently be reserved. An explicit equipment filter
+    # is an investigation workflow, so it continues to show that one tool.
+    calendar_equipment = [
+        equipment
+        for equipment in history_equipment
+        if filters.equipment_id is not None
+        or (
+            not equipment.is_archived
+            and equipment.reservation_settings is not None
+            and equipment.reservation_settings.reservations_enabled
+        )
+    ]
+    calendar_equipment_ids = [equipment.id for equipment in calendar_equipment]
+
     list_query = _admin_reservation_query(
         filters,
-        equipment_ids,
+        history_equipment_ids,
         filters.starts_on,
         filters.ends_on,
     )
@@ -357,18 +373,20 @@ def get_admin_calendar_data(
         .all()
     )
 
-    calendar_reservations = list(
-        db.session.execute(
-            _admin_reservation_query(
-                filters,
-                equipment_ids,
-                filters.calendar_date,
-                filters.calendar_date,
-            ).order_by(Reservation.starts_at, Reservation.id)
+    calendar_reservations = []
+    if calendar_equipment_ids:
+        calendar_reservations = list(
+            db.session.execute(
+                _admin_reservation_query(
+                    filters,
+                    calendar_equipment_ids,
+                    filters.calendar_date,
+                    filters.calendar_date,
+                ).order_by(Reservation.starts_at, Reservation.id)
+            )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
     calendar_rows = [_serialize_admin_reservation(reservation) for reservation in calendar_reservations]
     list_rows = [_serialize_admin_reservation(reservation) for reservation in list_reservations]
     displayed_ids = {row["id"] for row in calendar_rows + list_rows}
@@ -391,7 +409,7 @@ def get_admin_calendar_data(
         "startDate": filters.calendar_date.isoformat(),
         "startsOn": filters.starts_on.isoformat(),
         "endsOn": filters.ends_on.isoformat(),
-        "columns": [_serialize_admin_equipment(equipment) for equipment in equipment_items],
+        "columns": [_serialize_admin_equipment(equipment) for equipment in calendar_equipment],
         "events": [_serialize_admin_calendar_event(row) for row in calendar_rows],
         "details": details,
         "reservations": list_rows,

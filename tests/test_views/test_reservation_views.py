@@ -1,5 +1,6 @@
 """Tests for reservation calendar views."""
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from esb.extensions import db
@@ -69,8 +70,12 @@ class TestReservationCalendarView:
         assert 'reservation-calendar-data' in html
         assert 'Laser Cutter' in html
         assert 'Reserved' in html
-        assert staff_user.display_name not in html
-        assert 'private note' not in html
+        calendar_json = re.search(
+            r'<script type="application/json" id="reservation-calendar-data">(.*?)</script>',
+            html,
+        ).group(1)
+        assert staff_user.display_name not in calendar_json
+        assert 'private note' not in calendar_json
         assert ordinary.name not in html
 
     def test_nav_links_to_reservations(self, staff_client):
@@ -78,6 +83,21 @@ class TestReservationCalendarView:
 
         assert response.status_code == 200
         assert 'href="/reservations/"' in response.data.decode()
+
+    def test_authenticated_calendar_uses_navbar_and_marks_reservations_active(self, app, staff_client):
+        response = staff_client.get('/reservations/')
+
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert '<nav class="navbar ' in html
+        assert 'navbar-local' not in html
+        assert 'bg-dark' in html
+        assert re.search(r'class="nav-link active"\s+href="/reservations/"', html)
+
+        app.config['DEBUG'] = True
+        local_html = staff_client.get('/reservations/').data.decode()
+        assert 'navbar-local' in local_html
+        assert 'bg-dark' not in local_html
 
     def test_empty_state_when_no_reservable_tools(self, staff_client):
         response = staff_client.get('/reservations/')

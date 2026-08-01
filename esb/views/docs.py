@@ -15,11 +15,12 @@ def index():
     """Docs home (the index guide)."""
     from esb.services import docs_service
 
-    title, html = docs_service.render_page('index')
+    title, html, toc_html = docs_service.render_page('index')
     return render_template(
         'docs/page.html',
         title=title,
         content=html,
+        toc=toc_html,
         nav_pages=docs_service.nav_pages(),
         current_slug='index',
     )
@@ -59,12 +60,13 @@ def page(slug):
     if slug not in docs_service.DOC_PAGES:
         abort(404)
 
-    title, html = docs_service.render_page(slug)
+    title, html, toc_html = docs_service.render_page(slug)
 
     return render_template(
         'docs/page.html',
         title=title,
         content=html,
+        toc=toc_html,
         nav_pages=docs_service.nav_pages(),
         current_slug=slug,
     )

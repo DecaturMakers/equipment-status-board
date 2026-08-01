@@ -10,7 +10,7 @@
     {% if newrelic_browser_header is defined %}{{ newrelic_browser_header|safe }}{% endif %}
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top">
+    <nav class="navbar navbar-expand-lg navbar-dark {% if config.DEBUG %}navbar-local{% else %}bg-dark{% endif %} sticky-top">
         <div class="container-fluid">
             <a class="navbar-brand" href="/">ESB</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">

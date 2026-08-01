@@ -9,13 +9,14 @@ import pytest
 from esb import create_app
 from esb.services import docs_service
 
-# All five served guide slugs plus the about page.
-GUIDE_SLUGS = ['index', 'members', 'technicians', 'staff', 'administrators']
+# All six served guide slugs plus the about page.
+GUIDE_SLUGS = ['index', 'members', 'technicians', 'staff', 'reservations', 'administrators']
 GUIDE_PATHS = {
     'index': '/docs/',
     'members': '/docs/members',
     'technicians': '/docs/technicians',
     'staff': '/docs/staff',
+    'reservations': '/docs/reservations',
     'administrators': '/docs/administrators',
 }
 ALL_ROUTES = list(GUIDE_PATHS.values()) + ['/docs/about']
@@ -84,6 +85,41 @@ class TestDocsRendering:
         html = client.get('/docs/members').data.decode()
         assert '<img' in html
 
+    def test_page_toc_is_generated_from_document_headings(self, client):
+        html = client.get('/docs/reservations').data.decode()
+        assert 'aria-label="On this page"' in html
+        toc_html = html.split('<nav class="docs-page-toc"', 1)[1].split('</nav>', 1)[0]
+        assert 'href="#reservations-guide"' not in toc_html
+        for fragment in (
+            'view-the-reservation-calendar',
+            'manage-reservations',
+            'configure-reservation-policies',
+        ):
+            assert f'href="#{fragment}"' in html
+            assert f'id="{fragment}"' in html
+
+    def test_about_page_does_not_show_page_toc(self, client):
+        html = client.get('/docs/about').data.decode()
+        assert 'aria-label="On this page"' not in html
+
+    def test_debug_mode_bypasses_stale_page_cache(self, app):
+        app.config['DEBUG'] = True
+        app.config.update(SLACK_ON)
+        app.extensions['docs_cache'] = {
+            ('page', 'reservations'): ('Stale title', 'Stale content', 'Stale TOC'),
+        }
+
+        with app.app_context():
+            title, content, toc = docs_service.render_page('reservations')
+
+        assert title == 'Reservations Guide'
+        assert '/docs/images/reservations-slack-form.png' in content
+        assert '/docs/images/reservations-cancel-form.png' in content
+        assert content.count('class="docs-screenshot-compact"') == 2
+        assert 'View the Reservation Calendar' in content
+        assert 'view-the-reservation-calendar' in toc
+        assert app.extensions['docs_cache'][('page', 'reservations')][0] == 'Stale title'
+
 
 class TestDocsAnchors:
     """Intra-page fragment links resolve to an id in the same document (toc)."""
@@ -133,7 +169,7 @@ class TestDocsSubnav:
     def test_subnav_links_all_pages(self, client, path):
         html = client.get(path).data.decode()
         assert 'href="/docs/"' in html
-        for slug in ['members', 'technicians', 'staff', 'administrators']:
+        for slug in ['members', 'technicians', 'staff', 'reservations', 'administrators']:
             assert f'href="/docs/{slug}"' in html
         assert 'href="/docs/about"' in html
 
@@ -198,6 +234,10 @@ class TestDocsFeatureGating:
         assert '/esb-repair' not in _render('index', {})
         assert '/esb-repair' in _render('index', SLACK_ON)
 
+    def test_reservation_slack_flows_gated(self):
+        assert '/esb-reserve' not in _render('reservations', {})
+        assert '/esb-reserve' in _render('reservations', SLACK_ON)
+
     def test_qr_section_hidden_when_base_url_unset(self):
         assert 'Using QR Code Equipment Pages' not in _render('members', {})
 
@@ -223,6 +263,10 @@ class TestDocsValueSubstitution:
     def test_base_url_fallback_phrase_when_unset(self):
         html = _render('members', {})
         assert 'the Equipment Status Board URL provided by your makerspace' in html
+
+    def test_reservations_guide_links_to_same_origin_calendar(self):
+        html = _render('reservations', {})
+        assert 'href="/reservations/"' in html
 
     def test_static_page_url_rendered(self):
         assert 'https://status.example.com/' in _render('members', STATIC_ON)

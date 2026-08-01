@@ -192,6 +192,12 @@ cython_debug/
 uploads/
 .local/
 
+# Local OpenSpec planning workspace
+openspec/
+
+# Local Codex workspace
+.codex/
+
 # Ruff stuff:
 .ruff_cache/
 

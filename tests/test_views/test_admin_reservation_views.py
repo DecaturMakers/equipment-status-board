@@ -1,5 +1,6 @@
 """Tests for administrative reservation views."""
 
+import json
 import re
 from datetime import UTC, date, datetime, time, timedelta
 
@@ -151,7 +152,7 @@ class TestAdminReservations:
         assert b"Ignoring invalid reservation area filter" in resp.data
         assert b"Ignoring invalid reservation page" in resp.data
 
-    def test_archived_and_disabled_equipment_history_remains_visible(
+    def test_archived_and_disabled_equipment_history_remains_visible_but_is_not_in_default_calendar(
         self,
         staff_client,
         tech_user,
@@ -175,6 +176,12 @@ class TestAdminReservations:
         assert b"disabled history" in resp.data
         assert b"Archived" in resp.data
         assert b"Disabled" in resp.data
+        calendar_json = re.search(
+            r'<script type="application/json" id="admin-reservation-calendar-data">(.*?)</script>',
+            resp.data.decode(),
+        ).group(1)
+        calendar_data = json.loads(calendar_json)
+        assert calendar_data["columns"] == []
 
     def test_history_is_paginated_and_calendar_navigation_preserves_filters(
         self,

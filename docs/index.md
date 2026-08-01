@@ -28,6 +28,10 @@ A large-screen display mode designed for wall-mounted monitors or projectors in 
 
 A lightweight status page that can be hosted externally (e.g., on S3) for checking equipment status from anywhere, even outside the local network.
 
+### Equipment Reservations
+
+View reservable equipment on the reservation calendar. Members can create and manage their own reservations from Slack, technicians can manage reservations, and staff can configure equipment policies. See the [Reservations Guide](reservations.md).
+
 {% if slack_enabled %}
 ### Slack Integration
 
@@ -65,6 +69,7 @@ This documentation is organized by role. Find the guide that matches how you use
 - **[Members Guide](members.md)** — For anyone using the makerspace. Learn how to check equipment status, scan QR codes, and report problems. No account needed.
 - **[Technicians Guide](technicians.md)** — For volunteer repair technicians. Learn how to work the repair queue, manage repair records, and use Slack commands.
 - **[Staff Guide](staff.md)** — For makerspace managers. Learn how to use the Kanban board, manage equipment and users, and configure the system.
+- **[Reservations Guide](reservations.md)** — For members reserving equipment and the technicians or staff who manage reservations and policies.
 - **[Administrators Guide](administrators.md)** — For technical volunteers deploying and maintaining the system. Covers Docker deployment, environment configuration, Slack App setup, and ongoing maintenance.
 
 ## Understanding Status Colors
