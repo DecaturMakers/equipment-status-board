@@ -85,6 +85,31 @@ class TestPublicCalendarData:
 
 
 class TestAdminReservationReadModelQueries:
+    def test_default_calendar_includes_only_reservable_equipment(
+        self,
+        app,
+        make_area,
+        make_equipment,
+    ):
+        area = make_area(name="Calendar Scope Area")
+        reservable_names = []
+        for number in range(10):
+            equipment = make_equipment(name=f"Reservable Tool {number:02d}", area=area)
+            _settings(equipment, slug=f"reservable-tool-{number}")
+            reservable_names.append(equipment.name)
+        for number in range(10):
+            make_equipment(name=f"Ordinary Tool {number:02d}", area=area)
+
+        filters = reservation_read_service.AdminReservationFilters(
+            starts_on=datetime(2026, 6, 15).date(),
+            ends_on=datetime(2026, 6, 15).date(),
+            calendar_date=datetime(2026, 6, 15).date(),
+        )
+
+        data = reservation_read_service.get_admin_calendar_data(filters=filters)
+
+        assert [column["name"] for column in data["columns"]] == reservable_names
+
     def test_calendar_and_history_use_a_bounded_query_count(
         self,
         app,

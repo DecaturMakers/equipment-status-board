@@ -37,9 +37,9 @@ docs-relevant ``AppConfig`` key changes, the admin config view calls
 serving stale HTML.
 
 Supported markdown extensions (runtime): ``tables``, ``fenced_code``,
-``admonition``, ``toc`` — the only features the five guides use today.
+``admonition``, ``toc``, ``attr_list`` — the only features the six guides use today.
 ``mkdocs.yml`` additionally enables ``pymdownx.details``,
-``pymdownx.superfences``, ``attr_list``, ``md_in_html`` which this renderer does
+``pymdownx.superfences``, ``md_in_html`` which this renderer does
 NOT support: a future doc edit adopting them would build green on GH Pages but
 render as literal text here. Align the extension sets (or add
 ``pymdown-extensions`` at runtime) if/when that happens.
@@ -71,6 +71,7 @@ DOC_PAGES = OrderedDict([
     ('members', {'file': 'members.md', 'title': 'Members Guide'}),
     ('technicians', {'file': 'technicians.md', 'title': 'Technicians Guide'}),
     ('staff', {'file': 'staff.md', 'title': 'Staff Guide'}),
+    ('reservations', {'file': 'reservations.md', 'title': 'Reservations Guide'}),
     ('administrators', {'file': 'administrators.md', 'title': 'Administrators Guide'}),
 ])
 
@@ -81,10 +82,10 @@ ISSUES_URL = GITHUB_URL + '/issues'
 LICENSE_NAME = 'MIT'
 LICENSE_URL = GITHUB_URL + '/blob/main/LICENSE'
 
-MARKDOWN_EXTENSIONS = ['tables', 'fenced_code', 'admonition', 'toc']
+MARKDOWN_EXTENSIONS = ['tables', 'fenced_code', 'admonition', 'toc', 'attr_list']
 
 # Matches inter-doc markdown links to a served page, e.g. ``(members.md)`` or
-# ``(staff.md#anchor)``. Only the five served page names are rewritten — no
+# ``(staff.md#anchor)``. Only the six served page names are rewritten — no
 # guide links to a non-served .md file (the no-.md-href test guards future
 # cases).
 _SERVED_PAGE_NAMES = [meta['file'] for meta in DOC_PAGES.values()]
@@ -168,6 +169,10 @@ def get_placeholder_values():
         # Human-friendly fallback so an unset base URL never renders a broken
         # sentence ("Navigate to  in your browser").
         'base_url_display': base_url or 'the Equipment Status Board URL provided by your makerspace',
+        # Same-origin route so links from the built-in help site preserve the
+        # authenticated session even when local access uses 127.0.0.1 instead
+        # of the configured localhost base URL.
+        'reservation_url': '/reservations/',
         'static_page_url': static_page_url,
         'wifi_ssid': wifi_ssid,
         'org_name': cfg.get('ORG_NAME', ''),
@@ -225,7 +230,7 @@ def _rewrite_links(text):
 
 
 def render_page(slug):
-    """Render a docs page, returning ``(title, html)``.
+    """Render a docs page, returning ``(title, html, toc_html)``.
 
     Raises ``KeyError`` for a slug not in ``DOC_PAGES`` (→ 404 in the view). A
     slug that IS in ``DOC_PAGES`` but whose file is missing/unreadable lets the
@@ -244,7 +249,10 @@ def render_page(slug):
     # Atomic single-dict lookup: invalidate_page_cache() may swap the cache dict
     # out concurrently, so a check-then-index would risk a KeyError. dict.get()
     # is atomic under the GIL and a miss simply re-renders.
-    cached = cache.get(cache_key)
+    # Local documentation changes should appear on refresh without requiring a
+    # server restart. Production keeps the per-process cache because its docs
+    # source and configuration are fixed for the lifetime of a deployment.
+    cached = None if current_app.debug else cache.get(cache_key)
     if cached is not None:
         return cached
 
@@ -261,11 +269,18 @@ def render_page(slug):
     # (2) rewrite inter-doc links and image refs in the markdown source.
     text = _rewrite_links(text)
 
-    # (3) convert markdown → HTML.
-    html = markdown.markdown(text, extensions=MARKDOWN_EXTENSIONS)
+    # (3) convert markdown → HTML and retain the TOC generated from the same
+    # heading pass so the built-in help navigation cannot drift from content.
+    renderer = markdown.Markdown(
+        extensions=MARKDOWN_EXTENSIONS,
+        extension_configs={'toc': {'toc_depth': '2-3'}},
+    )
+    html = renderer.convert(text)
+    toc_html = renderer.toc
 
-    result = (title, html)
-    cache[cache_key] = result
+    result = (title, html, toc_html)
+    if not current_app.debug:
+        cache[cache_key] = result
     return result
 
 

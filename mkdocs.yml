@@ -20,6 +20,7 @@ nav:
   - Members Guide: members.md
   - Technicians Guide: technicians.md
   - Staff Guide: staff.md
+  - Reservations Guide: reservations.md
   - Administrators Guide: administrators.md
 
 # Adding a `plugins:` key disables the implicit default `search` plugin, so it
@@ -43,6 +44,7 @@ extra:
   oops_channel: '#oops'
   base_url: ''
   base_url_display: 'the Equipment Status Board URL provided by your makerspace'
+  reservation_url: ''
   static_page_url: ''
   wifi_ssid: ''
   org_name: 'Decatur Makers'

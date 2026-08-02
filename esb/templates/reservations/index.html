@@ -1,4 +1,4 @@
-{% extends "base_public.html" %}
+{% extends "base.html" if current_user.is_authenticated else "base_public.html" %}
 
 {% block title %}Reservations - Equipment Status Board{% endblock %}
 

@@ -6,6 +6,8 @@
 
 A web application for tracking equipment status and coordinating repairs at community makerspaces, originally developed for [Decatur Makers](https://decaturmakers.org). Provides a single source of truth so members know what's working, technicians know what needs fixing, and staff can coordinate it all.
 
+At Decatur Makers, ESB is available from the space or while connected to the VPN at [http://esb.decaturmakers.org:8000](http://esb.decaturmakers.org:8000).
+
 ## Features
 
 - **Equipment Registry & Status Tracking** — Maintain a registry of all equipment organized by area, with live green/yellow/red status derived from open repair records
@@ -40,6 +42,7 @@ Full user guides and administrator documentation are available at:
 - [Members Guide](https://decaturmakers.github.io/equipment-status-board/members/) — Checking status, scanning QR codes, reporting problems
 - [Technicians Guide](https://decaturmakers.github.io/equipment-status-board/technicians/) — Repair queue, managing repairs, Slack commands
 - [Staff Guide](https://decaturmakers.github.io/equipment-status-board/staff/) — Kanban board, equipment management, user administration
+- [Reservations Guide](https://decaturmakers.github.io/equipment-status-board/reservations/) — Equipment availability, reservations, administrative holds, and reservation policies
 - [Administrators Guide](https://decaturmakers.github.io/equipment-status-board/administrators/) — Deployment, configuration, Slack setup, maintenance
 
 ## MAC (Machine Access Control) Integration
