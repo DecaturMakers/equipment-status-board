@@ -6,8 +6,6 @@
 
 A web application for tracking equipment status and coordinating repairs at community makerspaces, originally developed for [Decatur Makers](https://decaturmakers.org). Provides a single source of truth so members know what's working, technicians know what needs fixing, and staff can coordinate it all.
 
-At Decatur Makers, ESB is available from the space or while connected to the VPN at [http://esb.decaturmakers.org:8000](http://esb.decaturmakers.org:8000).
-
 ## Features
 
 - **Equipment Registry & Status Tracking** — Maintain a registry of all equipment organized by area, with live green/yellow/red status derived from open repair records
