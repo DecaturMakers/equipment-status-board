@@ -625,37 +625,6 @@ docker compose up -d
 docker compose exec app flask db upgrade
 ```
 
-### Decatur Makers Production Deployment
-
-Decatur Makers deploys ESB through [dm-puppet](https://github.com/DecaturMakers/dm-puppet). Production changes should be made and reviewed there rather than applied directly to the host.
-
-1. Update the version in this repository's `pyproject.toml`, complete the normal review and release process, and confirm that the versioned container image was published.
-2. In `dm-puppet`, update the pinned ESB image tag in `modules/local/dmpuppet/manifests/internals/esb.pp` and merge the change through its normal review process.
-3. Connect to the makerspace WireGuard VPN and SSH to `palantir.decaturmakers.org`.
-4. Preview the Puppet change and confirm that the output matches the intended deployment:
-
-   ```bash
-   sudo /root/bin/run_r10k_puppet.sh --noop
-   ```
-
-5. Apply the reviewed change:
-
-   ```bash
-   sudo /root/bin/run_r10k_puppet.sh
-   ```
-
-6. Apply outstanding database migrations:
-
-   ```bash
-   sudo docker exec esb flask db upgrade
-   ```
-
-7. Confirm that the web app and worker are healthy, review recent logs, smoke-test the changed path, and check Slack and monitoring for new errors.
-
-To roll back, restore the previous pinned image tag in `dm-puppet`, preview and apply the Puppet change again, and repeat the health checks. Database migrations are not assumed reversible, so confirm that the current schema is compatible before rolling back the image.
-
-See [dm-puppet](https://github.com/DecaturMakers/dm-puppet) and [dm-network-docs](https://github.com/DecaturMakers/dm-network-docs) for infrastructure-specific details.
-
 ### Monitoring the Worker
 
 The background worker processes pending notifications every 30 seconds. It includes retry logic with backoff for failed deliveries. Check the worker logs for:
