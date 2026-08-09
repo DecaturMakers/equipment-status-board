@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TypedDict
 
+from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
 from esb.extensions import db
@@ -138,20 +139,33 @@ def get_admin_reservation_creation_options() -> dict[str, list]:
     }
 
 
-def get_user_reservation(reservation_id: int, user_id: int) -> Reservation | None:
-    """Return a reservation only when it belongs to the given user."""
+def get_user_reservation(
+    reservation_id: int,
+    user_id: int | None,
+    slack_user_id: str | None = None,
+) -> Reservation | None:
+    """Return a reservation only when either supplied identity owns it."""
+    owner_filters = _owner_filters(user_id, slack_user_id)
+    if not owner_filters:
+        return None
     return db.session.execute(
-        db.select(Reservation).filter_by(id=reservation_id, user_id=user_id)
+        db.select(Reservation).filter(Reservation.id == reservation_id, or_(*owner_filters))
     ).scalar_one_or_none()
 
 
-def list_user_upcoming_reservations(user_id: int) -> list[Reservation]:
-    """Return a user's active reservations that have not ended yet."""
+def list_user_upcoming_reservations(
+    user_id: int | None,
+    slack_user_id: str | None = None,
+) -> list[Reservation]:
+    """Return active future reservations owned by either supplied identity."""
+    owner_filters = _owner_filters(user_id, slack_user_id)
+    if not owner_filters:
+        return []
     return list(
         db.session.execute(
             db.select(Reservation)
             .filter(
-                Reservation.user_id == user_id,
+                or_(*owner_filters),
                 Reservation.status == ACTIVE_STATUS,
                 Reservation.ends_at > _utc_now(),
             )
@@ -160,6 +174,15 @@ def list_user_upcoming_reservations(user_id: int) -> list[Reservation]:
         .scalars()
         .all()
     )
+
+
+def _owner_filters(user_id: int | None, slack_user_id: str | None) -> list:
+    filters = []
+    if user_id is not None:
+        filters.append(Reservation.user_id == user_id)
+    if slack_user_id:
+        filters.append(Reservation.slack_user_id == slack_user_id)
+    return filters
 
 
 def get_admin_reservation(reservation_id: int) -> Reservation:
@@ -557,7 +580,7 @@ def _serialize_admin_reservation(reservation: Reservation) -> AdminReservationRo
     ends_local = utc_naive_to_local(reservation.ends_at)
     equipment = reservation.equipment
     settings = equipment.reservation_settings if equipment else None
-    owner = reservation.user.display_name if reservation.user else "Admin Hold"
+    owner = reservation.owner_display_name
     equipment_name = equipment.name if equipment else f"Equipment {reservation.equipment_id}"
     note = reservation.notes or ""
     calendar_label = f"{equipment_name}: {owner}"
@@ -578,8 +601,16 @@ def _serialize_admin_reservation(reservation: Reservation) -> AdminReservationRo
         "ends_at_label": _format_local_datetime_label(ends_local),
         "status": reservation.status,
         "created_via": reservation.created_via,
-        "created_by": reservation.created_by_user.display_name if reservation.created_by_user else "",
-        "canceled_by": reservation.canceled_by_user.display_name if reservation.canceled_by_user else "",
+        "created_by": (
+            reservation.created_by_user.display_name
+            if reservation.created_by_user
+            else owner if reservation.created_via == "slack" else ""
+        ),
+        "canceled_by": (
+            reservation.canceled_by_user.display_name
+            if reservation.canceled_by_user
+            else owner if reservation.status == CANCELED_STATUS and reservation.is_slack_owned else ""
+        ),
         "replaces_reservation_id": reservation.replaces_reservation_id,
         "replaces_label": (
             f"Reservation #{reservation.replaces_reservation_id}" if reservation.replaces_reservation_id else ""

@@ -34,30 +34,36 @@ def create_reservation(
     created_via: str,
     *,
     actor_user_id: int | None = None,
+    owner_slack_user_id: str | None = None,
+    owner_slack_display_name: str | None = None,
     reservation_type: str = RESERVATION_TYPE_MEMBER,
     overridden_policy_codes: list[str] | tuple[str, ...] | None = None,
     commit: bool = True,
 ) -> Reservation:
     """Validate and persist a reservation.
 
-    ``actor_user_id`` controls policy privileges; ``owner_user_id`` is the
-    member the reservation belongs to. Callers creating a larger transaction
+    ``actor_user_id`` controls policy privileges. A member reservation belongs
+    to either an ESB user or a Slack user. Callers creating a larger transaction
     can pass ``commit=False`` and commit or roll back the session themselves.
     """
     if created_via not in RESERVATION_CREATED_VIA:
         raise ValidationError(f"Invalid reservation source: {created_via!r}")
 
+    owner_slack_user_id = (owner_slack_user_id or "").strip() or None
+    owner_slack_display_name = (owner_slack_display_name or "").strip() or None
     _validate_reservation_shape(
         reservation_type=reservation_type,
         owner_user_id=owner_user_id,
+        owner_slack_user_id=owner_slack_user_id,
+        owner_slack_display_name=owner_slack_display_name,
         starts_at=None,
         ends_at=None,
     )
     owner = _get_user(owner_user_id, label="owner") if owner_user_id is not None else None
     if actor_user_id is None:
-        if owner is None:
+        if owner is None and owner_slack_user_id is None:
             raise ValidationError("Reservation actor is required for an admin hold")
-        actor_user_id = owner.id
+        actor_user_id = owner.id if owner is not None else None
     validated = validate_reservation_request(
         equipment_id=equipment_id,
         starts_at_utc=starts_at_utc,
@@ -67,6 +73,8 @@ def create_reservation(
     reservation = persist_reservation(
         validated=validated,
         owner_user_id=owner.id if owner is not None else None,
+        owner_slack_user_id=owner_slack_user_id,
+        owner_slack_display_name=owner_slack_display_name,
         notes=notes,
         created_via=created_via,
         reservation_type=reservation_type,
@@ -75,7 +83,8 @@ def create_reservation(
         commit=commit,
     )
     if commit:
-        _log_reservation_created(reservation, _get_user(actor_user_id, label="actor"))
+        actor = _get_user(actor_user_id, label="actor") if actor_user_id is not None else None
+        _log_reservation_created(reservation, actor)
     return reservation
 
 
@@ -91,8 +100,20 @@ def preview_admin_reservation(
     exclude_reservation_id: int | None = None,
 ) -> reservation_policy.ReservationValidationResult:
     """Validate an admin form without taking a lock or writing a reservation."""
+    owner_slack_user_id = None
+    owner_slack_display_name = None
+    if exclude_reservation_id is not None:
+        original = _get_reservation(exclude_reservation_id, for_update=False)
+        if original.is_slack_owned:
+            owner_user_id = None
+            owner_slack_user_id = original.slack_user_id
+            owner_slack_display_name = original.slack_display_name
+            reservation_type = RESERVATION_TYPE_MEMBER
+
     _validate_admin_reservation_request(
         owner_user_id=owner_user_id,
+        owner_slack_user_id=owner_slack_user_id,
+        owner_slack_display_name=owner_slack_display_name,
         notes=notes,
         reservation_type=reservation_type,
     )
@@ -180,8 +201,18 @@ def _persist_admin_reservation(
         if original.status == CANCELED_STATUS:
             raise ValidationError("Reservation is already canceled")
 
+    owner_slack_user_id = None
+    owner_slack_display_name = None
+    if original and original.is_slack_owned:
+        owner_slack_user_id = original.slack_user_id
+        owner_slack_display_name = original.slack_display_name
+        owner_user_id = None
+        reservation_type = RESERVATION_TYPE_MEMBER
+
     _validate_admin_reservation_request(
         owner_user_id=owner_user_id,
+        owner_slack_user_id=owner_slack_user_id,
+        owner_slack_display_name=owner_slack_display_name,
         notes=notes,
         reservation_type=reservation_type,
     )
@@ -205,6 +236,8 @@ def _persist_admin_reservation(
     reservation = persist_reservation(
         validated=result.validated,
         owner_user_id=owner_user_id,
+        owner_slack_user_id=owner_slack_user_id,
+        owner_slack_display_name=owner_slack_display_name,
         notes=notes,
         created_via="admin",
         reservation_type=reservation_type,
@@ -244,7 +277,7 @@ def validate_reservation_request(
     equipment_id: int,
     starts_at_utc: datetime,
     duration_minutes: int,
-    actor_user_id: int,
+    actor_user_id: int | None,
 ) -> reservation_policy.ValidatedReservation:
     """Validate a proposed reservation without persisting one.
 
@@ -271,7 +304,7 @@ def evaluate_reservation_request(
     equipment_id: int,
     starts_at_utc: datetime,
     duration_minutes: int,
-    actor_user_id: int,
+    actor_user_id: int | None,
     lock_equipment: bool = False,
     exclude_reservation_id: int | None = None,
 ) -> reservation_policy.ReservationValidationResult:
@@ -282,8 +315,8 @@ def evaluate_reservation_request(
     should use the default unlocked query; persistence callers should request a
     lock and revalidate in the transaction that writes the reservation.
     """
-    actor = _get_user(actor_user_id, label="actor")
-    can_override_policy = actor.role in reservation_policy.RESERVATION_POLICY_OVERRIDE_ROLES
+    actor = _get_user(actor_user_id, label="actor") if actor_user_id is not None else None
+    can_override_policy = bool(actor and actor.role in reservation_policy.RESERVATION_POLICY_OVERRIDE_ROLES)
     equipment = _get_equipment(equipment_id, for_update=lock_equipment)
     starts_at = to_utc_naive(starts_at_utc)
     ends_at = starts_at + timedelta(minutes=duration_minutes)
@@ -312,6 +345,8 @@ def persist_reservation(
     *,
     validated: reservation_policy.ValidatedReservation,
     owner_user_id: int | None,
+    owner_slack_user_id: str | None = None,
+    owner_slack_display_name: str | None = None,
     notes: str | None,
     created_via: str,
     reservation_type: str = RESERVATION_TYPE_MEMBER,
@@ -328,9 +363,13 @@ def persist_reservation(
     if created_via not in RESERVATION_CREATED_VIA:
         raise ValidationError(f"Invalid reservation source: {created_via!r}")
 
+    owner_slack_user_id = (owner_slack_user_id or "").strip() or None
+    owner_slack_display_name = (owner_slack_display_name or "").strip() or None
     _validate_reservation_shape(
         reservation_type=reservation_type,
         owner_user_id=owner_user_id,
+        owner_slack_user_id=owner_slack_user_id,
+        owner_slack_display_name=owner_slack_display_name,
         starts_at=validated.starts_at,
         ends_at=validated.ends_at,
     )
@@ -344,6 +383,8 @@ def persist_reservation(
     reservation = Reservation(
         equipment_id=validated.equipment_id,
         user_id=owner.id if owner is not None else None,
+        slack_user_id=owner_slack_user_id,
+        slack_display_name=owner_slack_display_name,
         starts_at=validated.starts_at,
         ends_at=validated.ends_at,
         notes=(notes or "").strip() or None,
@@ -362,8 +403,10 @@ def persist_reservation(
 
 def cancel_reservation(
     reservation_id: int,
-    actor_user_id: int,
+    actor_user_id: int | None,
     *,
+    actor_slack_user_id: str | None = None,
+    require_owner: bool = False,
     commit: bool = True,
 ) -> Reservation:
     """Cancel an active reservation while preserving history.
@@ -373,19 +416,26 @@ def cancel_reservation(
     """
     reservation = _get_reservation(reservation_id, for_update=True)
 
-    actor = _get_user(actor_user_id, label="actor")
+    actor = _get_user(actor_user_id, label="actor") if actor_user_id is not None else None
+    if actor is None and not actor_slack_user_id:
+        raise ValidationError("Reservation cancellation actor is required")
+    if require_owner and not (
+        (actor is not None and reservation.user_id == actor.id)
+        or (actor_slack_user_id and reservation.slack_user_id == actor_slack_user_id)
+    ):
+        raise ValidationError("That reservation is no longer available to cancel")
 
     if reservation.status == CANCELED_STATUS:
         raise ValidationError("Reservation is already canceled")
 
     reservation.status = CANCELED_STATUS
     reservation.canceled_at = _utc_now()
-    reservation.canceled_by_user_id = actor.id
+    reservation.canceled_by_user_id = actor.id if actor is not None else None
     if commit:
         db.session.commit()
         log_mutation(
             "reservation.status_changed",
-            actor.username,
+            actor.username if actor is not None else actor_slack_user_id,
             {
                 "reservation_id": reservation.id,
                 "equipment_id": reservation.equipment_id,
@@ -437,6 +487,8 @@ def _get_user(user_id: int, *, label: str) -> User:
 def _validate_admin_reservation_request(
     *,
     owner_user_id: int | None,
+    owner_slack_user_id: str | None = None,
+    owner_slack_display_name: str | None = None,
     notes: str,
     reservation_type: str,
 ) -> None:
@@ -444,6 +496,8 @@ def _validate_admin_reservation_request(
     _validate_reservation_shape(
         reservation_type=reservation_type,
         owner_user_id=owner_user_id,
+        owner_slack_user_id=owner_slack_user_id,
+        owner_slack_display_name=owner_slack_display_name,
         starts_at=None,
         ends_at=None,
     )
@@ -461,15 +515,16 @@ def _require_admin_reservation_actor(result: reservation_policy.ReservationValid
         raise ValidationError("Admin reservations require a staff or technician actor")
 
 
-def _log_reservation_created(reservation: Reservation, actor: User) -> None:
+def _log_reservation_created(reservation: Reservation, actor: User | None) -> None:
     """Write a privacy-conscious structured log after a committed creation."""
     log_mutation(
         "reservation.created",
-        actor.username,
+        actor.username if actor is not None else reservation.slack_user_id,
         {
             "reservation_id": reservation.id,
             "equipment_id": reservation.equipment_id,
             "owner_user_id": reservation.user_id,
+            "owner_slack_user_id": reservation.slack_user_id,
             "reservation_type": reservation.reservation_type,
             "created_via": reservation.created_via,
             "overridden_policy_codes": reservation.overridden_policy_codes or [],
@@ -481,14 +536,24 @@ def _validate_reservation_shape(
     *,
     reservation_type: str,
     owner_user_id: int | None,
+    owner_slack_user_id: str | None = None,
+    owner_slack_display_name: str | None = None,
     starts_at: datetime | None,
     ends_at: datetime | None,
 ) -> None:
     if reservation_type not in RESERVATION_TYPES:
         raise ValidationError(f"Invalid reservation type: {reservation_type!r}")
-    if reservation_type == RESERVATION_TYPE_MEMBER and owner_user_id is None:
+    has_user_owner = owner_user_id is not None
+    has_slack_owner = owner_slack_user_id is not None or owner_slack_display_name is not None
+    if has_slack_owner and not (
+        (owner_slack_user_id or "").strip() and (owner_slack_display_name or "").strip()
+    ):
+        raise ValidationError("Slack reservations require a user ID and display name")
+    if reservation_type == RESERVATION_TYPE_MEMBER and not (has_user_owner or has_slack_owner):
         raise ValidationError("Member reservations require an owner")
-    if reservation_type == RESERVATION_TYPE_ADMIN_HOLD and owner_user_id is not None:
+    if reservation_type == RESERVATION_TYPE_MEMBER and has_user_owner and has_slack_owner:
+        raise ValidationError("Member reservations require exactly one owner")
+    if reservation_type == RESERVATION_TYPE_ADMIN_HOLD and (has_user_owner or has_slack_owner):
         raise ValidationError("Admin holds cannot have an owner")
     if starts_at is not None and ends_at is not None and ends_at <= starts_at:
         raise ValidationError("Reservation end must be after start")

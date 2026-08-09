@@ -5,12 +5,13 @@ from flask import current_app
 
 def deliver_direct_message(
     *,
-    recipient_email: str,
     text: str,
     timeout: int,
+    recipient_email: str | None = None,
+    recipient_slack_user_id: str | None = None,
     client_factory=None,
 ) -> None:
-    """Resolve a Slack user by email, open a DM, and post ``text``.
+    """Resolve an email when needed, open a DM, and post ``text``.
 
     Callers choose whether an error should be surfaced synchronously or left to
     the notification worker's retry policy.
@@ -24,8 +25,12 @@ def deliver_direct_message(
         client_factory = WebClient
 
     client = client_factory(token=token, timeout=timeout)
-    lookup = client.users_lookupByEmail(email=recipient_email)
-    slack_user_id = lookup["user"]["id"]
+    if bool(recipient_email) == bool(recipient_slack_user_id):
+        raise ValueError("Provide exactly one Slack DM recipient")
+    slack_user_id = recipient_slack_user_id
+    if recipient_email:
+        lookup = client.users_lookupByEmail(email=recipient_email)
+        slack_user_id = lookup["user"]["id"]
     opened = client.conversations_open(users=[slack_user_id])
     dm_channel_id = opened["channel"]["id"]
     client.chat_postMessage(channel=dm_channel_id, text=text)

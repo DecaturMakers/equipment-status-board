@@ -137,11 +137,15 @@ def _set_admin_reservation_choices(form):
     ]
 
 
-def _admin_reservation_command_from_form(form, starts_at_utc):
+def _admin_reservation_command_from_form(form, starts_at_utc, original=None):
     reservation_type = form.reservation_type.data
     return {
         "equipment_id": form.equipment_id.data,
-        "owner_user_id": form.owner_user_id.data if reservation_type == RESERVATION_TYPE_MEMBER else None,
+        "owner_user_id": (
+            None
+            if original and original.is_slack_owned
+            else form.owner_user_id.data if reservation_type == RESERVATION_TYPE_MEMBER else None
+        ),
         "starts_at_utc": starts_at_utc,
         "duration_minutes": form.duration_minutes.data,
         "notes": form.notes.data.strip(),
@@ -167,6 +171,7 @@ def _admin_reservation_command_payload(command):
 
 def _admin_reservation_form_response(original=None):
     form = AdminReservationCreateForm()
+    form.allow_slack_owner = bool(original and original.is_slack_owned)
     _set_admin_reservation_choices(form)
     if request.method == "GET":
         _populate_admin_reservation_form(form, original)
@@ -177,13 +182,18 @@ def _admin_reservation_form_response(original=None):
         except ValidationError as error:
             form.start_time.errors.append(str(error))
         else:
-            command = _admin_reservation_command_from_form(form, starts_at_utc)
+            command = _admin_reservation_command_from_form(form, starts_at_utc, original)
             response = _review_or_persist_admin_reservation(command, form, original)
             if response is not None:
                 return response
 
     title = "Edit Reservation" if original is not None else "New Reservation"
-    return render_template("admin/reservation_form.html", form=form, title=title)
+    return render_template(
+        "admin/reservation_form.html",
+        form=form,
+        title=title,
+        slack_owner=original.owner_display_name if original and original.is_slack_owned else None,
+    )
 
 
 def _populate_admin_reservation_form(form, original=None):
@@ -241,7 +251,14 @@ def _reservation_confirmation_serializer():
 def _render_admin_reservation_confirmation(*, command, violation_codes, violations, replacement_reservation_id=None):
     equipment = equipment_service.get_equipment(command["equipment_id"])
     member_label = "No member (admin hold)"
-    if command["owner_user_id"] is not None:
+    original = (
+        reservation_read_service.get_admin_reservation(replacement_reservation_id)
+        if replacement_reservation_id is not None
+        else None
+    )
+    if original and original.is_slack_owned:
+        member_label = f"{original.owner_display_name} (Slack)"
+    elif command["owner_user_id"] is not None:
         member_label = user_service.get_user(command["owner_user_id"]).display_name
     payload = _admin_reservation_command_payload(command) | {
         "actor_user_id": current_user.id,

@@ -24,8 +24,11 @@ class Reservation(db.Model):
             name="ck_reservations_type",
         ),
         db.CheckConstraint(
-            "(reservation_type = 'member' AND user_id IS NOT NULL) "
-            "OR (reservation_type = 'admin_hold' AND user_id IS NULL)",
+            "(reservation_type = 'member' AND "
+            "((user_id IS NOT NULL AND slack_user_id IS NULL AND slack_display_name IS NULL) "
+            "OR (user_id IS NULL AND slack_user_id IS NOT NULL AND slack_display_name IS NOT NULL))) "
+            "OR (reservation_type = 'admin_hold' AND user_id IS NULL "
+            "AND slack_user_id IS NULL AND slack_display_name IS NULL)",
             name="ck_reservations_type_owner",
         ),
         db.CheckConstraint("ends_at > starts_at", name="ck_reservations_valid_interval"),
@@ -34,6 +37,8 @@ class Reservation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     equipment_id = db.Column(db.Integer, db.ForeignKey("equipment.id"), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    slack_user_id = db.Column(db.String(32), nullable=True, index=True)
+    slack_display_name = db.Column(db.String(80), nullable=True)
     starts_at = db.Column(db.DateTime, nullable=False, index=True)
     ends_at = db.Column(db.DateTime, nullable=False, index=True)
     status = db.Column(db.String(20), default='active', nullable=False, index=True)
@@ -98,6 +103,20 @@ class Reservation(db.Model):
     def is_admin_hold(self) -> bool:
         """Return whether this row blocks equipment without a member owner."""
         return self.reservation_type == RESERVATION_TYPE_ADMIN_HOLD
+
+    @property
+    def is_slack_owned(self) -> bool:
+        """Return whether this member reservation belongs directly to Slack."""
+        return self.slack_user_id is not None
+
+    @property
+    def owner_display_name(self) -> str:
+        """Return the stable owner label used by administrative views."""
+        if self.user is not None:
+            return self.user.display_name
+        if self.slack_display_name:
+            return f"{self.slack_display_name} (Slack)"
+        return "Admin Hold"
 
     def __repr__(self):
         return f'<Reservation {self.equipment_id} {self.starts_at!r}>'

@@ -17,7 +17,7 @@ Use **Previous**, the date field, or **Next** to view another day. If the page s
 {% if slack_enabled %}
 ## Reserve Equipment in Slack
 
-Before you start, make sure that your Slack account is linked to an active ESB user. Ask a staff member for help if Slack says that your account is not linked.
+Anyone who can use the ESB Slack app can reserve equipment. An Equipment Status Board account is not required.
 
 ### Create a Reservation
 
@@ -44,7 +44,7 @@ If your requested time is unavailable or does not meet the equipment reservation
 
 ![Slack My Reservations window showing an upcoming reservation and its cancel action](images/reservations-cancel-form.png){ .docs-screenshot-compact }
 
-You can cancel only an active reservation that belongs to you. Slack confirms when the reservation is canceled.
+You can cancel only an active reservation that belongs to your Slack identity or linked ESB account. If staff later creates an ESB account for you, reservations you made previously through Slack still appear here. Slack confirms when the reservation is canceled.
 {% endif %}
 
 ## Manage Reservations

@@ -480,6 +480,46 @@ class TestAdminReservationCreation:
         assert replacement.notes == "Replacement admin note"
         assert replacement.created_by_user_id == staff_user.id
 
+    def test_edit_preserves_slack_only_owner(
+        self,
+        staff_client,
+        staff_user,
+        make_equipment,
+    ):
+        equipment = make_equipment(name="Slack Edit Tool")
+        self._settings(equipment)
+        data = self._data(equipment, 0)
+        local_start = datetime.strptime(
+            f"{data['start_date']} {data['start_time']}",
+            "%Y-%m-%d %H:%M",
+        ).replace(tzinfo=MAKERSPACE_TIMEZONE)
+        original = Reservation(
+            equipment_id=equipment.id,
+            slack_user_id="U-ADMIN-EDIT",
+            slack_display_name="Slack Owner",
+            starts_at=local_start.astimezone(UTC).replace(tzinfo=None),
+            ends_at=(local_start + timedelta(minutes=60)).astimezone(UTC).replace(tzinfo=None),
+            created_via="slack",
+        )
+        _db.session.add(original)
+        _db.session.commit()
+
+        get_response = staff_client.get(f"/admin/reservations/{original.id}/edit")
+        response = staff_client.post(
+            f"/admin/reservations/{original.id}/edit",
+            data=self._data(equipment, 0, notes="Adjusted by staff"),
+        )
+
+        replacement = _db.session.execute(
+            _db.select(Reservation).filter_by(replaces_reservation_id=original.id)
+        ).scalar_one()
+        assert get_response.status_code == 200
+        assert b"Slack Owner (Slack)" in get_response.data
+        assert response.status_code == 302
+        assert replacement.user_id is None
+        assert replacement.slack_user_id == "U-ADMIN-EDIT"
+        assert replacement.slack_display_name == "Slack Owner"
+
     def test_cancel_requires_confirmation_and_is_idempotent(
         self,
         tech_client,

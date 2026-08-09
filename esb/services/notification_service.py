@@ -170,18 +170,20 @@ def queue_notification(
 
 def queue_member_reservation_notification(reservation: Reservation, event_type: str) -> str | None:
     """Queue a member reservation DM; return a non-fatal warning on failure."""
-    if reservation.reservation_type == RESERVATION_TYPE_ADMIN_HOLD or reservation.user is None:
+    if reservation.reservation_type == RESERVATION_TYPE_ADMIN_HOLD:
         return None
     if not current_app.config.get('SLACK_BOT_TOKEN', ''):
         return 'Reservation was saved, but Slack notifications are not configured.'
 
     equipment = reservation.equipment
     base_url = current_app.config.get('ESB_BASE_URL', '').rstrip('/')
+    recipient = reservation.user.email if reservation.user else reservation.slack_user_id
     payload = {
         'event_type': event_type,
         'reservation_id': reservation.id,
-        'recipient_email': reservation.user.email,
-        'recipient_username': reservation.user.username,
+        'recipient_email': reservation.user.email if reservation.user else None,
+        'recipient_slack_user_id': reservation.slack_user_id,
+        'recipient_username': reservation.user.username if reservation.user else reservation.slack_display_name,
         'equipment_name': equipment.name if equipment else f'Equipment {reservation.equipment_id}',
         'area_name': equipment.area.name if equipment and equipment.area else 'Unknown Area',
         'starts_at_label': utc_naive_to_local(reservation.starts_at).strftime('%Y-%m-%d %I:%M %p %Z'),
@@ -192,7 +194,7 @@ def queue_member_reservation_notification(reservation: Reservation, event_type: 
     try:
         queue_notification(
             notification_type='slack_dm',
-            target=reservation.user.email,
+            target=recipient,
             payload=payload,
         )
     except Exception:
@@ -402,16 +404,18 @@ def _deliver_slack_message(notification: PendingNotification) -> None:
 
 
 def _deliver_slack_dm(notification: PendingNotification) -> None:
-    """Resolve a member by email and deliver a reservation DM through Slack."""
+    """Deliver a reservation DM by stored Slack ID or member email."""
     payload = dict(notification.payload or {})
     recipient_email = payload.get('recipient_email')
-    if not recipient_email:
-        raise RuntimeError('Reservation notification has no recipient email')
+    recipient_slack_user_id = payload.get('recipient_slack_user_id')
+    if not recipient_email and not recipient_slack_user_id:
+        raise RuntimeError('Reservation notification has no recipient')
     text, _blocks = _format_slack_message(payload)
     from esb.services import slack_dm_service
 
     slack_dm_service.deliver_direct_message(
         recipient_email=recipient_email,
+        recipient_slack_user_id=recipient_slack_user_id,
         text=text,
         timeout=15,
     )

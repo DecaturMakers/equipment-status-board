@@ -44,20 +44,34 @@ def _resolve_esb_user(client, slack_user_id):
     Note: Must be called from within a Flask app context (provided by the
     calling handler's _ensure_app_context wrapper).
     """
+    user, _display_name = _resolve_reservation_owner(client, slack_user_id)
+    return user
+
+
+def _resolve_reservation_owner(client, slack_user_id):
+    """Return an optional ESB user plus a stable Slack display-name snapshot."""
     from esb.extensions import db
     from esb.models.user import User
 
     try:
-        result = client.users_info(user=slack_user_id)
-        email = result['user']['profile'].get('email')
-        if not email:
-            return None
-        return db.session.execute(
-            db.select(User).filter_by(email=email, is_active=True)
-        ).scalars().first()
+        slack_user = client.users_info(user=slack_user_id)['user']
+        profile = slack_user.get('profile', {})
+        email = profile.get('email')
+        user = None
+        if email:
+            user = db.session.execute(
+                db.select(User).filter_by(email=email, is_active=True)
+            ).scalars().first()
+        display_name = (
+            profile.get('display_name')
+            or profile.get('real_name')
+            or slack_user.get('name')
+            or slack_user_id
+        )
+        return user, display_name[:80]
     except Exception:
-        logger.warning('Failed to resolve ESB user for Slack user %s', slack_user_id, exc_info=True)
-        return None
+        logger.warning('Failed to resolve Slack profile for user %s', slack_user_id, exc_info=True)
+        return None, slack_user_id
 
 
 # IMPORTANT: All handlers that access DB/services must wrap their body in
@@ -71,7 +85,7 @@ def register_handlers(bolt_app, app):
         bolt_app,
         app,
         ensure_app_context=_ensure_app_context,
-        resolve_esb_user=_resolve_esb_user,
+        resolve_reservation_owner=_resolve_reservation_owner,
     )
 
     @bolt_app.command('/esb-report')

@@ -21,6 +21,29 @@ from tests.reservation_helpers import (
 
 
 class TestCreateReservation:
+    def test_creates_slack_owned_reservation_without_esb_user(
+        self, app, make_equipment, monkeypatch,
+    ):
+        _freeze_now(monkeypatch)
+        equipment = make_equipment(name='Slack-only Laser')
+        _settings(equipment)
+
+        reservation = reservation_service.create_reservation(
+            equipment_id=equipment.id,
+            owner_user_id=None,
+            owner_slack_user_id='  U-SLACK  ',
+            owner_slack_display_name='  Slack Maker  ',
+            starts_at_utc=datetime(2026, 6, 15, 13, 0, tzinfo=UTC),
+            duration_minutes=60,
+            notes=None,
+            created_via='slack',
+        )
+
+        assert reservation.user_id is None
+        assert reservation.slack_user_id == 'U-SLACK'
+        assert reservation.slack_display_name == 'Slack Maker'
+        assert reservation.created_by_user_id is None
+
     def test_creates_reservation_and_stores_utc_naive_time(
         self, app, make_equipment, staff_user, monkeypatch,
     ):
@@ -1019,6 +1042,27 @@ class TestListUserUpcomingReservations:
 
         assert reservations == [future]
 
+    def test_returns_slack_reservations_after_esb_account_is_linked(
+        self, app, make_equipment, staff_user, monkeypatch,
+    ):
+        _freeze_now(monkeypatch)
+        equipment = make_equipment(name='Linked Later Tool')
+        reservation = Reservation(
+            equipment_id=equipment.id,
+            slack_user_id='U-LINKED-LATER',
+            slack_display_name='Future Member',
+            starts_at=datetime(2026, 6, 15, 13, 0),
+            ends_at=datetime(2026, 6, 15, 14, 0),
+            created_via='slack',
+        )
+        _db.session.add(reservation)
+        _db.session.commit()
+
+        assert reservation_read_service.list_user_upcoming_reservations(
+            staff_user.id,
+            'U-LINKED-LATER',
+        ) == [reservation]
+
 
 class TestGetUserReservation:
     def test_returns_reservation_owned_by_user(self, app, make_equipment, staff_user):
@@ -1047,3 +1091,35 @@ class TestGetUserReservation:
         result = reservation_read_service.get_user_reservation(reservation.id, staff_user.id)
 
         assert result is None
+
+    def test_slack_owner_can_cancel_but_another_slack_user_cannot(
+        self, app, make_equipment,
+    ):
+        equipment = make_equipment(name='Slack Cancel Tool')
+        reservation = Reservation(
+            equipment_id=equipment.id,
+            slack_user_id='U-OWNER',
+            slack_display_name='Owner',
+            starts_at=datetime(2026, 6, 15, 13, 0),
+            ends_at=datetime(2026, 6, 15, 14, 0),
+            created_via='slack',
+        )
+        _db.session.add(reservation)
+        _db.session.commit()
+
+        with pytest.raises(ValidationError, match='no longer available'):
+            reservation_service.cancel_reservation(
+                reservation.id,
+                None,
+                actor_slack_user_id='U-OTHER',
+                require_owner=True,
+            )
+
+        canceled = reservation_service.cancel_reservation(
+            reservation.id,
+            None,
+            actor_slack_user_id='U-OWNER',
+            require_owner=True,
+        )
+        assert canceled.status == 'canceled'
+        assert canceled.canceled_by_user_id is None
