@@ -520,6 +520,38 @@ class TestAdminReservationCreation:
         assert replacement.slack_user_id == "U-ADMIN-EDIT"
         assert replacement.slack_display_name == "Slack Owner"
 
+    def test_slack_owner_confirmation_has_one_slack_suffix(
+        self,
+        staff_client,
+        make_equipment,
+    ):
+        equipment = make_equipment(name="Slack Confirmation Tool")
+        self._settings(equipment, min_duration=90)
+        data = self._data(equipment, 0)
+        local_start = datetime.strptime(
+            f"{data['start_date']} {data['start_time']}",
+            "%Y-%m-%d %H:%M",
+        ).replace(tzinfo=MAKERSPACE_TIMEZONE)
+        original = Reservation(
+            equipment_id=equipment.id,
+            slack_user_id="U-CONFIRM",
+            slack_display_name="Slack Owner",
+            starts_at=local_start.astimezone(UTC).replace(tzinfo=None),
+            ends_at=(local_start + timedelta(minutes=60)).astimezone(UTC).replace(tzinfo=None),
+            created_via="slack",
+        )
+        _db.session.add(original)
+        _db.session.commit()
+
+        response = staff_client.post(
+            f"/admin/reservations/{original.id}/edit",
+            data=self._data(equipment, 0, notes="Confirm Slack owner"),
+        )
+
+        assert response.status_code == 200
+        assert b"Slack Owner (Slack)" in response.data
+        assert b"Slack Owner (Slack) (Slack)" not in response.data
+
     def test_cancel_requires_confirmation_and_is_idempotent(
         self,
         tech_client,

@@ -257,7 +257,7 @@ def _render_admin_reservation_confirmation(*, command, violation_codes, violatio
         else None
     )
     if original and original.is_slack_owned:
-        member_label = f"{original.owner_display_name} (Slack)"
+        member_label = original.owner_display_name
     elif command["owner_user_id"] is not None:
         member_label = user_service.get_user(command["owner_user_id"]).display_name
     payload = _admin_reservation_command_payload(command) | {

@@ -44,8 +44,12 @@ def _resolve_esb_user(client, slack_user_id):
     Note: Must be called from within a Flask app context (provided by the
     calling handler's _ensure_app_context wrapper).
     """
-    user, _display_name = _resolve_reservation_owner(client, slack_user_id)
-    return user
+    try:
+        user, _display_name = _resolve_reservation_owner(client, slack_user_id)
+        return user if user is not None and user.is_active else None
+    except Exception:
+        logger.warning('Failed to resolve Slack profile for user %s', slack_user_id, exc_info=True)
+        return None
 
 
 def _resolve_reservation_owner(client, slack_user_id):
@@ -53,25 +57,21 @@ def _resolve_reservation_owner(client, slack_user_id):
     from esb.extensions import db
     from esb.models.user import User
 
-    try:
-        slack_user = client.users_info(user=slack_user_id)['user']
-        profile = slack_user.get('profile', {})
-        email = profile.get('email')
-        user = None
-        if email:
-            user = db.session.execute(
-                db.select(User).filter_by(email=email, is_active=True)
-            ).scalars().first()
-        display_name = (
-            profile.get('display_name')
-            or profile.get('real_name')
-            or slack_user.get('name')
-            or slack_user_id
-        )
-        return user, display_name[:80]
-    except Exception:
-        logger.warning('Failed to resolve Slack profile for user %s', slack_user_id, exc_info=True)
-        return None, slack_user_id
+    slack_user = client.users_info(user=slack_user_id)['user']
+    profile = slack_user.get('profile', {})
+    email = profile.get('email')
+    user = None
+    if email:
+        user = db.session.execute(
+            db.select(User).filter_by(email=email)
+        ).scalars().first()
+    display_name = (
+        profile.get('display_name')
+        or profile.get('real_name')
+        or slack_user.get('name')
+        or slack_user_id
+    )
+    return user, display_name[:80]
 
 
 # IMPORTANT: All handlers that access DB/services must wrap their body in

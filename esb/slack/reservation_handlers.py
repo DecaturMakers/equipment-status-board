@@ -4,6 +4,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+LOOKUP_ERROR = 'Unable to verify your Slack account. Please try again.'
+INACTIVE_ERROR = 'Your Equipment Status Board account is inactive. Contact staff for help.'
+
 
 def _update_error_modal(client, body, message):
     from esb.slack.reservation_forms import build_reservation_error_modal
@@ -12,6 +15,17 @@ def _update_error_modal(client, body, message):
         view_id=body["view"]["id"],
         view=build_reservation_error_modal(message),
     )
+
+
+def _resolve_actor(client, slack_user_id, resolve_reservation_owner):
+    try:
+        user, display_name = resolve_reservation_owner(client, slack_user_id)
+    except Exception:
+        logger.exception('Failed to resolve reservation owner for Slack user %s', slack_user_id)
+        return None, None, LOOKUP_ERROR
+    if user is not None and not user.is_active:
+        return None, None, INACTIVE_ERROR
+    return user, display_name, None
 
 
 def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_reservation_owner):
@@ -24,7 +38,22 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
             from datetime import UTC, datetime
 
             from esb.services import reservation_read_service
-            from esb.slack.reservation_forms import build_reservation_landing_modal
+            from esb.slack.reservation_forms import (
+                build_reservation_error_modal,
+                build_reservation_landing_modal,
+            )
+
+            _user, _display_name, error = _resolve_actor(
+                client,
+                body['user_id'],
+                resolve_reservation_owner,
+            )
+            if error:
+                client.views_open(
+                    trigger_id=body['trigger_id'],
+                    view=build_reservation_error_modal(error),
+                )
+                return
 
             now = datetime.now(UTC)
             availability = reservation_read_service.get_public_availability(now=now)
@@ -100,7 +129,14 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
             ack(response_action='update', view=build_reservation_processing_modal())
             view_id = body.get('view', view).get('id')
             slack_user_id = body['user']['id']
-            esb_user, slack_display_name = resolve_reservation_owner(client, slack_user_id)
+            esb_user, slack_display_name, error = _resolve_actor(
+                client,
+                slack_user_id,
+                resolve_reservation_owner,
+            )
+            if error:
+                _update_error_modal(client, body, error)
+                return
 
             equipment_name = equipment_service.get_equipment_display_name(equipment_id)
 
@@ -193,7 +229,14 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
             from esb.slack.reservation_forms import build_my_reservations_modal
 
             slack_user_id = body['user']['id']
-            esb_user, _display_name = resolve_reservation_owner(client, slack_user_id)
+            esb_user, _display_name, error = _resolve_actor(
+                client,
+                slack_user_id,
+                resolve_reservation_owner,
+            )
+            if error:
+                _update_error_modal(client, body, error)
+                return
             reservations = reservation_read_service.list_user_upcoming_reservations(
                 esb_user.id if esb_user else None,
                 slack_user_id,
@@ -231,7 +274,14 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
             from esb.slack.reservation_forms import build_cancel_reservation_modal
 
             slack_user_id = body['user']['id']
-            esb_user, _display_name = resolve_reservation_owner(client, slack_user_id)
+            esb_user, _display_name, error = _resolve_actor(
+                client,
+                slack_user_id,
+                resolve_reservation_owner,
+            )
+            if error:
+                _update_error_modal(client, body, error)
+                return
             reservation_id = int(body['actions'][0]['value'])
             reservation = reservation_read_service.get_user_reservation(
                 reservation_id,
@@ -259,7 +309,14 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
             from esb.slack.reservation_forms import build_my_reservations_modal
 
             slack_user_id = body['user']['id']
-            esb_user, _display_name = resolve_reservation_owner(client, slack_user_id)
+            esb_user, _display_name, error = _resolve_actor(
+                client,
+                slack_user_id,
+                resolve_reservation_owner,
+            )
+            if error:
+                _update_error_modal(client, body, error)
+                return
             reservations = reservation_read_service.list_user_upcoming_reservations(
                 esb_user.id if esb_user else None,
                 slack_user_id,
@@ -278,7 +335,14 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
             from esb.utils.exceptions import ValidationError
 
             slack_user_id = body['user']['id']
-            esb_user, _display_name = resolve_reservation_owner(client, slack_user_id)
+            esb_user, _display_name, error = _resolve_actor(
+                client,
+                slack_user_id,
+                resolve_reservation_owner,
+            )
+            if error:
+                _update_error_modal(client, body, error)
+                return
             reservation_id = int(body['actions'][0]['value'])
             reservation = reservation_read_service.get_user_reservation(
                 reservation_id,
