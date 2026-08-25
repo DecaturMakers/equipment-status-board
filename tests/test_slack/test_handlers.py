@@ -119,7 +119,7 @@ class TestEsbReserveCommand:
         )
         self.db.session.add(reservation)
         self.db.session.commit()
-        self.app.config['STATIC_PAGE_PUBLIC_URL'] = 'https://status.example.com/reservations/'
+        self.app.config['STATIC_RESERVATIONS_PUBLIC_URL'] = 'https://status.example.com/reservations/'
         self.handlers = _register_and_capture(app)
 
     def _settings(self, equipment, *, slug, enabled=True):
@@ -203,7 +203,7 @@ class TestEsbReserveCommand:
 
     def test_reserve_landing_hides_availability_buttons_without_public_url(self):
         """/esb-reserve omits inert Availability buttons when no URL is configured."""
-        self.app.config['STATIC_PAGE_PUBLIC_URL'] = ''
+        self.app.config['STATIC_RESERVATIONS_PUBLIC_URL'] = ''
         ack = MagicMock()
         client = MagicMock()
         client.users_info.return_value = {
@@ -861,7 +861,7 @@ class TestEsbReserveCommand:
 
     def test_cancel_confirmation_cancels_reservation_and_shows_result(self):
         """Flow 5: confirming cancellation marks the reservation canceled."""
-        self.app.config['STATIC_PAGE_PUBLIC_URL'] = 'http://example.test/status'
+        self.app.config['STATIC_RESERVATIONS_PUBLIC_URL'] = 'http://example.test/reservations.html'
         start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=5)
         future = Reservation(
             equipment_id=self.laser.id,
@@ -902,7 +902,7 @@ class TestEsbReserveCommand:
         assert actions[0]['text']['text'] == 'Reserve another tool'
         assert actions[0]['action_id'] == 'reservation_reserve_another'
         assert actions[1]['text']['text'] == 'View availability'
-        assert actions[1]['url'] == 'http://example.test/status'
+        assert actions[1]['url'] == 'http://example.test/reservations.html'
 
     def test_unlinked_slack_owner_can_cancel(self):
         start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=5)

@@ -48,11 +48,13 @@ DEFAULT_BATCH_SIZE = 100
 # Minimum seconds between periodic MAC status refreshes. A fast --poll-interval
 # must not hammer MAC, so the refresh is throttled independently of the poll.
 MAC_REFRESH_INTERVAL = 60
+RESERVATION_REFRESH_INTERVAL = 3600
 
 # Throttle state for the periodic MAC status refresh. ``None`` => the first call
 # always runs (bootstrap at worker startup). A single worker process owns
 # run_worker_loop(), so a module-level global is safe. Tests reset this.
 _last_mac_refresh = None
+_last_reservation_refresh = None
 
 
 def _write_heartbeat(path: Path) -> None:
@@ -166,6 +168,53 @@ def queue_notification(
     })
 
     return notification
+
+
+def queue_static_reservation_refresh(trigger: str) -> PendingNotification | None:
+    """Queue a post-commit reservation-page refresh without failing the user action."""
+    if not current_app.config.get('STATIC_PAGE_PUSH_TARGET', '').strip():
+        return None
+    try:
+        return queue_notification(
+            notification_type='static_page_push',
+            target='reservations',
+            payload={'trigger': trigger},
+        )
+    except Exception:
+        db.session.rollback()
+        logger.exception('Failed to queue static reservation refresh (trigger=%s)', trigger)
+        return None
+
+
+def _refresh_static_reservations() -> None:
+    """Ensure a reservation publish is queued at startup and at most hourly."""
+    global _last_reservation_refresh
+    if not current_app.config.get('STATIC_PAGE_PUSH_TARGET', '').strip():
+        return
+    try:
+        now = time.monotonic()
+        if (
+            _last_reservation_refresh is not None
+            and now - _last_reservation_refresh < RESERVATION_REFRESH_INTERVAL
+        ):
+            return
+        pending = db.session.execute(
+            db.select(PendingNotification).filter_by(
+                notification_type='static_page_push',
+                target='reservations',
+                status='pending',
+            )
+        ).scalars().first()
+        if pending is None:
+            queue_notification(
+                notification_type='static_page_push',
+                target='reservations',
+                payload={'trigger': 'hourly_refresh'},
+            )
+        _last_reservation_refresh = now
+    except Exception:
+        db.session.rollback()
+        logger.warning('Periodic static reservation refresh failed', exc_info=True)
 
 
 def queue_member_reservation_notification(reservation: Reservation, event_type: str) -> str | None:
@@ -549,7 +598,10 @@ def _deliver_static_page_push(notification: PendingNotification) -> None:
         'Static page push triggered (notification=%d, payload=%s)',
         notification.id, notification.payload,
     )
-    static_page_service.generate_and_push()
+    if notification.target == 'reservations':
+        static_page_service.generate_and_push_reservations()
+    else:
+        static_page_service.generate_and_push()
 
 
 def _deliver_mac_clear(notification: PendingNotification) -> None:
@@ -686,6 +738,7 @@ def run_worker_loop(poll_interval: int = 30) -> None:
             # throttled and self-contained (its own try/except), so a MAC outage
             # never feeds the outer poll-failure backoff.
             _refresh_mac_status()
+            _refresh_static_reservations()
 
         except Exception:
             consecutive_poll_failures += 1

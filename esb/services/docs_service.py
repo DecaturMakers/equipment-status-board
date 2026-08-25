@@ -135,6 +135,7 @@ def get_placeholder_values():
     cfg = current_app.config
     base_url = cfg.get('ESB_BASE_URL', '')
     static_page_url = cfg.get('STATIC_PAGE_PUBLIC_URL', '')
+    reservations_public_url = cfg.get('STATIC_RESERVATIONS_PUBLIC_URL', '')
     # The docs site is public and unauthenticated; it must stay up even on a
     # fresh deployment that has not yet run `flask db upgrade` (no app_config
     # table) or during a transient DB outage. Treat any DB failure as "WiFi not
@@ -169,10 +170,9 @@ def get_placeholder_values():
         # Human-friendly fallback so an unset base URL never renders a broken
         # sentence ("Navigate to  in your browser").
         'base_url_display': base_url or 'the Equipment Status Board URL provided by your makerspace',
-        # Same-origin route so links from the built-in help site preserve the
-        # authenticated session even when local access uses 127.0.0.1 instead
-        # of the configured localhost base URL.
-        'reservation_url': '/reservations/',
+        # Prefer the externally reachable read-only calendar when configured;
+        # otherwise keep the same-origin application route.
+        'reservation_url': reservations_public_url or '/reservations/',
         'static_page_url': static_page_url,
         'wifi_ssid': wifi_ssid,
         'org_name': cfg.get('ORG_NAME', ''),

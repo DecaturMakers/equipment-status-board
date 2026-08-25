@@ -252,6 +252,7 @@ def _persist_admin_reservation(
         original.canceled_at = _utc_now()
         original.canceled_by_user_id = actor.id
     db.session.commit()
+    _queue_static_refresh("reservation_replaced" if original is not None else "reservation_created")
 
     if original is None:
         _log_reservation_created(reservation, actor)
@@ -396,6 +397,7 @@ def persist_reservation(
     db.session.add(reservation)
     if commit:
         db.session.commit()
+        _queue_static_refresh("reservation_created")
     else:
         db.session.flush()
     return reservation
@@ -443,6 +445,7 @@ def cancel_reservation(
                 "new_status": CANCELED_STATUS,
             },
         )
+        _queue_static_refresh("reservation_canceled")
     else:
         db.session.flush()
     return reservation
@@ -530,6 +533,12 @@ def _log_reservation_created(reservation: Reservation, actor: User | None) -> No
             "overridden_policy_codes": reservation.overridden_policy_codes or [],
         },
     )
+
+
+def _queue_static_refresh(trigger: str) -> None:
+    from esb.services import notification_service
+
+    notification_service.queue_static_reservation_refresh(trigger)
 
 
 def _validate_reservation_shape(
