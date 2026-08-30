@@ -15,7 +15,8 @@
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label" for="reservation_type">Reservation type</label>
-                    {{ form.reservation_type(class="form-select" ~ (" is-invalid" if form.reservation_type.errors else "")) }}
+                    {{ form.reservation_type(class="form-select" ~ (" is-invalid" if form.reservation_type.errors else ""), disabled=slack_owner is not none) }}
+                    {% if slack_owner %}<input type="hidden" name="reservation_type" value="{{ form.reservation_type.data }}">{% endif %}
                     {% for error in form.reservation_type.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
                 </div>
                 <div class="col-md-6">
@@ -24,8 +25,14 @@
                     {% for error in form.equipment_id.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
                 </div>
                 <div class="col-12" data-member-reservation-field>
-                    <label class="form-label" for="owner_user_id">Member</label>
+                    {% if slack_owner %}
+                    <label class="form-label">Owner</label>
+                    <div class="form-control bg-body-secondary">{{ slack_owner }}</div>
+                    <input type="hidden" name="owner_user_id" value="0">
+                    {% else %}
+                    <label class="form-label" for="owner_user_id">Owner</label>
                     {{ form.owner_user_id(class="form-select" ~ (" is-invalid" if form.owner_user_id.errors else "")) }}
+                    {% endif %}
                     {% for error in form.owner_user_id.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
                 </div>
                 <div class="col-md-6">

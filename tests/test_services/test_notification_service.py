@@ -1533,6 +1533,56 @@ class TestRecordIterationTimestamp:
 
 
 class TestReservationNotifications:
+    def test_queues_slack_id_addressed_dm_for_slack_owner(
+        self, app, make_equipment,
+    ):
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test'
+        equipment = make_equipment(name='Slack Notification Tool')
+        reservation = Reservation(
+            equipment_id=equipment.id,
+            slack_user_id='U-NOTIFY',
+            slack_display_name='Slack Maker',
+            starts_at=datetime(2026, 6, 15, 13, 0),
+            ends_at=datetime(2026, 6, 15, 14, 0),
+            created_via='slack',
+        )
+        _db.session.add(reservation)
+        _db.session.commit()
+
+        warning = notification_service.queue_member_reservation_notification(
+            reservation,
+            'reservation_updated',
+        )
+
+        notification = _db.session.execute(
+            _db.select(PendingNotification).filter_by(notification_type='slack_dm')
+        ).scalar_one()
+        assert warning is None
+        assert notification.target == 'U-NOTIFY'
+        assert notification.payload['recipient_slack_user_id'] == 'U-NOTIFY'
+        assert notification.payload['recipient_email'] is None
+
+    def test_delivers_slack_owner_dm_without_email_lookup(self, app):
+        app.config['SLACK_BOT_TOKEN'] = 'xoxb-test'
+        notification = _create_notification(
+            notification_type='slack_dm',
+            target='U-DIRECT',
+            payload={
+                'event_type': 'reservation_updated',
+                'recipient_slack_user_id': 'U-DIRECT',
+                'equipment_name': 'Laser',
+            },
+        )
+        with patch('slack_sdk.WebClient') as web_client:
+            client = web_client.return_value
+            client.conversations_open.return_value = {'channel': {'id': 'D-DIRECT'}}
+
+            notification_service._deliver_slack_dm(notification)
+
+        client.users_lookupByEmail.assert_not_called()
+        client.conversations_open.assert_called_once_with(users=['U-DIRECT'])
+        client.chat_postMessage.assert_called_once()
+
     def test_queues_email_addressed_dm_after_member_mutation(
         self, app, make_equipment, staff_user,
     ):

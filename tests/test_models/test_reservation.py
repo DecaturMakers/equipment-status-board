@@ -123,6 +123,24 @@ class TestReservation:
         assert reservation.reservation_type == RESERVATION_TYPE_MEMBER
         assert reservation.overridden_policy_codes == []
 
+    def test_slack_owned_member_reservation(self, app, make_equipment):
+        equipment = make_equipment(name='Slack-owned Tool')
+        reservation = Reservation(
+            equipment_id=equipment.id,
+            slack_user_id='U123',
+            slack_display_name='Alex Maker',
+            starts_at=datetime(2026, 6, 15, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 6, 15, 15, 0, tzinfo=UTC),
+            created_via='slack',
+        )
+
+        _db.session.add(reservation)
+        _db.session.commit()
+
+        assert reservation.user is None
+        assert reservation.is_slack_owned is True
+        assert reservation.owner_display_name == 'Alex Maker (Slack)'
+
     def test_admin_hold_has_no_member_and_tracks_creator(
         self, app, make_equipment, staff_user,
     ):

@@ -141,6 +141,9 @@ class TestEsbReserveCommand:
         """/esb-reserve opens Flow 1 populated from reservation database data."""
         ack = MagicMock()
         client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': 'missing@example.test'}},
+        }
         body = {
             'trigger_id': 'T123',
             'user_id': 'U123',
@@ -203,6 +206,9 @@ class TestEsbReserveCommand:
         self.app.config['STATIC_PAGE_PUBLIC_URL'] = ''
         ack = MagicMock()
         client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': 'missing@example.test'}},
+        }
         body = {
             'trigger_id': 'T123',
             'user_id': 'U123',
@@ -221,6 +227,26 @@ class TestEsbReserveCommand:
         assert action_blocks
         for block in action_blocks:
             assert [element['text']['text'] for element in block['elements']] == ['Reserve']
+
+    def test_reserve_command_blocks_inactive_esb_user(self):
+        self.user.is_active = False
+        self.db.session.commit()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'trigger_id': 'T123',
+            'user_id': 'U123',
+            'channel_id': 'C123',
+        }
+
+        self.handlers['command:/esb-reserve'](ack=ack, body=body, client=client)
+
+        modal = client.views_open.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_error'
+        assert 'account is inactive' in modal['blocks'][0]['text']['text']
 
     def test_reserve_button_updates_to_one_tool_availability_modal(self):
         """Flow 2: clicking Reserve updates to the selected tool availability modal."""
@@ -469,6 +495,78 @@ class TestEsbReserveCommand:
         assert reservations[0].created_via == 'slack'
         assert actions[0]['value'] == str(reservations[0].id)
 
+    def test_unlinked_slack_user_can_create_reservation(self):
+        start_timestamp, end_timestamp = self._future_aligned_window()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {
+                'name': 'slackmaker',
+                'profile': {'email': 'missing@example.test', 'display_name': 'Slack Maker'},
+            },
+        }
+        body = {'user': {'id': 'U-SLACK'}, 'view': {'id': 'V123'}}
+        view = self._reservation_submission_view(self.laser.id, start_timestamp, end_timestamp)
+
+        self.handlers['view:reservation_availability'](ack=ack, body=body, client=client, view=view)
+
+        modal = client.views_update.call_args.kwargs['view']
+        reservation = Reservation.query.filter_by(equipment_id=self.laser.id).one()
+        assert modal['callback_id'] == 'reservation_confirmation'
+        assert reservation.user_id is None
+        assert reservation.slack_user_id == 'U-SLACK'
+        assert reservation.slack_display_name == 'Slack Maker'
+
+    def test_profile_lookup_failure_shows_error_without_creating_reservation(self):
+        start_timestamp, end_timestamp = self._future_aligned_window()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.side_effect = RuntimeError('Slack unavailable')
+        body = {'user': {'id': 'U-FALLBACK'}, 'view': {'id': 'V123'}}
+        view = self._reservation_submission_view(self.laser.id, start_timestamp, end_timestamp)
+
+        self.handlers['view:reservation_availability'](ack=ack, body=body, client=client, view=view)
+
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_error'
+        assert 'Unable to verify your Slack account' in modal['blocks'][0]['text']['text']
+        assert Reservation.query.filter_by(equipment_id=self.laser.id).count() == 0
+
+    def test_profile_lookup_failure_does_not_show_empty_reservation_list(self):
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.side_effect = RuntimeError('Slack unavailable')
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': 'stub-my-reservations'}],
+        }
+
+        self.handlers['action:reservation_view_mine'](ack=ack, body=body, client=client)
+
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_error'
+        assert 'Unable to verify your Slack account' in modal['blocks'][0]['text']['text']
+
+    def test_inactive_esb_user_cannot_create_reservation(self):
+        self.user.is_active = False
+        self.db.session.commit()
+        start_timestamp, end_timestamp = self._future_aligned_window()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {'user': {'id': 'U-INACTIVE'}, 'view': {'id': 'V123'}}
+        view = self._reservation_submission_view(self.laser.id, start_timestamp, end_timestamp)
+
+        self.handlers['view:reservation_availability'](ack=ack, body=body, client=client, view=view)
+
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_error'
+        assert 'account is inactive' in modal['blocks'][0]['text']['text']
+        assert Reservation.query.filter_by(equipment_id=self.laser.id).count() == 0
+
     def test_reservation_submission_updates_modal_to_unavailable_on_conflict(self):
         """Flow 3: conflicting reservation submit shows retry modal."""
         start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=4)
@@ -589,8 +687,7 @@ class TestEsbReserveCommand:
         assert footer_actions['elements'][0]['text']['text'] == 'Reserve another tool'
         assert footer_actions['elements'][0]['action_id'] == 'reservation_reserve_another'
 
-    def test_view_my_reservations_unlinked_user_updates_to_error_modal(self):
-        """Flow 4: modal action errors do not require a Slack channel."""
+    def test_view_my_reservations_unlinked_user_shows_empty_modal(self):
         ack = MagicMock()
         client = MagicMock()
         client.users_info.return_value = {
@@ -609,8 +706,28 @@ class TestEsbReserveCommand:
         client.views_update.assert_called_once()
         assert client.views_update.call_args.kwargs['view_id'] == 'V123'
         modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_mine'
+        assert 'do not have any upcoming reservations' in modal['blocks'][0]['text']['text']
+
+    def test_inactive_esb_user_cannot_view_reservations(self):
+        self.user.is_active = False
+        self.db.session.commit()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': 'stub-my-reservations'}],
+        }
+
+        self.handlers['action:reservation_view_mine'](ack=ack, body=body, client=client)
+
+        modal = client.views_update.call_args.kwargs['view']
         assert modal['callback_id'] == 'reservation_error'
-        assert 'Your Slack account is not linked to an ESB user.' in modal['blocks'][0]['text']['text']
+        assert 'account is inactive' in modal['blocks'][0]['text']['text']
 
     def test_reserve_another_tool_updates_to_landing_modal(self):
         """Flow 4 footer action returns to Flow 1 tool selection."""
@@ -786,6 +903,66 @@ class TestEsbReserveCommand:
         assert actions[0]['action_id'] == 'reservation_reserve_another'
         assert actions[1]['text']['text'] == 'View availability'
         assert actions[1]['url'] == 'http://example.test/status'
+
+    def test_unlinked_slack_owner_can_cancel(self):
+        start_timestamp, end_timestamp = self._future_aligned_window(hours_from_now=5)
+        reservation = Reservation(
+            equipment_id=self.laser.id,
+            slack_user_id='U-SLACK-CANCEL',
+            slack_display_name='Slack Canceler',
+            starts_at=datetime.fromtimestamp(start_timestamp, UTC).replace(tzinfo=None),
+            ends_at=datetime.fromtimestamp(end_timestamp, UTC).replace(tzinfo=None),
+            created_via='slack',
+        )
+        self.db.session.add(reservation)
+        self.db.session.commit()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': 'missing@example.test', 'display_name': 'Slack Canceler'}},
+        }
+        body = {
+            'user': {'id': 'U-SLACK-CANCEL'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': str(reservation.id)}],
+        }
+
+        self.handlers['action:reservation_cancel_confirm'](ack=ack, body=body, client=client)
+
+        self.db.session.refresh(reservation)
+        assert reservation.status == 'canceled'
+        assert reservation.canceled_by_user_id is None
+        assert client.views_update.call_args.kwargs['view']['callback_id'] == 'reservation_canceled'
+
+    def test_inactive_esb_user_cannot_cancel_reservation(self):
+        self.user.is_active = False
+        reservation = Reservation(
+            equipment_id=self.laser.id,
+            user_id=self.user.id,
+            starts_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=5),
+            ends_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=6),
+            created_via='slack',
+        )
+        self.db.session.add(reservation)
+        self.db.session.commit()
+        ack = MagicMock()
+        client = MagicMock()
+        client.users_info.return_value = {
+            'user': {'profile': {'email': self.user.email}},
+        }
+        body = {
+            'user': {'id': 'U123'},
+            'view': {'id': 'V123'},
+            'actions': [{'value': str(reservation.id)}],
+        }
+
+        self.handlers['action:reservation_cancel_confirm'](ack=ack, body=body, client=client)
+
+        self.db.session.refresh(reservation)
+        assert reservation.status == 'active'
+        modal = client.views_update.call_args.kwargs['view']
+        assert modal['callback_id'] == 'reservation_error'
+        assert 'account is inactive' in modal['blocks'][0]['text']['text']
 
 
 class TestProblemReportSubmission:

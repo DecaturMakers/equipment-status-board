@@ -36,7 +36,11 @@ class AdminReservationCreateForm(FlaskForm):
     submit = SubmitField("Review reservation")
 
     def validate_owner_user_id(self, field):
-        if self.reservation_type.data == RESERVATION_TYPE_MEMBER and not field.data:
+        if (
+            self.reservation_type.data == RESERVATION_TYPE_MEMBER
+            and not field.data
+            and not getattr(self, "allow_slack_owner", False)
+        ):
             raise ValidationError("Select an active member for this reservation.")
 
 
