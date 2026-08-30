@@ -36,9 +36,23 @@ would answer `@claude` comments in agent mode: no PR context, no tracking
 comment, and nothing posted back. They could share one file as two guarded jobs;
 they are kept apart so each file's permissions and tools say what they mean.
 
-`issue_comment` workflows always run from the **default branch**, so changes to
-`claude-mention.yml` have no effect until they are merged to `main` — testing
-them on a branch proves nothing.
+**Neither workflow can be tested from a branch.** Two separate mechanisms
+enforce this, and both produce a green run that does nothing:
+
+* `issue_comment` workflows always run from the **default branch**, so changes to
+  `claude-mention.yml` have no effect until they are merged to `main`.
+* `claude-code-action` validates that the workflow file is byte-identical to the
+  version on the default branch, and skips itself when it is not:
+  `Skipping action due to workflow validation: Workflow validation failed. The
+  workflow file must exist and have identical content to the version on the
+  repository's default branch.` This fires on `claude-pr-review.yml` on the very
+  PR that changes it. The action's own annotation says to ignore it in that case.
+
+A skipped run is distinguishable from a broken one by duration and artifacts: a
+validation skip finishes in ~10s and uploads no logs (the `No files were found
+with the provided path` warning is expected), whereas a run that actually
+reached Claude takes a minute or more and uploads `execution-output.json`.
+Changes to either file are therefore only really provable after merge.
 
 The 👀 reaction on an `@claude` comment comes from the Claude GitHub App
 acknowledging the mention. It is **not** evidence that anything ran — the work
