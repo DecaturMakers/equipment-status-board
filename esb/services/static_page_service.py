@@ -359,13 +359,8 @@ def generate_and_push_reservations() -> None:
         _push_local(json_content, target, 'reservations.json')
         _push_local(html, target, 'reservations.html')
     elif method == 's3':
-        _push_s3(json_content, target, filename='reservations.json', content_type=JSON_CONTENT_TYPE, invalidate=False)
-        _push_s3(html, target, filename='reservations.html', invalidate=False)
-        distribution_id = current_app.config.get('CLOUDFRONT_DISTRIBUTION_ID', '')
-        if distribution_id:
-            _, json_key = _object_target(target, 'reservations.json')
-            _, html_key = _object_target(target, 'reservations.html')
-            invalidation_id = _create_cloudfront_invalidation(distribution_id, [json_key, html_key])
+        _push_s3(json_content, target, filename='reservations.json', content_type=JSON_CONTENT_TYPE)
+        invalidation_id = _push_s3(html, target, filename='reservations.html')
     elif method == 'gcs':
         _push_gcs(json_content, target, filename='reservations.json', content_type=JSON_CONTENT_TYPE)
         _push_gcs(html, target, filename='reservations.html')

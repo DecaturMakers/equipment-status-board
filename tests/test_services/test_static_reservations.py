@@ -59,7 +59,7 @@ class TestReservationArtifacts:
         assert (tmp_path / "reservations.json").read_text() == "{}"
         assert (tmp_path / "reservations.html").read_text() == "<html>x</html>"
 
-    def test_s3_publish_uses_sibling_keys_and_one_invalidation(self, app):
+    def test_s3_publish_uses_sibling_keys_and_invalidates_each(self, app):
         app.config.update(
             STATIC_PAGE_PUSH_METHOD="s3",
             STATIC_PAGE_PUSH_TARGET="bucket/public/index.html",
@@ -83,11 +83,13 @@ class TestReservationArtifacts:
             "public/reservations.html",
         ]
         assert s3.put_object.call_args_list[0].kwargs["ContentType"] == static_page_service.JSON_CONTENT_TYPE
-        paths = cloudfront.create_invalidation.call_args.kwargs["InvalidationBatch"]["Paths"]
-        assert paths == {
-            "Quantity": 2,
-            "Items": ["/public/reservations.json", "/public/reservations.html"],
-        }
+        assert [
+            call.kwargs["InvalidationBatch"]["Paths"]
+            for call in cloudfront.create_invalidation.call_args_list
+        ] == [
+            {"Quantity": 1, "Items": ["/public/reservations.json"]},
+            {"Quantity": 1, "Items": ["/public/reservations.html"]},
+        ]
 
     def test_gcs_publish_uses_sibling_objects(self, app):
         app.config.update(
