@@ -60,6 +60,7 @@ class Config:
     # only by the built-in /docs/ site: when set, the member/staff guides link
     # the real URL; when empty, the static-page references are omitted.
     STATIC_PAGE_PUBLIC_URL = os.environ.get('STATIC_PAGE_PUBLIC_URL', '')
+    STATIC_RESERVATIONS_PUBLIC_URL = os.environ.get('STATIC_RESERVATIONS_PUBLIC_URL', '')
     CLOUDFRONT_DISTRIBUTION_ID = os.environ.get('CLOUDFRONT_DISTRIBUTION_ID', '')
     # Organization branding surfaced in the built-in /docs/ site. Defaults match
     # the upstream Decatur Makers deployment so an unconfigured instance renders

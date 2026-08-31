@@ -268,6 +268,13 @@ class TestDocsValueSubstitution:
         html = _render('reservations', {})
         assert 'href="/reservations/"' in html
 
+    def test_reservations_guide_uses_static_calendar_when_configured(self):
+        html = _render(
+            'reservations',
+            {'STATIC_RESERVATIONS_PUBLIC_URL': 'https://status.example.com/reservations.html'},
+        )
+        assert 'href="https://status.example.com/reservations.html"' in html
+
     def test_static_page_url_rendered(self):
         assert 'https://status.example.com/' in _render('members', STATIC_ON)
 

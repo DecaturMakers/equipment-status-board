@@ -191,6 +191,10 @@ def archive_equipment(equipment_id: int, archived_by: str) -> Equipment:
     if equipment.is_archived:
         raise ValidationError(f'Equipment {equipment.name!r} is already archived')
 
+    was_reservable = bool(
+        equipment.reservation_settings
+        and equipment.reservation_settings.reservations_enabled
+    )
     equipment.is_archived = True
     db.session.commit()
 
@@ -198,6 +202,8 @@ def archive_equipment(equipment_id: int, archived_by: str) -> Equipment:
         'id': equipment.id,
         'name': equipment.name,
     })
+    if was_reservable:
+        _queue_static_reservation_refresh('reservable_equipment_archived')
 
     return equipment
 
@@ -320,6 +326,7 @@ def update_equipment_reservation_settings(
                 "changes": changes,
             },
         )
+        _queue_static_reservation_refresh('reservation_settings_changed')
     return settings
 
 
@@ -510,8 +517,20 @@ def update_equipment(
             'name': equipment.name,
             'changes': serialized_changes,
         })
+        if (
+            'name' in changes
+            and equipment.reservation_settings
+            and equipment.reservation_settings.reservations_enabled
+        ):
+            _queue_static_reservation_refresh('reservable_equipment_renamed')
 
     return equipment
+
+
+def _queue_static_reservation_refresh(trigger: str) -> None:
+    from esb.services import notification_service
+
+    notification_service.queue_static_reservation_refresh(trigger)
 
 
 # --- External Links ---

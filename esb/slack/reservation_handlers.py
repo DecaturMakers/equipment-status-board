@@ -61,7 +61,7 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
                 trigger_id=body['trigger_id'],
                 view=build_reservation_landing_modal(
                     availability,
-                    availability_url=app.config.get('STATIC_PAGE_PUBLIC_URL', ''),
+                    availability_url=app.config.get('STATIC_RESERVATIONS_PUBLIC_URL', ''),
                     now=now,
                 ),
             )
@@ -261,7 +261,7 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
                 view_id=body['view']['id'],
                 view=build_reservation_landing_modal(
                     availability,
-                    availability_url=app.config.get('STATIC_PAGE_PUBLIC_URL', ''),
+                    availability_url=app.config.get('STATIC_RESERVATIONS_PUBLIC_URL', ''),
                     now=now,
                 ),
             )
@@ -372,6 +372,6 @@ def register_reservation_handlers(bolt_app, app, *, ensure_app_context, resolve_
                 view_id=body['view']['id'],
                 view=build_reservation_canceled_modal(
                     canceled,
-                    availability_url=app.config.get('STATIC_PAGE_PUBLIC_URL', ''),
+                    availability_url=app.config.get('STATIC_RESERVATIONS_PUBLIC_URL', ''),
                 ),
             )

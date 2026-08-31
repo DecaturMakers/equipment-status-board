@@ -2,13 +2,19 @@
 
 import logging
 import os
-from datetime import datetime
+import posixpath
+from datetime import UTC, datetime
+from pathlib import Path
 
 from flask import current_app, render_template
 
 from esb.utils.logging import log_mutation
 
 logger = logging.getLogger(__name__)
+
+HTML_CONTENT_TYPE = 'text/html; charset=utf-8'
+JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
+CACHE_CONTROL = 'no-cache, no-store, must-revalidate'
 
 
 def _compute_generated_at() -> tuple[str, int]:
@@ -58,6 +64,51 @@ def generate() -> str:
     )
 
 
+def generate_reservations() -> tuple[str, str]:
+    """Render the standalone reservation calendar and its anonymous JSON data."""
+    import json
+
+    from esb.services import reservation_read_service
+    from esb.utils.timezones import MAKERSPACE_TIMEZONE, utc_naive_to_local
+
+    now = datetime.now(UTC)
+    availability = reservation_read_service.get_public_availability(now=now)
+    columns = []
+    events = []
+    for equipment in availability['equipment']:
+        slug = equipment['reservation_slug']
+        columns.append({'id': slug, 'name': equipment['name']})
+        for reservation in equipment['reservations']:
+            starts_at = datetime.fromisoformat(reservation['starts_at']).replace(tzinfo=None)
+            ends_at = datetime.fromisoformat(reservation['ends_at']).replace(tzinfo=None)
+            events.append({
+                'resource': slug,
+                'start': utc_naive_to_local(starts_at).replace(tzinfo=None).isoformat(timespec='seconds'),
+                'end': utc_naive_to_local(ends_at).replace(tzinfo=None).isoformat(timespec='seconds'),
+                'text': 'Reserved',
+                'backColor': '#2f6f73',
+                'barColor': '#164e52',
+                'fontColor': '#ffffff',
+            })
+
+    data = {
+        'generatedAt': now.isoformat(),
+        'timeZone': str(MAKERSPACE_TIMEZONE),
+        'startDate': now.astimezone(MAKERSPACE_TIMEZONE).date().isoformat(),
+        'columns': columns,
+        'events': events,
+    }
+    daypilot_source = (Path(current_app.static_folder) / 'js' / 'daypilot-javascript.min.js').read_text(
+        encoding='utf-8'
+    )
+    html = render_template(
+        'public/static_reservations.html',
+        daypilot_source=daypilot_source,
+        generated_year=now.astimezone(MAKERSPACE_TIMEZONE).year,
+    )
+    return html, json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+
+
 def push(html_content: str) -> None:
     """Push the rendered static page to the configured destination.
 
@@ -80,7 +131,7 @@ def push(html_content: str) -> None:
 
     invalidation_id: str | None = None
     if method == 'local':
-        _push_local(html_content, target)
+        _push_local(html_content, target, 'index.html')
     elif method == 's3':
         invalidation_id = _push_s3(html_content, target)
     elif method == 'gcs':
@@ -96,7 +147,7 @@ def push(html_content: str) -> None:
     logger.info('Static page pushed via %s to %s', method, target)
 
 
-def _push_local(html_content: str, target_path: str) -> None:
+def _push_local(content: str, target_path: str, filename: str) -> None:
     """Write the static page HTML to a local directory.
 
     Writes to {target_path}/index.html, creating the directory if needed.
@@ -110,15 +161,36 @@ def _push_local(html_content: str, target_path: str) -> None:
     """
     try:
         os.makedirs(target_path, exist_ok=True)
-        output_path = os.path.join(target_path, 'index.html')
+        output_path = os.path.join(target_path, filename)
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
+            f.write(content)
         logger.info('Static page written to %s', output_path)
     except OSError as e:
         raise RuntimeError(f'Failed to write static page to {target_path}: {e}') from e
 
 
-def _push_s3(html_content: str, target: str) -> str | None:
+def _object_target(target: str, filename: str | None = None) -> tuple[str, str]:
+    """Return bucket and key, placing named artifacts beside the configured key."""
+    parts = target.split('/', 1)
+    bucket = parts[0]
+    if not bucket:
+        raise RuntimeError(f'Invalid object target {target!r}: bucket name is empty')
+    configured_key = parts[1] if len(parts) > 1 and parts[1] else 'index.html'
+    if filename:
+        key = posixpath.join(posixpath.dirname(configured_key), filename)
+    else:
+        key = configured_key
+    return bucket, key
+
+
+def _push_s3(
+    content: str,
+    target: str,
+    *,
+    filename: str | None = None,
+    content_type: str = HTML_CONTENT_TYPE,
+    invalidate: bool = True,
+) -> str | None:
     """Upload the static page HTML to an S3 bucket.
 
     Target format: "bucket-name/optional/key/path" (key defaults to index.html
@@ -145,21 +217,19 @@ def _push_s3(html_content: str, target: str) -> str | None:
     except ImportError as e:
         raise RuntimeError('boto3 is required for S3 push method. Install it with: pip install boto3') from e
 
-    # Parse target: "bucket-name/optional/key/path"
-    parts = target.split('/', 1)
-    bucket = parts[0]
-    if not bucket:
-        raise RuntimeError(f'Invalid S3 target {target!r}: bucket name is empty')
-    key = parts[1] if len(parts) > 1 and parts[1] else 'index.html'
+    try:
+        bucket, key = _object_target(target, filename)
+    except RuntimeError as e:
+        raise RuntimeError(str(e).replace('object target', 'S3 target')) from e
 
     try:
         s3 = boto3.client('s3')
         s3.put_object(
             Bucket=bucket,
             Key=key,
-            Body=html_content.encode('utf-8'),
-            ContentType='text/html; charset=utf-8',
-            CacheControl='no-cache, no-store, must-revalidate',
+            Body=content.encode('utf-8'),
+            ContentType=content_type,
+            CacheControl=CACHE_CONTROL,
         )
         logger.info('Static page uploaded to s3://%s/%s', bucket, key)
     except NoCredentialsError as e:
@@ -170,12 +240,12 @@ def _push_s3(html_content: str, target: str) -> str | None:
         raise RuntimeError(f'S3 upload failed ({error_code}): {error_msg}') from e
 
     distribution_id = current_app.config.get('CLOUDFRONT_DISTRIBUTION_ID', '')
-    if distribution_id:
-        return _create_cloudfront_invalidation(distribution_id, key)
+    if distribution_id and invalidate:
+        return _create_cloudfront_invalidation(distribution_id, [key])
     return None
 
 
-def _create_cloudfront_invalidation(distribution_id: str, key: str) -> str:
+def _create_cloudfront_invalidation(distribution_id: str, keys: list[str]) -> str:
     """Create a CloudFront invalidation for the given object key.
 
     Args:
@@ -197,20 +267,20 @@ def _create_cloudfront_invalidation(distribution_id: str, key: str) -> str:
     import boto3
     from botocore.exceptions import ClientError, NoCredentialsError
 
-    path = '/' + quote(key.lstrip('/'), safe='/')
+    paths = ['/' + quote(key.lstrip('/'), safe='/') for key in keys]
     try:
         cf = boto3.client('cloudfront')
         response = cf.create_invalidation(
             DistributionId=distribution_id,
             InvalidationBatch={
-                'Paths': {'Quantity': 1, 'Items': [path]},
+                'Paths': {'Quantity': len(paths), 'Items': paths},
                 'CallerReference': f'esb-{uuid.uuid4()}',
             },
         )
         invalidation_id = response['Invalidation']['Id']
         logger.info(
             'Created CloudFront invalidation %s for distribution %s path %s',
-            invalidation_id, distribution_id, path,
+            invalidation_id, distribution_id, ', '.join(paths),
         )
         return invalidation_id
     except NoCredentialsError as e:
@@ -221,7 +291,13 @@ def _create_cloudfront_invalidation(distribution_id: str, key: str) -> str:
         raise RuntimeError(f'CloudFront invalidation failed ({error_code}): {error_msg}') from e
 
 
-def _push_gcs(html_content: str, target: str) -> None:
+def _push_gcs(
+    content: str,
+    target: str,
+    *,
+    filename: str | None = None,
+    content_type: str = HTML_CONTENT_TYPE,
+) -> None:
     """Upload the static page HTML to a Google Cloud Storage bucket.
 
     Target format: "bucket-name/optional/key/path" (key defaults to index.html
@@ -243,19 +319,17 @@ def _push_gcs(html_content: str, target: str) -> None:
             'google-cloud-storage is required for GCS push method. Install it with: pip install google-cloud-storage'
         ) from e
 
-    # Parse target: "bucket-name/optional/key/path"
-    parts = target.split('/', 1)
-    bucket = parts[0]
-    if not bucket:
-        raise RuntimeError(f'Invalid GCS target {target!r}: bucket name is empty')
-    key = parts[1] if len(parts) > 1 and parts[1] else 'index.html'
+    try:
+        bucket, key = _object_target(target, filename)
+    except RuntimeError as e:
+        raise RuntimeError(str(e).replace('object target', 'GCS target')) from e
 
     try:
         client = storage.Client()
         bucket_obj = client.bucket(bucket)
         blob = bucket_obj.blob(key)
-        blob.cache_control = 'no-cache, no-store, must-revalidate'
-        blob.upload_from_string(html_content, content_type='text/html; charset=utf-8')
+        blob.cache_control = CACHE_CONTROL
+        blob.upload_from_string(content, content_type=content_type)
         logger.info('Static page uploaded to gs://%s/%s', bucket, key)
     except DefaultCredentialsError as e:
         raise RuntimeError('Google Cloud credentials not configured for GCS push') from e
@@ -270,3 +344,30 @@ def generate_and_push() -> None:
     """
     html = generate()
     push(html)
+
+
+def generate_and_push_reservations() -> None:
+    """Generate and publish the standalone reservation HTML and JSON files."""
+    html, json_content = generate_reservations()
+    method = current_app.config.get('STATIC_PAGE_PUSH_METHOD', 'local')
+    target = current_app.config.get('STATIC_PAGE_PUSH_TARGET', '')
+    if not target:
+        raise RuntimeError('STATIC_PAGE_PUSH_TARGET is not configured')
+
+    invalidation_id = None
+    if method == 'local':
+        _push_local(json_content, target, 'reservations.json')
+        _push_local(html, target, 'reservations.html')
+    elif method == 's3':
+        _push_s3(json_content, target, filename='reservations.json', content_type=JSON_CONTENT_TYPE)
+        invalidation_id = _push_s3(html, target, filename='reservations.html')
+    elif method == 'gcs':
+        _push_gcs(json_content, target, filename='reservations.json', content_type=JSON_CONTENT_TYPE)
+        _push_gcs(html, target, filename='reservations.html')
+    else:
+        raise RuntimeError(f'Unknown STATIC_PAGE_PUSH_METHOD: {method!r}')
+
+    mutation_data = {'method': method, 'target': target, 'artifacts': ['reservations.json', 'reservations.html']}
+    if invalidation_id:
+        mutation_data['cloudfront_invalidation_id'] = invalidation_id
+    log_mutation('static_page.pushed', 'system', mutation_data)

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
+    <title>Equipment Reservations</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 1rem; color: #212529; background: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        main { max-width: 1200px; margin: 0 auto; }
+        h1 { margin: 0 0 0.5rem; font-size: 1.6rem; }
+        .instructions, .message { padding: 0.8rem 1rem; border: 1px solid #b6d4fe; border-radius: 0.4rem; background: #cfe2ff; }
+        .controls { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.5rem; margin: 1rem 0; }
+        button, input { min-height: 2.25rem; padding: 0.35rem 0.65rem; border: 1px solid #6c757d; border-radius: 0.3rem; background: #fff; color: #212529; font: inherit; }
+        button { cursor: pointer; }
+        button:hover { background: #e9ecef; }
+        .calendar-card { overflow-x: auto; padding: 0.5rem; border: 1px solid #dee2e6; border-radius: 0.4rem; background: #fff; }
+        .message { margin-top: 1rem; border-color: #ffecb5; background: #fff3cd; }
+        .hidden { display: none; }
+        .generated-at { margin-top: 0.75rem; color: #495057; font-size: 0.85rem; text-align: right; }
+        footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #dee2e6; color: #6c757d; font-size: 0.8rem; text-align: center; }
+        footer a { color: inherit; }
+        .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Equipment Reservations</h1>
+    <p class="instructions">This calendar is read-only. Create or change a reservation through Slack or from inside the makerspace.</p>
+    <div class="controls">
+        <button type="button" id="reservation-prev-day">Previous</button>
+        <label class="visually-hidden" for="reservation-date">Reservation date</label>
+        <input type="date" id="reservation-date">
+        <button type="button" id="reservation-next-day">Next</button>
+    </div>
+    <div class="calendar-card" id="reservation-calendar-card">
+        <div id="reservation-calendar" aria-label="Reservation calendar"></div>
+    </div>
+    <p class="message" id="reservation-message" role="status">Loading reservation availability…</p>
+    <p class="generated-at hidden" id="reservation-generated-at"></p>
+</main>
+<footer>&copy; {{ generated_year }} Jason Antman / Decatur Makers. <a href="https://github.com/DecaturMakers/equipment-status-board" rel="noopener noreferrer">Source code</a> is MIT licensed.</footer>
+<script>{{ daypilot_source|safe }}</script>
+<script>
+(() => {
+    const calendarElement = document.getElementById('reservation-calendar');
+    const calendarCard = document.getElementById('reservation-calendar-card');
+    const dateInput = document.getElementById('reservation-date');
+    const message = document.getElementById('reservation-message');
+    const generatedAt = document.getElementById('reservation-generated-at');
+
+    const showMessage = (text) => {
+        message.textContent = text;
+        message.classList.remove('hidden');
+        calendarCard.classList.add('hidden');
+    };
+    const changeDate = (days) => {
+        const current = new Date(`${dateInput.value}T12:00:00`);
+        current.setDate(current.getDate() + days);
+        const year = current.getFullYear();
+        const month = String(current.getMonth() + 1).padStart(2, '0');
+        const day = String(current.getDate()).padStart(2, '0');
+        dateInput.value = `${year}-${month}-${day}`;
+        window.reservationCalendar?.update({startDate: dateInput.value});
+    };
+
+    fetch(new URL('reservations.json', document.baseURI), {cache: 'no-store'})
+        .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        })
+        .then((data) => {
+            if (!Array.isArray(data.columns) || !Array.isArray(data.events) || !data.startDate) {
+                throw new Error('Invalid reservation data');
+            }
+            dateInput.value = data.startDate;
+            generatedAt.textContent = `Availability generated: ${new Date(data.generatedAt).toLocaleString()}`;
+            generatedAt.classList.remove('hidden');
+            if (!data.columns.length) {
+                showMessage('No reservable tools are configured yet.');
+                return;
+            }
+            if (!window.DayPilot) throw new Error('Calendar library unavailable');
+
+            message.classList.add('hidden');
+            calendarCard.classList.remove('hidden');
+            const calendar = new DayPilot.Calendar('reservation-calendar', {
+                viewType: 'Resources',
+                startDate: data.startDate,
+                columns: data.columns,
+                events: data.events,
+                eventMoveHandling: 'Disabled',
+                eventResizeHandling: 'Disabled',
+                timeRangeSelectedHandling: 'Disabled',
+                eventClickHandling: 'Disabled',
+                eventDeleteHandling: 'Disabled',
+                durationBarVisible: false,
+                cellHeight: 28,
+                businessBeginsHour: 7,
+                businessEndsHour: 23,
+                showNonBusiness: false,
+                headerHeight: 34,
+            });
+            calendar.init();
+            window.reservationCalendar = calendar;
+        })
+        .catch(() => showMessage('Reservation availability could not be loaded. Please try again later.'));
+
+    dateInput.addEventListener('change', () => window.reservationCalendar?.update({startDate: dateInput.value}));
+    document.getElementById('reservation-prev-day').addEventListener('click', () => changeDate(-1));
+    document.getElementById('reservation-next-day').addEventListener('click', () => changeDate(1));
+})();
+</script>
+</body>
+</html>
