@@ -541,7 +541,10 @@ class TestEquipmentReservationSettings:
         get_response = staff_client.get(f'/equipment/{equipment.id}/reservations/settings')
         post_response = staff_client.post(
             f'/equipment/{equipment.id}/reservations/settings',
-            data=self._data(),
+            data=self._data(
+                min_advance_notice_minutes='2', min_advance_notice_minutes_unit='hours',
+                max_advance_notice_minutes='14', max_advance_notice_minutes_unit='days',
+            ),
             follow_redirects=True,
         )
 
@@ -553,6 +556,10 @@ class TestEquipmentReservationSettings:
             _db.select(EquipmentReservationSettings).filter_by(equipment_id=equipment.id)
         ).scalar_one()
         assert settings.reservation_slug == 'settings-view-tool'
+        assert settings.min_advance_notice_minutes == 120
+        assert settings.max_advance_notice_minutes == 20160
+        assert b'Booking interval' in get_response.data
+        assert b'value="days" selected' in get_response.data
 
     def test_zero_minimum_advance_notice_is_accepted(self, staff_client, make_equipment):
         equipment = make_equipment('Zero Notice Tool', 'Co', 'Model')
@@ -607,6 +614,20 @@ class TestEquipmentReservationSettings:
 
         assert response.status_code == 200
         assert b'Minimum reservation duration must align to slot granularity' in response.data
+
+    def test_invalid_policy_preserves_duration_units(self, staff_client, make_equipment):
+        equipment = make_equipment('Duration Policy Tool', 'Co', 'Model')
+        response = staff_client.post(
+            f'/equipment/{equipment.id}/reservations/settings',
+            data=self._data(
+                min_duration_minutes='3', min_duration_minutes_unit='hours',
+            ),
+        )
+
+        assert response.status_code == 200
+        assert b'Maximum reservation duration must be at least the minimum duration' in response.data
+        assert re.search(rb'id="min_duration_minutes"[^>]*value="3"', response.data)
+        assert b'value="hours" selected' in response.data
 
     def test_duplicate_slug_shows_an_inline_error(
         self, staff_client, make_area, make_equipment,

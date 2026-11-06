@@ -96,8 +96,19 @@ def filesize(value):
     return f'{size:.1f} TB'
 
 
+def format_duration(value):
+    """Format whole minutes as days, hours, and minutes."""
+    parts = []
+    for label, divisor in (("day", 1440), ("hour", 60), ("minute", 1)):
+        count, value = divmod(value, divisor)
+        if count:
+            parts.append(f"{count} {label}{'s' if count != 1 else ''}")
+    return " ".join(parts) or "0 minutes"
+
+
 def register_filters(app):
     """Register all custom Jinja2 filters with the Flask app."""
+    app.jinja_env.filters['format_duration'] = format_duration
     app.jinja_env.filters['format_date'] = format_date
     app.jinja_env.filters['format_datetime'] = format_datetime
     app.jinja_env.filters['relative_time'] = relative_time

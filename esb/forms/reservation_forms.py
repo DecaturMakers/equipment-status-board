@@ -4,7 +4,6 @@ from flask_wtf import FlaskForm
 from wtforms import (
     DateField,
     HiddenField,
-    IntegerField,
     SelectField,
     SubmitField,
     TextAreaField,
@@ -12,6 +11,7 @@ from wtforms import (
 )
 from wtforms.validators import DataRequired, InputRequired, Length, NumberRange, Optional, ValidationError
 
+from esb.forms.duration_field import DurationMinutesField
 from esb.models.reservation import RESERVATION_TYPE_ADMIN_HOLD, RESERVATION_TYPE_MEMBER
 
 
@@ -28,8 +28,8 @@ class AdminReservationCreateForm(FlaskForm):
     owner_user_id = SelectField("Member", coerce=int, validators=[Optional()])
     start_date = DateField("Start date", validators=[DataRequired()], format="%Y-%m-%d")
     start_time = TimeField("Start time", validators=[DataRequired()], format="%H:%M")
-    duration_minutes = IntegerField(
-        "Duration (minutes)",
+    duration_minutes = DurationMinutesField(
+        "Duration",
         validators=[InputRequired(), NumberRange(min=1)],
     )
     notes = TextAreaField("Note", validators=[DataRequired(), Length(max=5000)])

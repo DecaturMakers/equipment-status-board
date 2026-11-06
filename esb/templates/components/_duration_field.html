@@ -1,0 +1,20 @@
+{% macro duration_field(field, minimum=1, help_text=None) %}
+<fieldset>
+    <legend class="form-label fs-6">{{ field.label.text }}</legend>
+    <div class="d-flex gap-2">
+        <label class="visually-hidden" for="{{ field.id }}">{{ field.label.text }} amount</label>
+        {{ field(class="form-control" ~ (" is-invalid" if field.errors else ""), min=minimum, step=1, aria_invalid="true" if field.errors else "false", aria_describedby=field.id ~ '-feedback') }}
+        <label class="visually-hidden" for="{{ field.id }}_unit">{{ field.label.text }} unit</label>
+        <select class="form-select{{ ' is-invalid' if field.errors else '' }}" id="{{ field.id }}_unit" name="{{ field.name }}_unit" aria-describedby="{{ field.id }}-feedback">
+            {% if field.unit not in ['days', 'hours', 'minutes'] %}<option value="{{ field.unit }}" selected>{{ field.unit }}</option>{% endif %}
+            {% for unit, label, multiplier in field.units %}
+            <option value="{{ unit }}"{{ ' selected' if field.unit == unit else '' }}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div id="{{ field.id }}-feedback">
+        {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+        {% if help_text %}<div class="form-text">{{ help_text }}</div>{% endif %}
+    </div>
+</fieldset>
+{% endmacro %}
