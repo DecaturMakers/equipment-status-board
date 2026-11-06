@@ -314,11 +314,12 @@ class TestAdminReservationCreation:
 
         response = staff_client.post(
             "/admin/reservations/new",
-            data=self._data(equipment, staff_user.id),
+            data=self._data(equipment, staff_user.id, duration_minutes="1", duration_minutes_unit="hours"),
         )
 
         assert response.status_code == 302
         reservation = _db.session.execute(_db.select(Reservation).filter_by(equipment_id=equipment.id)).scalar_one()
+        assert reservation.ends_at - reservation.starts_at == timedelta(hours=1)
         assert reservation.user_id == staff_user.id
         assert reservation.reservation_type == "member"
         assert reservation.created_via == "admin"
@@ -409,6 +410,7 @@ class TestAdminReservationCreation:
         data = self._data(equipment, staff_user.id, duration_minutes="60")
 
         review = staff_client.post("/admin/reservations/new", data=data)
+        assert b"1 hour" in review.data
         token = self._confirmation_token(review)
         local_start = datetime.strptime(
             f"{data['start_date']} {data['start_time']}",
@@ -461,6 +463,8 @@ class TestAdminReservationCreation:
             equipment,
             staff_user.id,
             notes="Replacement admin note",
+            duration_minutes="1",
+            duration_minutes_unit="hours",
         )
         get_response = staff_client.get(f"/admin/reservations/{original.id}/edit")
         response = staff_client.post(
@@ -470,6 +474,7 @@ class TestAdminReservationCreation:
 
         assert get_response.status_code == 200
         assert b"Edit Reservation" in get_response.data
+        assert b'value="hours" selected' in get_response.data
         assert response.status_code == 302
         updated_original = _db.session.get(Reservation, original.id)
         replacement = _db.session.execute(
@@ -477,6 +482,7 @@ class TestAdminReservationCreation:
         ).scalar_one()
         assert updated_original.status == "canceled"
         assert replacement.status == "active"
+        assert replacement.ends_at - replacement.starts_at == timedelta(hours=1)
         assert replacement.notes == "Replacement admin note"
         assert replacement.created_by_user_id == staff_user.id
 
