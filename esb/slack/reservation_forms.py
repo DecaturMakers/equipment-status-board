@@ -107,11 +107,31 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
             'block_id': 'reservation_intro_block',
             'text': {
                 'type': 'mrkdwn',
-                'text': 'Choose a tool to view availability or start a reservation.',
+                'text': 'View the availability dashboard or choose a tool to reserve.',
             },
         },
-        {'type': 'divider'},
     ]
+    elements = []
+    if availability_url:
+        elements.append(
+            _button(
+                'Availability Dashboard',
+                'reservation_view_availability',
+                'availability-dashboard',
+                url=availability_url,
+            )
+        )
+    elements.append(
+        _button('My reservations', 'reservation_view_mine', 'stub-my-reservations')
+    )
+    blocks.append(
+        {
+            'type': 'actions',
+            'block_id': 'reservation_member_actions_block',
+            'elements': elements,
+        }
+    )
+    blocks.append({'type': 'divider'})
 
     for item in availability['equipment']:
         equipment_id = str(item['id'])
@@ -134,15 +154,6 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
                 style='primary',
             )
         ]
-        if availability_url:
-            elements.append(
-                _button(
-                    'Availability',
-                    'reservation_view_availability',
-                    equipment_id,
-                    url=availability_url,
-                )
-            )
         blocks.append(
             {
                 'type': 'actions',
@@ -164,20 +175,6 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
             }
         )
         blocks.append({'type': 'divider'})
-
-    blocks.append(
-        {
-            'type': 'actions',
-            'block_id': 'reservation_member_actions_block',
-            'elements': [
-                _button(
-                    'My reservations',
-                    'reservation_view_mine',
-                    'stub-my-reservations',
-                ),
-            ],
-        }
-    )
 
     return {
         'type': 'modal',

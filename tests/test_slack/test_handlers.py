@@ -172,7 +172,7 @@ class TestEsbReserveCommand:
             for block in modal['blocks']
             if block.get('type') == 'section'
         )
-        assert 'Choose a tool to view availability or start a reservation.' in rendered_text
+        assert 'View the availability dashboard or choose a tool to reserve.' in rendered_text
         assert '*Laser Cutter*\nStatus: Available now' in rendered_text
         assert '*CNC Router*\nStatus: Reserved until ' in rendered_text
         assert '3D Printer' not in rendered_text
@@ -182,27 +182,39 @@ class TestEsbReserveCommand:
             block for block in modal['blocks']
             if block.get('block_id') == f'reservation_tool_{self.laser.id}_actions_block'
         ][0]
-        assert [element['text']['text'] for element in laser_actions['elements']] == ['Reserve', 'Availability']
+        assert [element['text']['text'] for element in laser_actions['elements']] == ['Reserve']
         assert laser_actions['elements'][0]['value'] == str(self.laser.id)
-        assert laser_actions['elements'][1]['url'] == 'https://status.example.com/reservations/'
 
         cnc_actions = [
             block for block in modal['blocks']
             if block.get('block_id') == f'reservation_tool_{self.cnc.id}_actions_block'
         ][0]
-        assert [element['text']['text'] for element in cnc_actions['elements']] == ['Reserve', 'Availability']
+        assert [element['text']['text'] for element in cnc_actions['elements']] == ['Reserve']
         assert cnc_actions['elements'][0]['value'] == str(self.cnc.id)
-        assert cnc_actions['elements'][1]['url'] == 'https://status.example.com/reservations/'
+
+        dashboard_actions = [
+            block for block in modal['blocks']
+            if block.get('block_id') == 'reservation_member_actions_block'
+        ]
+        assert len(dashboard_actions) == 1
+        dashboard_button = dashboard_actions[0]['elements'][0]
+        assert dashboard_button['text']['text'] == 'Availability Dashboard'
+        assert dashboard_button['action_id'] == 'reservation_view_availability'
+        assert dashboard_button['url'] == 'https://status.example.com/reservations/'
+        assert modal['blocks'].index(dashboard_actions[0]) < modal['blocks'].index(laser_actions)
 
         member_actions = [
             block for block in modal['blocks']
             if block.get('block_id') == 'reservation_member_actions_block'
         ][0]
-        assert member_actions['elements'][0]['text']['text'] == 'My reservations'
-        assert member_actions['elements'][0]['action_id'] == 'reservation_view_mine'
+        assert [element['text']['text'] for element in member_actions['elements']] == [
+            'Availability Dashboard', 'My reservations',
+        ]
+        assert member_actions['elements'][1]['text']['text'] == 'My reservations'
+        assert member_actions['elements'][1]['action_id'] == 'reservation_view_mine'
 
-    def test_reserve_landing_hides_availability_buttons_without_public_url(self):
-        """/esb-reserve omits inert Availability buttons when no URL is configured."""
+    def test_reserve_landing_hides_dashboard_button_without_public_url(self):
+        """/esb-reserve omits the dashboard button when no URL is configured."""
         self.app.config['STATIC_RESERVATIONS_PUBLIC_URL'] = ''
         ack = MagicMock()
         client = MagicMock()
@@ -225,6 +237,17 @@ class TestEsbReserveCommand:
             and block.get('type') == 'actions'
         ]
         assert action_blocks
+        member_actions = next(
+            block for block in modal['blocks']
+            if block.get('block_id') == 'reservation_member_actions_block'
+        )
+        assert [element['text']['text'] for element in member_actions['elements']] == ['My reservations']
+        assert modal['blocks'].index(member_actions) < modal['blocks'].index(action_blocks[0])
+        assert not any(
+            element.get('action_id') == 'reservation_view_availability'
+            for block in modal['blocks']
+            for element in block.get('elements', [])
+        )
         for block in action_blocks:
             assert [element['text']['text'] for element in block['elements']] == ['Reserve']
 
