@@ -180,17 +180,19 @@ class TestEsbReserveCommand:
 
         laser_actions = [
             block for block in modal['blocks']
-            if block.get('block_id') == f'reservation_tool_{self.laser.id}_actions_block'
+            if block.get('block_id') == f'reservation_tool_{self.laser.id}_status_block'
         ][0]
-        assert [element['text']['text'] for element in laser_actions['elements']] == ['Reserve']
-        assert laser_actions['elements'][0]['value'] == str(self.laser.id)
+        assert laser_actions['accessory']['text']['text'] == 'Reserve'
+        assert laser_actions['accessory']['action_id'] == 'reservation_start_reserve'
+        assert laser_actions['accessory']['value'] == str(self.laser.id)
 
         cnc_actions = [
             block for block in modal['blocks']
-            if block.get('block_id') == f'reservation_tool_{self.cnc.id}_actions_block'
+            if block.get('block_id') == f'reservation_tool_{self.cnc.id}_status_block'
         ][0]
-        assert [element['text']['text'] for element in cnc_actions['elements']] == ['Reserve']
-        assert cnc_actions['elements'][0]['value'] == str(self.cnc.id)
+        assert cnc_actions['accessory']['text']['text'] == 'Reserve'
+        assert cnc_actions['accessory']['action_id'] == 'reservation_start_reserve'
+        assert cnc_actions['accessory']['value'] == str(self.cnc.id)
 
         dashboard_actions = [
             block for block in modal['blocks']
@@ -202,6 +204,8 @@ class TestEsbReserveCommand:
         assert dashboard_button['action_id'] == 'reservation_view_availability'
         assert dashboard_button['url'] == 'https://status.example.com/reservations/'
         assert modal['blocks'].index(dashboard_actions[0]) < modal['blocks'].index(laser_actions)
+        assert sum(block['type'] == 'divider' for block in modal['blocks']) == 1
+        assert sum(block['type'] == 'actions' for block in modal['blocks']) == 1
 
         member_actions = [
             block for block in modal['blocks']
@@ -234,7 +238,7 @@ class TestEsbReserveCommand:
         action_blocks = [
             block for block in modal['blocks']
             if block.get('block_id', '').startswith('reservation_tool_')
-            and block.get('type') == 'actions'
+            and block.get('type') == 'section'
         ]
         assert action_blocks
         member_actions = next(
@@ -249,7 +253,7 @@ class TestEsbReserveCommand:
             for element in block.get('elements', [])
         )
         for block in action_blocks:
-            assert [element['text']['text'] for element in block['elements']] == ['Reserve']
+            assert block['accessory']['text']['text'] == 'Reserve'
 
     def test_reserve_command_blocks_inactive_esb_user(self):
         self.user.is_active = False

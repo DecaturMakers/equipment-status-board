@@ -143,25 +143,14 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
                     'type': 'mrkdwn',
                     'text': f'*{item["name"]}*\nStatus: {_availability_status(item, now)}',
                 },
+                'accessory': _button(
+                    'Reserve',
+                    'reservation_start_reserve',
+                    equipment_id,
+                    style='primary',
+                ),
             }
         )
-
-        elements = [
-            _button(
-                'Reserve',
-                'reservation_start_reserve',
-                equipment_id,
-                style='primary',
-            )
-        ]
-        blocks.append(
-            {
-                'type': 'actions',
-                'block_id': f'reservation_tool_{equipment_id}_actions_block',
-                'elements': elements,
-            }
-        )
-        blocks.append({'type': 'divider'})
 
     if not availability['equipment']:
         blocks.append(
