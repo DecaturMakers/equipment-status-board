@@ -133,7 +133,9 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
     )
     blocks.append({'type': 'divider'})
 
-    for item in availability['equipment']:
+    for index, item in enumerate(availability['equipment']):
+        if index:
+            blocks.append({'type': 'divider'})
         equipment_id = str(item['id'])
         blocks.append(
             {

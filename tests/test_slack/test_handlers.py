@@ -204,7 +204,14 @@ class TestEsbReserveCommand:
         assert dashboard_button['action_id'] == 'reservation_view_availability'
         assert dashboard_button['url'] == 'https://status.example.com/reservations/'
         assert modal['blocks'].index(dashboard_actions[0]) < modal['blocks'].index(laser_actions)
-        assert sum(block['type'] == 'divider' for block in modal['blocks']) == 1
+        assert sum(block['type'] == 'divider' for block in modal['blocks']) == 2
+        equipment_blocks = [
+            block for block in modal['blocks']
+            if block.get('block_id', '').startswith('reservation_tool_')
+        ]
+        first_index = modal['blocks'].index(equipment_blocks[0])
+        assert modal['blocks'][first_index + 1] == {'type': 'divider'}
+        assert modal['blocks'][first_index + 2] == equipment_blocks[1]
         assert sum(block['type'] == 'actions' for block in modal['blocks']) == 1
 
         member_actions = [
