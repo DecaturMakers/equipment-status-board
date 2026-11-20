@@ -28,9 +28,18 @@ from esb.extensions import db
 from esb.models.equipment import Equipment
 from esb.models.machine_activity_event import MachineActivityEvent
 from esb.models.machine_status import MAC_MACHINE_STATUSES, MachineStatus
+from esb.utils.exceptions import ValidationError
 from esb.utils.logging import log_mutation
 
 logger = logging.getLogger(__name__)
+
+
+class MacMachineNotFoundError(RuntimeError):
+    """MAC answered HTTP 404 to a control call: no machine has that ``name``.
+
+    Retrying cannot help (the machine will not appear on its own), so the
+    notification worker fails a ``mac_clear`` permanently on this error.
+    """
 
 # Per-call outbound HTTP timeout (seconds). Mirrors the explicit-timeout pattern
 # the Slack client uses so a hung MAC cannot wedge a request/worker indefinitely.
@@ -130,6 +139,12 @@ def _control_request(method: str, kind: str, name: str) -> bool:
             return True
         raise RuntimeError(f'MAC {method.upper()} {url} failed: 503 without action_applied')
 
+    if resp.status_code == 404:
+        raise MacMachineNotFoundError(
+            f'MAC {method.upper()} {url} failed: HTTP 404 -- MAC has no machine named {name!r}. '
+            f'Check that the equipment\'s MAC Machine Name is the machine\'s MAC "name" '
+            f'(e.g. "mac-mcu-..."), not its display name.'
+        )
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f'MAC {method.upper()} {url} failed: HTTP {resp.status_code}')
     return False
@@ -375,6 +390,40 @@ def visible_statuses(surface: str) -> set[str]:
         if config_service.get_config(key, default) == 'true':
             visible.add(status)
     return visible
+
+
+def resolve_machine_name(value: str) -> str:
+    """Validate an admin-entered MAC machine name against the status cache.
+
+    Returns MAC's own spelling of the matching ``name`` (case-insensitive match).
+    The cache (``MachineStatus``) mirrors ``GET /api/machines``: the worker
+    refreshes it every ~60s and reconciles away machines MAC no longer reports.
+
+    When MAC is disabled or the cache is empty (MAC not polled yet), the value
+    is returned unchanged: there is nothing to check against.
+
+    Raises:
+        ValidationError: if the cache has machines but none is named ``value``.
+            When ``value`` matches a machine's ``display_name``, the message
+            names the ``name`` to use instead (issue #90).
+    """
+    if not mac_enabled():
+        return value
+    rows = db.session.execute(db.select(MachineStatus)).scalars().all()
+    if not rows:
+        return value
+    lowered = value.lower()
+    for row in rows:
+        if row.machine_name.lower() == lowered:
+            return row.machine_name
+    for row in rows:
+        if row.display_name and row.display_name.lower() == lowered:
+            raise ValidationError(
+                f'MAC machine name {value!r} is the display name of MAC machine '
+                f'{row.machine_name!r}. Use {row.machine_name!r}, the machine\'s MAC name.'
+            )
+    known = ', '.join(sorted(r.machine_name for r in rows))
+    raise ValidationError(f'MAC has no machine named {value!r}. Known MAC machine names: {known}')
 
 
 def get_status_for_equipment(equipment) -> MachineStatus | None:

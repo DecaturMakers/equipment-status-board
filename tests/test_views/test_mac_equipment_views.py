@@ -7,6 +7,7 @@ import pytest
 
 from esb.extensions import db
 from esb.models.machine_activity_event import MachineActivityEvent
+from esb.models.machine_status import MachineStatus
 from esb.services import config_service, equipment_service, mac_service
 from esb.utils.exceptions import ValidationError
 
@@ -199,3 +200,69 @@ class TestAdminToggles:
             'mac_show_public_locked_out': 'y',
         })
         assert config_service.get_config('mac_show_public_in_use', 'false') == 'true'
+
+
+class TestMacNameValidation:
+    """Issue #90: a MAC machine name must be MAC's ``name``, not its display name."""
+
+    @pytest.fixture
+    def cached_resaw(self, mac_url):
+        db.session.add(MachineStatus(machine_name='mac-mcu-resaw', display_name='Resaw', status='idle'))
+        db.session.add(MachineStatus(machine_name='mac-mcu-planer', display_name='Planer', status='idle'))
+        db.session.commit()
+
+    def _create(self, area, name):
+        return equipment_service.create_equipment(
+            name='Resaw', manufacturer='m', model='x', area_id=area.id,
+            created_by='t', mac_machine_name=name,
+        )
+
+    def test_display_name_rejected_with_suggestion(self, cached_resaw, make_area):
+        with pytest.raises(ValidationError, match="Use 'mac-mcu-resaw'"):
+            self._create(make_area(), 'Resaw')
+
+    def test_display_name_case_insensitive(self, cached_resaw, make_area):
+        with pytest.raises(ValidationError, match="Use 'mac-mcu-resaw'"):
+            self._create(make_area(), 'resaw')
+
+    def test_unknown_name_rejected_listing_known(self, cached_resaw, make_area):
+        with pytest.raises(ValidationError, match='mac-mcu-planer, mac-mcu-resaw'):
+            self._create(make_area(), 'bandsaw')
+
+    def test_real_name_accepted_and_canonicalized(self, cached_resaw, make_area):
+        eq = self._create(make_area(), 'MAC-MCU-Resaw')
+        assert eq.mac_machine_name == 'mac-mcu-resaw'
+
+    def test_empty_cache_skips_validation(self, mac_url, make_area):
+        eq = self._create(make_area(), 'Resaw')
+        assert eq.mac_machine_name == 'Resaw'
+
+    def test_disabled_skips_validation(self, app, make_area):
+        app.config['MAC_URL'] = ''
+        db.session.add(MachineStatus(machine_name='mac-mcu-resaw', display_name='Resaw', status='idle'))
+        db.session.commit()
+        eq = self._create(make_area(), 'Resaw')
+        assert eq.mac_machine_name == 'Resaw'
+
+    def test_edit_rejects_changed_display_name(self, cached_resaw, make_equipment):
+        eq = make_equipment()
+        with pytest.raises(ValidationError, match="Use 'mac-mcu-resaw'"):
+            equipment_service.update_equipment(eq.id, updated_by='t', mac_machine_name='Resaw')
+
+    def test_edit_unchanged_bad_name_not_blocking(self, cached_resaw, make_equipment):
+        # A pre-existing bad value doesn't block unrelated edits.
+        eq = make_equipment(mac_machine_name='Resaw')
+        equipment_service.update_equipment(eq.id, updated_by='t', mac_machine_name='Resaw', model='y')
+        db.session.refresh(eq)
+        assert eq.model == 'y'
+
+    def test_edit_form_shows_suggestion(self, cached_resaw, staff_client, make_equipment):
+        eq = make_equipment()
+        resp = staff_client.post(f'/equipment/{eq.id}/edit', data={
+            'name': eq.name, 'manufacturer': eq.manufacturer, 'model': eq.model,
+            'area_id': eq.area_id, 'mac_machine_name': 'Resaw',
+        })
+        assert resp.status_code == 200
+        assert b'mac-mcu-resaw' in resp.data
+        db.session.refresh(eq)
+        assert eq.mac_machine_name is None

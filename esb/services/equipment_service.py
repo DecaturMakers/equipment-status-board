@@ -18,6 +18,7 @@ from esb.models.equipment import Equipment
 from esb.models.equipment_note import EquipmentNote
 from esb.models.equipment_reservation_settings import EquipmentReservationSettings
 from esb.models.external_link import ExternalLink
+from esb.services import mac_service
 from esb.services.reservation_policy import validate_settings_values
 from esb.utils.exceptions import ValidationError
 from esb.utils.logging import log_mutation
@@ -402,6 +403,8 @@ def create_equipment(
         raise ValidationError(f'Area {area.name!r} is archived and cannot be used')
 
     mac_machine_name = _normalize_mac_machine_name(mac_machine_name)
+    if mac_machine_name:
+        mac_machine_name = mac_service.resolve_machine_name(mac_machine_name)
     _check_mac_machine_name_unique(mac_machine_name)
 
     equipment = Equipment(
@@ -489,6 +492,10 @@ def update_equipment(
     # so without coercion a blank '' would persist and collide with other blanks.
     if 'mac_machine_name' in fields:
         normalized = _normalize_mac_machine_name(fields['mac_machine_name'])
+        # Check against MAC only when the value changes, so an unrelated edit
+        # isn't blocked by an already-saved name.
+        if normalized and normalized != equipment.mac_machine_name:
+            normalized = mac_service.resolve_machine_name(normalized)
         fields['mac_machine_name'] = normalized
         _check_mac_machine_name_unique(normalized, exclude_id=equipment_id)
 

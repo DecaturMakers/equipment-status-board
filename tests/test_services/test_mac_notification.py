@@ -91,3 +91,46 @@ class TestMacRefresh:
             notification_service._refresh_mac_status()  # first call runs
             notification_service._refresh_mac_status()  # within 60s -> skipped
         assert calls['n'] == 1
+
+
+class TestMacClear404:
+    """Issue #90: MAC 404 (no such machine) fails the mac_clear at once."""
+
+    def test_404_raises_not_found(self, mac_url):
+        from esb.services import mac_service
+
+        with patch('esb.services.mac_service.requests') as mock_req:
+            resp = MagicMock()
+            resp.status_code = 404
+            mock_req.request.return_value = resp
+            with pytest.raises(mac_service.MacMachineNotFoundError, match="'Resaw'"):
+                mac_service.clear('Resaw')
+
+    def test_worker_fails_404_permanently_without_retry(self, mac_url):
+        from esb.models.pending_notification import PendingNotification
+        from esb.services import mac_service
+
+        notif = notification_service.queue_notification('mac_clear', 'Resaw')
+        err = mac_service.MacMachineNotFoundError('HTTP 404 for Resaw')
+        with patch.object(notification_service, 'process_notification', side_effect=err), \
+             patch('esb.services.notification_service.time') as mock_time, \
+             patch('esb.services.notification_service.signal'), \
+             patch.object(notification_service, '_refresh_mac_status'), \
+             patch.object(notification_service, '_refresh_static_reservations'):
+            mock_time.sleep.side_effect = KeyboardInterrupt
+            try:
+                notification_service.run_worker_loop(poll_interval=1)
+            except KeyboardInterrupt:
+                pass
+        db.session.expire_all()
+        saved = db.session.get(PendingNotification, notif.id)
+        assert saved.status == 'failed'
+        assert saved.retry_count == 1
+        assert saved.next_retry_at is None
+        assert 'Resaw' in saved.error_message
+
+    def test_mark_failed_permanent(self, mac_url):
+        notif = notification_service.queue_notification('mac_clear', 'Resaw')
+        updated = notification_service.mark_failed(notif.id, 'gone', permanent=True)
+        assert updated.status == 'failed'
+        assert updated.next_retry_at is None

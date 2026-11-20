@@ -14,6 +14,7 @@ from esb.extensions import db
 from esb.models.app_config import AppConfig
 from esb.models.pending_notification import PendingNotification
 from esb.models.reservation import RESERVATION_TYPE_ADMIN_HOLD, Reservation
+from esb.services.mac_service import MacMachineNotFoundError
 from esb.utils.exceptions import ValidationError
 from esb.utils.logging import log_mutation
 from esb.utils.timezones import utc_naive_to_local
@@ -300,11 +301,12 @@ def mark_delivered(notification_id: int) -> PendingNotification:
     return notification
 
 
-def mark_failed(notification_id: int, error_message: str) -> PendingNotification:
+def mark_failed(notification_id: int, error_message: str, permanent: bool = False) -> PendingNotification:
     """Mark a notification delivery as failed with exponential backoff.
 
     Backoff schedule: 30s, 1m, 2m, 5m, 15m, max 1h.
-    After MAX_RETRIES attempts, marks the notification as permanently 'failed'.
+    After MAX_RETRIES attempts, or at once when ``permanent`` is True (an error
+    a retry cannot fix), marks the notification as permanently 'failed'.
     """
     notification = db.session.get(PendingNotification, notification_id)
     if notification is None:
@@ -312,7 +314,7 @@ def mark_failed(notification_id: int, error_message: str) -> PendingNotification
     notification.retry_count += 1
     notification.error_message = error_message
 
-    if notification.retry_count >= MAX_RETRIES:
+    if permanent or notification.retry_count >= MAX_RETRIES:
         # Permanently failed — stop retrying
         notification.status = 'failed'
         notification.next_retry_at = None
@@ -678,6 +680,10 @@ def run_worker_loop(poll_interval: int = 30) -> None:
                     process_notification(notification)
                     mark_delivered(notification.id)
                     logger.info('Notification %d delivered successfully', notification.id)
+                except MacMachineNotFoundError as e:
+                    # A 404 won't change on retry: fail at once (issue #90).
+                    mark_failed(notification.id, str(e), permanent=True)
+                    logger.error('Notification %d permanently failed: %s', notification.id, e)
                 except NotImplementedError as e:
                     mark_failed(notification.id, str(e))
                     logger.warning('Notification %d: %s', notification.id, e)

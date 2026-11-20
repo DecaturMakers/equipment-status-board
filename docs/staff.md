@@ -124,10 +124,10 @@ This deployment is connected to a [Machine Access Control](https://github.com/ja
 To link a piece of equipment:
 
 1. Open the equipment's detail page and click **Edit**.
-2. Set **MAC Machine Name** to the machine's `name` in MAC (ask an administrator if you're unsure of the exact name).
+2. Set **MAC Machine Name** to the machine's `name` in MAC, such as `mac-mcu-resaw`. This is not the machine's display name (such as `Resaw`). Ask an administrator if you're unsure of the exact name.
 3. Click Save.
 
-Each MAC machine name may be linked to only one (non-archived) piece of equipment; saving a name already in use is rejected with an error. Leave the field blank to unlink.
+Each MAC machine name may be linked to only one (non-archived) piece of equipment; saving a name already in use is rejected with an error. Once ESB has fetched MAC's machine list, a name MAC doesn't know is also rejected; if you entered a display name, the error tells you the `name` to use instead. Leave the field blank to unlink.
 
 Once linked, the equipment detail page gains a **MAC Machine Status** card, and status badges appear on the dashboard, kiosk, and public equipment page (subject to the display settings — see [MAC Machine Status Display](#mac-machine-status-display)).
 
