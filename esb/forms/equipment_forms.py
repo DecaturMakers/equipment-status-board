@@ -16,6 +16,7 @@ from wtforms import (
 )
 from wtforms.validators import URL, DataRequired, InputRequired, Length, NumberRange, Optional, ValidationError
 
+from esb.forms.duration_field import DurationMinutesField
 from esb.models.document import DOCUMENT_CATEGORIES
 from esb.services.equipment_service import NOTE_MAX_LENGTH
 from esb.services.qr_service import DEFAULT_DEVICE_KEY, QR_DEVICE_PRESETS, QR_SIZE_PRESETS
@@ -106,28 +107,28 @@ class EquipmentReservationSettingsForm(FlaskForm):
         "Reservation slug",
         validators=[DataRequired(), Length(max=200)],
     )
-    min_advance_notice_minutes = IntegerField(
-        "Minimum advance notice (minutes)",
+    min_advance_notice_minutes = DurationMinutesField(
+        "Minimum advance notice",
         default=120,
         validators=[InputRequired(), NumberRange(min=0)],
     )
-    max_advance_notice_minutes = IntegerField(
-        "Maximum advance notice (minutes)",
+    max_advance_notice_minutes = DurationMinutesField(
+        "Maximum advance notice",
         default=14 * 24 * 60,
         validators=[DataRequired(), NumberRange(min=1)],
     )
-    min_duration_minutes = IntegerField(
-        "Minimum duration (minutes)",
+    min_duration_minutes = DurationMinutesField(
+        "Minimum duration",
         default=30,
         validators=[DataRequired(), NumberRange(min=1)],
     )
-    max_duration_minutes = IntegerField(
-        "Maximum duration (minutes)",
+    max_duration_minutes = DurationMinutesField(
+        "Maximum duration",
         default=120,
         validators=[DataRequired(), NumberRange(min=1)],
     )
-    slot_granularity_minutes = IntegerField(
-        "Slot granularity (minutes)",
+    slot_granularity_minutes = DurationMinutesField(
+        "Booking interval",
         default=30,
         validators=[DataRequired(), NumberRange(min=1)],
     )

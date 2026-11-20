@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/_duration_field.html" import duration_field %}
 
 {% block title %}{{ title|default('New Reservation') }} - Equipment Status Board{% endblock %}
 
@@ -46,9 +47,7 @@
                     {% for error in form.start_time.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label" for="duration_minutes">Duration (minutes)</label>
-                    {{ form.duration_minutes(class="form-control" ~ (" is-invalid" if form.duration_minutes.errors else ""), type="number", min="1") }}
-                    {% for error in form.duration_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                    {{ duration_field(form.duration_minutes) }}
                 </div>
                 <div class="col-12">
                     <label class="form-label" for="notes">Note</label>

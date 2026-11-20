@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/_duration_field.html" import duration_field %}
 
 {% block title %}Reservation Settings - {{ equipment.name }}{% endblock %}
 
@@ -33,29 +34,19 @@
 
             <div class="row">
                 <div class="col-md-6 mb-3">
-                    <label class="form-label" for="min_advance_notice_minutes">Minimum advance notice (minutes)</label>
-                    {{ form.min_advance_notice_minutes(class="form-control" ~ (" is-invalid" if form.min_advance_notice_minutes.errors else ""), type="number", min="0") }}
-                    {% for error in form.min_advance_notice_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                    {{ duration_field(form.min_advance_notice_minutes, minimum=0) }}
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label" for="max_advance_notice_minutes">Maximum advance notice (minutes)</label>
-                    {{ form.max_advance_notice_minutes(class="form-control" ~ (" is-invalid" if form.max_advance_notice_minutes.errors else ""), type="number", min="1") }}
-                    {% for error in form.max_advance_notice_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                    {{ duration_field(form.max_advance_notice_minutes) }}
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label" for="min_duration_minutes">Minimum duration (minutes)</label>
-                    {{ form.min_duration_minutes(class="form-control" ~ (" is-invalid" if form.min_duration_minutes.errors else ""), type="number", min="1") }}
-                    {% for error in form.min_duration_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                    {{ duration_field(form.min_duration_minutes) }}
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label" for="max_duration_minutes">Maximum duration (minutes)</label>
-                    {{ form.max_duration_minutes(class="form-control" ~ (" is-invalid" if form.max_duration_minutes.errors else ""), type="number", min="1") }}
-                    {% for error in form.max_duration_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                    {{ duration_field(form.max_duration_minutes) }}
                 </div>
                 <div class="col-md-6 mb-4">
-                    <label class="form-label" for="slot_granularity_minutes">Slot granularity (minutes)</label>
-                    {{ form.slot_granularity_minutes(class="form-control" ~ (" is-invalid" if form.slot_granularity_minutes.errors else ""), type="number", min="1") }}
-                    {% for error in form.slot_granularity_minutes.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+                    {{ duration_field(form.slot_granularity_minutes, help_text="Reservation start times and durations follow this interval.") }}
                 </div>
             </div>
 

@@ -18,7 +18,7 @@
             <dt class="col-sm-4">Equipment</dt><dd class="col-sm-8">{{ equipment_label }}</dd>
             <dt class="col-sm-4">Member</dt><dd class="col-sm-8">{{ member_label }}</dd>
             <dt class="col-sm-4">Start</dt><dd class="col-sm-8">{{ local_start_label }}</dd>
-            <dt class="col-sm-4">Duration</dt><dd class="col-sm-8">{{ values['duration_minutes'] }} minutes</dd>
+            <dt class="col-sm-4">Duration</dt><dd class="col-sm-8">{{ values['duration_minutes']|format_duration }}</dd>
             <dt class="col-sm-4">Note</dt><dd class="col-sm-8 text-break">{{ values['notes'] }}</dd>
         </dl>
         <form method="POST" data-submit-once>
