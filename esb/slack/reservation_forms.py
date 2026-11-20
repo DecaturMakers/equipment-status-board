@@ -107,13 +107,35 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
             'block_id': 'reservation_intro_block',
             'text': {
                 'type': 'mrkdwn',
-                'text': 'Choose a tool to view availability or start a reservation.',
+                'text': 'View the availability dashboard or choose a tool to reserve.',
             },
         },
-        {'type': 'divider'},
     ]
+    elements = []
+    if availability_url:
+        elements.append(
+            _button(
+                'Availability Dashboard',
+                'reservation_view_availability',
+                'availability-dashboard',
+                url=availability_url,
+            )
+        )
+    elements.append(
+        _button('My reservations', 'reservation_view_mine', 'stub-my-reservations')
+    )
+    blocks.append(
+        {
+            'type': 'actions',
+            'block_id': 'reservation_member_actions_block',
+            'elements': elements,
+        }
+    )
+    blocks.append({'type': 'divider'})
 
-    for item in availability['equipment']:
+    for index, item in enumerate(availability['equipment']):
+        if index:
+            blocks.append({'type': 'divider'})
         equipment_id = str(item['id'])
         blocks.append(
             {
@@ -123,34 +145,14 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
                     'type': 'mrkdwn',
                     'text': f'*{item["name"]}*\nStatus: {_availability_status(item, now)}',
                 },
-            }
-        )
-
-        elements = [
-            _button(
-                'Reserve',
-                'reservation_start_reserve',
-                equipment_id,
-                style='primary',
-            )
-        ]
-        if availability_url:
-            elements.append(
-                _button(
-                    'Availability',
-                    'reservation_view_availability',
+                'accessory': _button(
+                    'Reserve',
+                    'reservation_start_reserve',
                     equipment_id,
-                    url=availability_url,
-                )
-            )
-        blocks.append(
-            {
-                'type': 'actions',
-                'block_id': f'reservation_tool_{equipment_id}_actions_block',
-                'elements': elements,
+                    style='primary',
+                ),
             }
         )
-        blocks.append({'type': 'divider'})
 
     if not availability['equipment']:
         blocks.append(
@@ -164,20 +166,6 @@ def build_reservation_landing_modal(availability, availability_url=None, now=Non
             }
         )
         blocks.append({'type': 'divider'})
-
-    blocks.append(
-        {
-            'type': 'actions',
-            'block_id': 'reservation_member_actions_block',
-            'elements': [
-                _button(
-                    'My reservations',
-                    'reservation_view_mine',
-                    'stub-my-reservations',
-                ),
-            ],
-        }
-    )
 
     return {
         'type': 'modal',

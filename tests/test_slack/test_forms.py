@@ -745,3 +745,21 @@ class TestBuildAreaStatusModal:
         for block in modal['blocks']:
             if block['type'] == 'section':
                 assert len(block['text']['text']) <= 3000
+
+
+@pytest.mark.parametrize('url,expected', [(None, False), ('   ', False), (' https://example.com/availability ', True)])
+def test_reservation_dashboard_with_no_equipment(url, expected):
+    from esb.slack.reservation_forms import build_reservation_landing_modal
+
+    modal = build_reservation_landing_modal({'equipment': []}, availability_url=url)
+    buttons = [element for block in modal['blocks'] for element in block.get('elements', [])
+               if element.get('action_id') == 'reservation_view_availability']
+    assert len(buttons) == int(expected)
+    if expected:
+        assert buttons[0]['url'] == url.strip()
+    assert any(block.get('block_id') == 'reservation_empty_block' for block in modal['blocks'])
+    member_actions = next(block for block in modal['blocks']
+                          if block.get('block_id') == 'reservation_member_actions_block')
+    assert member_actions['elements'][-1]['action_id'] == 'reservation_view_mine'
+    empty_block = next(block for block in modal['blocks'] if block.get('block_id') == 'reservation_empty_block')
+    assert modal['blocks'].index(member_actions) < modal['blocks'].index(empty_block)
