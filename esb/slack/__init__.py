@@ -57,11 +57,31 @@ def init_slack(app):
     # service-layer call sites. Without this, slash-command handlers receive a
     # WebClient with slack_sdk's default timeout=30, which is too long for the
     # request path -- a Slack outage could wedge a handler thread.
-    _bolt_app = App(token=token, client=WebClient(token=token, timeout=15))
+    #
+    # token_verification_enabled=False skips Bolt's eager auth.test call in
+    # App.__init__. With it enabled, an unreachable Slack (DNS not up yet after
+    # a host reboot, no egress, Slack outage) raised out of create_app() and
+    # gunicorn workers failed to boot. Bolt's SingleTeamAuthorization
+    # middleware performs auth.test lazily on the first incoming request.
+    # The try/except is a second line of defense: any other construction or
+    # registration failure disables Slack for this process, matching the
+    # missing-token paths above, instead of taking down the whole app.
+    try:
+        from esb.slack.handlers import register_handlers
 
-    # Register command and view submission handlers
-    from esb.slack.handlers import register_handlers
-    register_handlers(_bolt_app, app)
+        bolt_app = App(
+            token=token,
+            client=WebClient(token=token, timeout=15),
+            token_verification_enabled=False,
+        )
+        register_handlers(bolt_app, app)
+    except Exception:
+        logger.warning(
+            'Failed to initialize Slack Bolt app, Slack module disabled',
+            exc_info=True,
+        )
+        return
+    _bolt_app = bolt_app
 
     logger.info('Slack Bolt app initialized successfully')
 

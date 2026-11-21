@@ -253,3 +253,65 @@ class TestSlackConnectFailure:
 
         slack_mod._bolt_app = None
         slack_mod._socket_handler = None
+
+
+class TestSlackUnreachableAtBoot:
+    """App must boot when Slack cannot be reached during create_app() (issue #82)."""
+
+    def test_token_verification_disabled(self):
+        """App() is built with token_verification_enabled=False so no auth.test runs at boot."""
+        import esb.slack as slack_mod
+
+        with patch.object(Config, 'SLACK_BOT_TOKEN', 'xoxb-test-token'), \
+             patch.object(Config, 'SLACK_APP_TOKEN', 'xapp-test-token'), \
+             patch('slack_bolt.App', return_value=MagicMock()) as mock_app_cls:
+            create_app('testing')
+
+        assert mock_app_cls.call_args.kwargs['token_verification_enabled'] is False
+        slack_mod._bolt_app = None
+        slack_mod._socket_handler = None
+
+    def test_real_bolt_app_makes_no_network_call(self):
+        """A real Bolt App constructs without calling auth.test, even if every request would fail."""
+        import esb.slack as slack_mod
+
+        with patch.object(Config, 'SLACK_BOT_TOKEN', 'xoxb-test-token'), \
+             patch.object(Config, 'SLACK_APP_TOKEN', 'xapp-test-token'), \
+             patch('slack_sdk.WebClient.api_call', side_effect=OSError('Temporary failure in name resolution')) \
+                as mock_api_call:
+            app = create_app('testing')
+            with app.app_context():
+                from esb.extensions import db
+                db.create_all()
+                assert app.test_client().get('/health').status_code == 200
+                assert slack_mod._bolt_app is not None
+                mock_api_call.assert_not_called()
+                db.session.remove()
+                db.drop_all()
+
+        slack_mod._bolt_app = None
+        slack_mod._socket_handler = None
+
+    def test_bolt_app_construction_failure_does_not_crash_app(self):
+        """If App() raises, create_app() still succeeds and Slack is disabled."""
+        import esb.slack as slack_mod
+
+        with patch.object(SlackTestConfig, 'SLACK_BOT_TOKEN', 'xoxb-test-token'), \
+             patch.object(SlackTestConfig, 'SLACK_APP_TOKEN', 'xapp-test-token'), \
+             patch.object(SlackTestConfig, 'SLACK_SOCKET_MODE_CONNECT', 'true'), \
+             patch('slack_bolt.App', side_effect=OSError('Temporary failure in name resolution')), \
+             patch('slack_bolt.adapter.socket_mode.SocketModeHandler') as mock_smh:
+            app = create_app('slack_test')
+            with app.app_context():
+                from esb.extensions import db
+                db.create_all()
+                assert app.test_client().get('/health').status_code == 200
+                assert slack_mod._bolt_app is None
+                assert slack_mod._socket_handler is None
+                assert slack_mod.is_socket_mode_enabled() is False
+                mock_smh.assert_not_called()
+                db.session.remove()
+                db.drop_all()
+
+        slack_mod._bolt_app = None
+        slack_mod._socket_handler = None
