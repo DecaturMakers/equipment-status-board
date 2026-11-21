@@ -82,6 +82,7 @@ def create():
     form.area_id.choices = [(0, '-- Select Area --')] + [
         (a.id, a.name) for a in areas
     ]
+    form.mac_machine_name.choices = mac_service.machine_name_choices()
 
     if form.validate_on_submit():
         if form.area_id.data == 0:
@@ -184,6 +185,13 @@ def edit(id):
     form.area_id.choices = [(0, '-- Select Area --')] + [
         (a.id, a.name) for a in areas
     ]
+    form.mac_machine_name.choices = mac_service.machine_name_choices(eq.mac_machine_name)
+    if request.method == 'GET':
+        # A saved name differing from MAC's only in case pre-selects MAC's spelling.
+        form.mac_machine_name.data = mac_service.canonical_machine_name(eq.mac_machine_name)
+    if form.mac_machine_name.data is None:
+        # obj=eq yields None for an unlinked machine; '' is the "None" option.
+        form.mac_machine_name.data = ''
 
     if form.validate_on_submit():
         if form.area_id.data == 0:

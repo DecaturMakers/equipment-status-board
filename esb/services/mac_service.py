@@ -142,8 +142,7 @@ def _control_request(method: str, kind: str, name: str) -> bool:
     if resp.status_code == 404:
         raise MacMachineNotFoundError(
             f'MAC {method.upper()} {url} failed: HTTP 404 -- MAC has no machine named {name!r}. '
-            f'Check that the equipment\'s MAC Machine Name is the machine\'s MAC "name" '
-            f'(e.g. "mac-mcu-..."), not its display name.'
+            f'Check the equipment\'s MAC Machine selection.'
         )
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f'MAC {method.upper()} {url} failed: HTTP {resp.status_code}')
@@ -424,6 +423,46 @@ def resolve_machine_name(value: str) -> str:
             )
     known = ', '.join(sorted(r.machine_name for r in rows))
     raise ValidationError(f'MAC has no machine named {value!r}. Known MAC machine names: {known}')
+
+
+def machine_name_choices(current: str | None = None) -> list[tuple[str, str]]:
+    """Build ``(value, label)`` choices for the equipment form's MAC machine dropdown.
+
+    Starts with ``('', 'None')``, followed by every machine in the status cache,
+    labelled ``"Alias (name)"`` (or just ``name`` when MAC reports no display
+    name) and sorted by label. The cache is read regardless of ``mac_enabled()``:
+    when disabled the worker never fills it, so the list is just None.
+
+    ``current`` is the equipment's saved ``mac_machine_name``. If the cache does
+    not contain it (case-insensitively), it is kept as an extra choice so saving
+    an unrelated edit doesn't drop an existing link (issue #93).
+    """
+    rows = db.session.execute(db.select(MachineStatus)).scalars().all()
+    machines = sorted(
+        (
+            (r.machine_name, f'{r.display_name} ({r.machine_name})' if r.display_name else r.machine_name)
+            for r in rows
+        ),
+        key=lambda c: (c[1].lower(), c[0]),
+    )
+    choices = [('', 'None')] + machines
+    if current and current.lower() not in {name.lower() for name, _ in machines}:
+        choices.append((current, f'{current} (not reported by MAC)'))
+    return choices
+
+
+def canonical_machine_name(value: str | None) -> str | None:
+    """Return the cache's spelling of ``value`` (case-insensitive), else ``value`` unchanged.
+
+    Used to pre-select the dropdown option for a saved name that differs from
+    MAC's name only in case (e.g. an admin typed ``Planer`` for ``planer``).
+    """
+    if not value:
+        return value
+    row = db.session.execute(
+        db.select(MachineStatus).filter(db.func.lower(MachineStatus.machine_name) == value.lower())
+    ).scalars().first()
+    return row.machine_name if row is not None else value
 
 
 def get_status_for_equipment(equipment) -> MachineStatus | None:

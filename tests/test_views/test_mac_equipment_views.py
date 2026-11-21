@@ -256,13 +256,91 @@ class TestMacNameValidation:
         db.session.refresh(eq)
         assert eq.model == 'y'
 
-    def test_edit_form_shows_suggestion(self, cached_resaw, staff_client, make_equipment):
+    def test_edit_form_rejects_value_not_in_dropdown(self, cached_resaw, staff_client, make_equipment):
         eq = make_equipment()
         resp = staff_client.post(f'/equipment/{eq.id}/edit', data={
             'name': eq.name, 'manufacturer': eq.manufacturer, 'model': eq.model,
             'area_id': eq.area_id, 'mac_machine_name': 'Resaw',
         })
         assert resp.status_code == 200
-        assert b'mac-mcu-resaw' in resp.data
+        assert b'Not a valid choice' in resp.data
         db.session.refresh(eq)
         assert eq.mac_machine_name is None
+
+
+class TestMacMachineDropdown:
+    """Issue #93: the MAC machine is chosen from a dropdown of cached machines."""
+
+    @pytest.fixture
+    def cached(self, mac_url):
+        db.session.add(MachineStatus(machine_name='mac-mcu-resaw', display_name='Resaw', status='idle'))
+        db.session.add(MachineStatus(machine_name='mac-mcu-bandsaw', display_name='Bandsaw', status='idle'))
+        db.session.add(MachineStatus(machine_name='mac-mcu-nodisplay', display_name=None, status='idle'))
+        db.session.commit()
+
+    def test_choices_labelled_and_sorted(self, cached):
+        assert mac_service.machine_name_choices() == [
+            ('', 'None'),
+            ('mac-mcu-bandsaw', 'Bandsaw (mac-mcu-bandsaw)'),
+            ('mac-mcu-nodisplay', 'mac-mcu-nodisplay'),
+            ('mac-mcu-resaw', 'Resaw (mac-mcu-resaw)'),
+        ]
+
+    def test_choices_keep_unreported_current(self, cached):
+        choices = mac_service.machine_name_choices('old-machine')
+        assert choices[-1] == ('old-machine', 'old-machine (not reported by MAC)')
+
+    def test_choices_no_extra_for_case_variant(self, cached):
+        assert len(mac_service.machine_name_choices('MAC-MCU-RESAW')) == 4
+
+    def test_choices_empty_cache(self, mac_url):
+        assert mac_service.machine_name_choices() == [('', 'None')]
+
+    def test_create_form_renders_select(self, cached, staff_client):
+        resp = staff_client.get('/equipment/new')
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert '<select class="form-select" id="mac_machine_name"' in html
+        assert '<option value="mac-mcu-resaw">Resaw (mac-mcu-resaw)</option>' in html
+        assert '<option selected value="">None</option>' in html
+
+    def test_edit_form_preselects_canonical(self, cached, staff_client, make_equipment):
+        eq = make_equipment(mac_machine_name='MAC-MCU-Resaw')
+        html = staff_client.get(f'/equipment/{eq.id}/edit').data.decode()
+        assert '<option selected value="mac-mcu-resaw">Resaw (mac-mcu-resaw)</option>' in html
+        assert 'not reported by MAC' not in html
+
+    def test_edit_form_keeps_unreported_link(self, cached, staff_client, make_equipment):
+        eq = make_equipment(mac_machine_name='old-machine')
+        html = staff_client.get(f'/equipment/{eq.id}/edit').data.decode()
+        assert '<option selected value="old-machine">old-machine (not reported by MAC)</option>' in html
+        resp = staff_client.post(f'/equipment/{eq.id}/edit', data={
+            'name': eq.name, 'manufacturer': eq.manufacturer, 'model': 'changed',
+            'area_id': eq.area_id, 'mac_machine_name': 'old-machine',
+        })
+        assert resp.status_code == 302
+        db.session.refresh(eq)
+        assert eq.mac_machine_name == 'old-machine'
+        assert eq.model == 'changed'
+
+    def test_edit_select_machine_and_unlink(self, cached, staff_client, make_equipment):
+        eq = make_equipment()
+        data = {'name': eq.name, 'manufacturer': eq.manufacturer, 'model': eq.model, 'area_id': eq.area_id}
+        resp = staff_client.post(f'/equipment/{eq.id}/edit', data={**data, 'mac_machine_name': 'mac-mcu-resaw'})
+        assert resp.status_code == 302
+        db.session.refresh(eq)
+        assert eq.mac_machine_name == 'mac-mcu-resaw'
+        resp = staff_client.post(f'/equipment/{eq.id}/edit', data={**data, 'mac_machine_name': ''})
+        assert resp.status_code == 302
+        db.session.refresh(eq)
+        assert eq.mac_machine_name is None
+
+    def test_create_with_selected_machine(self, cached, staff_client, make_area):
+        area = make_area()
+        resp = staff_client.post('/equipment/new', data={
+            'name': 'Resaw', 'manufacturer': 'm', 'model': 'x',
+            'area_id': area.id, 'mac_machine_name': 'mac-mcu-resaw',
+        })
+        assert resp.status_code == 302
+        [eq] = equipment_service.list_equipment()
+        assert eq.mac_machine_name == 'mac-mcu-resaw'
