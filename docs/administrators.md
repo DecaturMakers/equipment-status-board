@@ -406,7 +406,7 @@ When enabled, ESB:
     - `https://<esb-host>/webhooks/mac` — when `MAC_WEBHOOK_TOKEN` is empty, or
     - `https://<esb-host>/webhooks/mac/<token>` — when `MAC_WEBHOOK_TOKEN` is set (use the same value).
 
-3. **Link equipment to machines.** On each equipment record (Staff → edit equipment), set the **MAC Machine Name** field to the machine's `name` in MAC. See the [Staff Guide](staff.md).
+3. **Link equipment to machines.** On each equipment record (Staff → edit equipment), choose the machine from the **MAC Machine** dropdown (listed as `Alias (name)`, from ESB's cached copy of MAC's machine list). See the [Staff Guide](staff.md).
 
 4. **Choose which statuses display where** under **Admin → Config → MAC Machine Status Display** (see the [Staff Guide](staff.md)).
 
@@ -699,8 +699,8 @@ MariaDB data is persisted in the `mariadb_data` Docker volume. This volume survi
 ### MAC status not showing or updating
 
 - Verify `MAC_URL` is set and points at a reachable MAC instance (restart `app` and `worker` after changing it)
-- Confirm the equipment record's **MAC Machine Name** exactly matches the machine's `name` in MAC (for example `mac-mcu-resaw`), not its `display_name`. ESB checks a new or changed value against MAC's machine list, but records saved before that check existed are not rechecked.
-- A `mac_clear` notification that gets HTTP 404 from MAC fails permanently at once, with no retries, and its error names the machine. That almost always means the MAC Machine Name is wrong.
+- Confirm the equipment record's **MAC Machine** is the right machine. A link to a machine MAC no longer reports shows in the edit form's dropdown as "not reported by MAC"; pick the current machine to fix it.
+- A `mac_clear` notification that gets HTTP 404 from MAC fails permanently at once, with no retries, and its error names the machine. That almost always means the equipment's MAC Machine link is wrong.
 - Confirm the status you expect to see is enabled for that surface under **Admin → Config → MAC Machine Status Display**
 - For live updates and auto-repair, verify MAC's `STATUS_WEBHOOK_URL` points at `/webhooks/mac` (or `/webhooks/mac/<token>`); a `403` in the app logs means the token doesn't match
 - The worker's periodic poll is a ~60s backstop, so a fresh link may take up to a minute to appear if no webhook has fired yet

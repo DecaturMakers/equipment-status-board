@@ -73,7 +73,8 @@ class EquipmentCreateForm(FlaskForm):
     model = StringField('Model', validators=[DataRequired(), Length(max=200)])
     area_id = SelectField('Area', coerce=int, validators=[DataRequired()])
     serial_number = StringField('Serial Number', validators=[Length(max=200)])
-    mac_machine_name = StringField('MAC Machine Name', validators=[Optional(), Length(max=200)])
+    # Choices come from the MAC status cache; set per request by the view (issue #93).
+    mac_machine_name = SelectField('MAC Machine', choices=[], default='')
     acquisition_date = DateField('Acquisition Date', validators=[Optional()])
     acquisition_source = StringField('Acquisition Source', validators=[Length(max=200)])
     acquisition_cost = DecimalField('Acquisition Cost', places=2, validators=[Optional()])
@@ -90,7 +91,8 @@ class EquipmentEditForm(FlaskForm):
     model = StringField('Model', validators=[DataRequired(), Length(max=200)])
     area_id = SelectField('Area', coerce=int, validators=[DataRequired()])
     serial_number = StringField('Serial Number', validators=[Length(max=200)])
-    mac_machine_name = StringField('MAC Machine Name', validators=[Optional(), Length(max=200)])
+    # Choices come from the MAC status cache; set per request by the view (issue #93).
+    mac_machine_name = SelectField('MAC Machine', choices=[], default='')
     acquisition_date = DateField('Acquisition Date', validators=[Optional()])
     acquisition_source = StringField('Acquisition Source', validators=[Length(max=200)])
     acquisition_cost = DecimalField('Acquisition Cost', places=2, validators=[Optional()])

@@ -56,7 +56,7 @@ Setup:
 
 1. Set `MAC_URL` (and optionally `MAC_WEBHOOK_TOKEN`) and restart ESB and its worker.
 2. In MAC, set `STATUS_WEBHOOK_URL` to `https://<esb-host>/webhooks/mac` (or `https://<esb-host>/webhooks/mac/<token>` when a token is configured). **Security:** this receiver can create repair records and enqueue notifications, so set `MAC_WEBHOOK_TOKEN` or firewall the endpoint on any internet-reachable deployment. As a URL path segment the token appears in proxy/access logs.
-3. On each ESB equipment record, set **MAC Machine Name** to the MAC machine's `name` to link them.
+3. On each ESB equipment record, choose the machine from the **MAC Machine** dropdown to link them.
 4. Under **Admin → Config → MAC Machine Status Display**, choose which statuses (In Use / Idle / Oops / Locked Out / Unknown) appear on each surface (public dashboard & equipment page, kiosk displays, equipment admin/detail). Defaults: public shows only Oops and Locked Out; kiosk and admin show all five.
 
 Behavior once linked: live machine status is cached (via the webhook plus a ≤60s worker poll of `GET /api/machines`) and shown as badges; oops'ing a machine in MAC auto-creates a "Down" repair; staff can Oops / Maintenance Lockout / Clear the machine from its detail page; recent machine activity is viewable on demand; and resolving (or closing "No Issue Found") the last open repair clears the machine's oops/lockout in MAC.
